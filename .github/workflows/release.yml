@@ -66,7 +66,7 @@ jobs:
       - name: Setup extra 10GB swap
         # TDLib's td_jni.cpp pulls in tens of megabytes of generated headers
         # (td_api, telegram_api). Compiling it takes 6-8 GB of RAM per worker.
-        # GitHub Actions runners have 7 GB total + a default 4 GB /swapfile —
+        # GitHub Actions runners have 7 GB total + a default 4 GB /swapfile,
         # not enough. We add 10 GB more on /mnt (which has plenty of disk on
         # GitHub-hosted runners). The two swap files sum, giving ~14 GB swap.
         run: |
@@ -106,16 +106,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: app/libs/tdlib.aar
-          key: tdlib-aar-${{ steps.tdlib-rev.outputs.rev }}-${{ env.ANDROID_ABI }}-ndk${{ env.NDK_VERSION }}-v2
+          key: tdlib-aar-${{ steps.tdlib-rev.outputs.rev }}-${{ env.ANDROID_ABI }}-ndk${{ env.NDK_VERSION }}-v3
 
       - name: Build TDLib AAR
         if: steps.cache-tdlib.outputs.cache-hit != 'true'
         env:
           # Cap parallel CMake/ninja workers to 2. Each tdjni.cpp compile uses
           # several GB of RAM; on the 7 GB GitHub runner -j 4 (default) triggers
-          # OOM kill. -j 1 would be safe but doubles the build time.
+          # OOM kill.
           CMAKE_BUILD_PARALLEL_LEVEL: "2"
           MAKEFLAGS: "-j2"
+          ANDROID_ABIS: "arm64-v8a"
         run: |
           set -euxo pipefail
 
@@ -128,36 +129,42 @@ jobs:
 
           cd example/android
 
-          # Restrict build to arm64-v8a only by patching build scripts
-          # The scripts iterate over ANDROID_ABIS; we override that list.
-          for f in build-openssl.sh build-tdlib.sh; do
-            if [ -f "$f" ]; then
-              sed -i 's/^ANDROID_ABIS=.*/ANDROID_ABIS="arm64-v8a"/' "$f"
-              sed -i 's/^arches=.*/arches="arm64-v8a"/' "$f" || true
-              # Force parallelism cap at the script level too: TDLib's scripts
-              # use cmake --build with implicit parallelism, but some call
-              # ninja directly with -j$(nproc). Patch -j flags conservatively.
-              sed -i -E 's/(ninja|make)([[:space:]]+)-j[[:space:]]*[0-9]+/\1\2-j 2/g' "$f" || true
-              sed -i -E 's/--parallel[[:space:]]+[0-9]+/--parallel 2/g' "$f" || true
-            fi
+          # Restrict the build to arm64-v8a only. TDLib's build-tdlib.sh hard
+          # codes the ABI list internally, so we patch every script that
+          # declares ANDROID_ABIS, including indented / exported forms.
+          for f in build-openssl.sh build-tdlib.sh build.sh; do
+            [ -f "$f" ] || continue
+            sed -i -E 's/^[[:space:]]*ANDROID_ABIS=.*/ANDROID_ABIS="arm64-v8a"/' "$f"
+            sed -i -E 's/^[[:space:]]*export[[:space:]]+ANDROID_ABIS=.*/export ANDROID_ABIS="arm64-v8a"/' "$f"
+            # Bash array form: ANDROID_ABIS=("arm64-v8a" "x86_64" ...)
+            sed -i -E 's/^[[:space:]]*ANDROID_ABIS=\(.*\)/ANDROID_ABIS=("arm64-v8a")/' "$f"
+            sed -i -E 's/(ninja|make)([[:space:]]+)-j[[:space:]]*[0-9]+/\1\2-j 2/g' "$f" || true
+            sed -i -E 's/--parallel[[:space:]]+[0-9]+/--parallel 2/g' "$f" || true
           done
 
-          # Some versions iterate inside fetch-sdk/build scripts; patch the main entry too.
-          if [ -f build.sh ]; then
-            sed -i 's/^ANDROID_ABIS=.*/ANDROID_ABIS="arm64-v8a"/' build.sh || true
-          fi
+          # Show what we ended up with, so a future regression is easy to spot
+          # in the run log.
+          echo "::group::Effective ANDROID_ABIS in TDLib scripts"
+          grep -n ANDROID_ABIS build-openssl.sh build-tdlib.sh 2>/dev/null || true
+          echo "::endgroup::"
 
-          # Run the build pipeline as documented in TDLib README for Android.
           ./fetch-sdk.sh || true
-
-          # Build OpenSSL for arm64-v8a (small, parallel safe)
           ./build-openssl.sh
-
-          # Build TDLib for arm64-v8a (memory-heavy, capped to -j 2 via env above)
           ./build-tdlib.sh
 
-          # Find the produced AAR
-          AAR=$(find . -name 'tdlib-release.aar' -o -name 'tdlib-debug.aar' | head -n1)
+          # build-tdlib.sh stops after copying libtdjni.so into tdlib/libs/.
+          # The AAR itself is produced by the sibling Gradle project that
+          # wraps those .so files together with the generated Java sources.
+          # This step was missing from the previous workflow, which is why
+          # the find for tdlib-release.aar returned empty.
+          if [ -x ./gradlew ]; then
+            ./gradlew :tdlib:assembleRelease --no-daemon --stacktrace
+          else
+            # Fall back to the host gradle if upstream stops shipping a wrapper.
+            gradle :tdlib:assembleRelease --no-daemon --stacktrace
+          fi
+
+          AAR=$(find . -type f \( -name 'tdlib-release.aar' -o -name 'tdlib-debug.aar' -o -name 'tdlib.aar' \) | head -n1)
           if [ -z "$AAR" ]; then
             echo "TDLib AAR not produced; tree listing for debug:"
             find . -name '*.aar' || true
