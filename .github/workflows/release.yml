@@ -45,6 +45,24 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             make git zlib1g-dev libssl-dev gperf cmake clang libc++-dev libc++abi-dev ninja-build perl
 
+      - name: Free disk space
+        # GitHub-hosted runners ship with ~15 GB free on the root partition,
+        # but TDLib's fetch-sdk.sh downloads its own Android SDK + NDK 23.2
+        # (~3 GB), then build-openssl.sh + build-tdlib.sh produce 4-5 GB of
+        # object files. Without cleanup we run out of disk halfway through.
+        # Removing preinstalled toolchains we never touch (Haskell, Swift,
+        # .NET, CodeQL) reclaims ~30 GB.
+        run: |
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /opt/hostedtoolcache/PyPy
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/share/chromium
+          sudo apt-get clean
+          df -h /
+
       - name: Setup extra 10GB swap
         # TDLib's td_jni.cpp pulls in tens of megabytes of generated headers
         # (td_api, telegram_api). Compiling it takes 6-8 GB of RAM per worker.
