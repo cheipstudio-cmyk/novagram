@@ -36,6 +36,7 @@ jobs:
           set -e
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager --install "ndk;${NDK_VERSION}"
+          sdkmanager --install "platforms;android-34"
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> $GITHUB_ENV
           echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> $GITHUB_ENV
 
@@ -43,7 +44,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            make git zlib1g-dev libssl-dev gperf cmake clang libc++-dev libc++abi-dev ninja-build perl
+            make git zlib1g-dev libssl-dev gperf cmake clang libc++-dev libc++abi-dev ninja-build perl php-cli
 
       - name: Free disk space
         # GitHub-hosted runners ship with ~15 GB free on the root partition,
@@ -70,7 +71,6 @@ jobs:
         # not enough. We add 10 GB more on /mnt (which has plenty of disk on
         # GitHub-hosted runners). The two swap files sum, giving ~14 GB swap.
         run: |
-          # GitHub runners already have /swapfile active; create ours elsewhere.
           sudo fallocate -l 10G /mnt/turbogram-swap
           sudo chmod 600 /mnt/turbogram-swap
           sudo mkswap /mnt/turbogram-swap
@@ -92,7 +92,6 @@ jobs:
             REV=$(git ls-remote https://github.com/tdlib/td.git refs/heads/${TDLIB_REF} | awk 'NR==1{print $1}')
           fi
           if [ -z "$REV" ] && [ ${#TDLIB_REF} -ge 7 ]; then
-            # Looks like it could be a commit sha; use as-is.
             REV="${TDLIB_REF}"
           fi
           if [ -z "$REV" ]; then
@@ -106,7 +105,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: app/libs/tdlib.aar
-          key: tdlib-aar-${{ steps.tdlib-rev.outputs.rev }}-${{ env.ANDROID_ABI }}-ndk${{ env.NDK_VERSION }}-v3
+          key: tdlib-aar-${{ steps.tdlib-rev.outputs.rev }}-${{ env.ANDROID_ABI }}-ndk${{ env.NDK_VERSION }}-v4
 
       - name: Build TDLib AAR
         if: steps.cache-tdlib.outputs.cache-hit != 'true'
@@ -116,64 +115,83 @@ jobs:
           # OOM kill.
           CMAKE_BUILD_PARALLEL_LEVEL: "2"
           MAKEFLAGS: "-j2"
-          ANDROID_ABIS: "arm64-v8a"
         run: |
           set -euxo pipefail
 
+          # 1. Fetch TDLib at the pinned ref
           mkdir -p tdlib-src
           cd tdlib-src
           git init -q
           git remote add origin https://github.com/tdlib/td.git
           git fetch --depth 1 origin "${TDLIB_REF}"
           git checkout -q FETCH_HEAD
-
           cd example/android
 
-          # Restrict the build to arm64-v8a only. TDLib's build-tdlib.sh hard
-          # codes the ABI list internally, so we patch every script that
-          # declares ANDROID_ABIS, including indented / exported forms.
-          for f in build-openssl.sh build-tdlib.sh build.sh; do
-            [ -f "$f" ] || continue
-            sed -i -E 's/^[[:space:]]*ANDROID_ABIS=.*/ANDROID_ABIS="arm64-v8a"/' "$f"
-            sed -i -E 's/^[[:space:]]*export[[:space:]]+ANDROID_ABIS=.*/export ANDROID_ABIS="arm64-v8a"/' "$f"
-            # Bash array form: ANDROID_ABIS=("arm64-v8a" "x86_64" ...)
-            sed -i -E 's/^[[:space:]]*ANDROID_ABIS=\(.*\)/ANDROID_ABIS=("arm64-v8a")/' "$f"
-            sed -i -E 's/(ninja|make)([[:space:]]+)-j[[:space:]]*[0-9]+/\1\2-j 2/g' "$f" || true
-            sed -i -E 's/--parallel[[:space:]]+[0-9]+/--parallel 2/g' "$f" || true
+          # 2. Restrict the build to arm64-v8a only.
+          # TDLib's scripts have a hardcoded loop in both files:
+          #   for ABI in arm64-v8a armeabi-v7a x86_64 x86 ; do
+          # There is no ANDROID_ABIS variable; patching one has no effect.
+          # We rewrite the loop itself, then verify the patch took.
+          for f in build-openssl.sh build-tdlib.sh; do
+            sed -i -E 's/^[[:space:]]*for ABI in [^;]+ ; do/for ABI in arm64-v8a ; do/' "$f"
           done
+          sed -i -E 's/(ninja|make)([[:space:]]+)-j[[:space:]]*[0-9]+/\1\2-j 2/g' build-openssl.sh build-tdlib.sh || true
+          sed -i -E 's/--parallel[[:space:]]+[0-9]+/--parallel 2/g' build-openssl.sh build-tdlib.sh || true
 
-          # Show what we ended up with, so a future regression is easy to spot
-          # in the run log.
-          echo "::group::Effective ANDROID_ABIS in TDLib scripts"
-          grep -n ANDROID_ABIS build-openssl.sh build-tdlib.sh 2>/dev/null || true
+          echo "::group::Effective ABI loop after patch"
+          grep -n "for ABI" build-openssl.sh build-tdlib.sh
+          for f in build-openssl.sh build-tdlib.sh; do
+            if ! grep -qE '^for ABI in arm64-v8a ; do' "$f"; then
+              echo "ERROR: ABI restriction patch failed in $f."
+              echo "TDLib upstream likely changed the loop format. Inspect the script and update the sed."
+              exit 2
+            fi
+          done
           echo "::endgroup::"
 
+          # 3. Run the upstream build pipeline.
           ./fetch-sdk.sh || true
           ./build-openssl.sh
           ./build-tdlib.sh
 
-          # build-tdlib.sh stops after copying libtdjni.so into tdlib/libs/.
-          # The AAR itself is produced by the sibling Gradle project that
-          # wraps those .so files together with the generated Java sources.
-          # This step was missing from the previous workflow, which is why
-          # the find for tdlib-release.aar returned empty.
-          if [ -x ./gradlew ]; then
-            ./gradlew :tdlib:assembleRelease --no-daemon --stacktrace
-          else
-            # Fall back to the host gradle if upstream stops shipping a wrapper.
-            gradle :tdlib:assembleRelease --no-daemon --stacktrace
-          fi
+          # 4. Package an AAR by hand.
+          # build-tdlib.sh leaves these artifacts in ./tdlib/:
+          #   tdlib/libs/<ABI>/libtdjni.so
+          #   tdlib/java/org/drinkless/tdlib/Client.java
+          #   tdlib/java/org/drinkless/tdlib/TdApi.java
+          # It does NOT produce an .aar and there is no Gradle project here.
+          # We assemble one: classes.jar + jni/ + AndroidManifest.xml + R.txt
+          # is the minimal layout Gradle will accept as a library AAR.
+          AAR_STAGE="$(mktemp -d)"
+          mkdir -p "$AAR_STAGE/jni"
+          cp -r tdlib/libs/. "$AAR_STAGE/jni/"
 
-          AAR=$(find . -type f \( -name 'tdlib-release.aar' -o -name 'tdlib-debug.aar' -o -name 'tdlib.aar' \) | head -n1)
-          if [ -z "$AAR" ]; then
-            echo "TDLib AAR not produced; tree listing for debug:"
-            find . -name '*.aar' || true
-            find . -name 'libtdjni.so' || true
-            exit 1
+          # TdApi.java is generated then post-processed by AddIntDef.php which
+          # injects androidx.annotation.IntDef references. Compile needs both
+          # android.jar and androidx-annotation on the classpath.
+          curl -sfLo annotation-1.4.0.jar https://maven.google.com/androidx/annotation/annotation/1.4.0/annotation-1.4.0.jar
+          ANDROID_JAR="$(find "$ANDROID_SDK_ROOT/platforms" -name 'android.jar' 2>/dev/null | sort -r | head -n1)"
+          if [ -z "$ANDROID_JAR" ]; then
+            echo "ERROR: no android.jar found under $ANDROID_SDK_ROOT/platforms"
+            exit 3
           fi
+          echo "Compiling against $ANDROID_JAR"
+
+          mkdir -p classes
+          javac -d classes -classpath "$ANDROID_JAR:annotation-1.4.0.jar" \
+            tdlib/java/org/drinkless/tdlib/Client.java \
+            tdlib/java/org/drinkless/tdlib/TdApi.java
+          jar cf "$AAR_STAGE/classes.jar" -C classes .
+
+          printf '<?xml version="1.0" encoding="utf-8"?>\n<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.drinkless.tdlib"></manifest>\n' > "$AAR_STAGE/AndroidManifest.xml"
+          : > "$AAR_STAGE/R.txt"
+
           mkdir -p "$GITHUB_WORKSPACE/app/libs"
-          cp "$AAR" "$GITHUB_WORKSPACE/app/libs/tdlib.aar"
+          ( cd "$AAR_STAGE" && zip -qr "$GITHUB_WORKSPACE/app/libs/tdlib.aar" . )
           ls -lh "$GITHUB_WORKSPACE/app/libs/tdlib.aar"
+          echo "::group::AAR contents"
+          unzip -l "$GITHUB_WORKSPACE/app/libs/tdlib.aar"
+          echo "::endgroup::"
 
       - name: Verify TDLib AAR exists
         run: |
@@ -193,7 +211,6 @@ jobs:
           EOF
             echo "Using release keystore from secrets"
           else
-            # Generate a one-shot keystore so the APK is at least signed.
             keytool -genkeypair -v \
               -keystore keystore.jks \
               -alias turbogram \
