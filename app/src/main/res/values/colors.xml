@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ink_bg">#0E0F12</color>
+    <color name="ink_surface">#16181C</color>
+    <color name="ink_cream">#ECE7DE</color>
+    <color name="ink_amber">#D9A85C</color>
+</resources>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Turbogram</string>
+
+    <!-- Google Fonts provider certificates -->
+    <string name="provider_authority" translatable="false">com.google.android.gms.fonts</string>
+    <string name="provider_package" translatable="false">com.google.android.gms</string>
+
+    <!-- Notification channels -->
+    <string name="notif_channel_messages">Messaggi</string>
+    <string name="notif_channel_messages_desc">Notifiche per nuovi messaggi</string>
+    <string name="notif_channel_service">Servizio in background</string>
+    <string name="notif_channel_service_desc">Mantiene la connessione attiva</string>
+</resources>
