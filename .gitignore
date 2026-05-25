@@ -1,0 +1,21 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+**/build/
+
+# Keystore and secrets
+keystore.properties
+*.jks
+*.keystore
+
+# TDLib AAR is built in CI, never committed
+app/libs/*.aar
+app/libs/*.jar
+!app/libs/.gitkeep
