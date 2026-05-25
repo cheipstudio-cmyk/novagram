@@ -45,20 +45,21 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             make git zlib1g-dev libssl-dev gperf cmake clang libc++-dev libc++abi-dev ninja-build perl
 
-      - name: Setup 10GB swap
+      - name: Setup extra 10GB swap
         # TDLib's td_jni.cpp pulls in tens of megabytes of generated headers
         # (td_api, telegram_api). Compiling it takes 6-8 GB of RAM per worker.
-        # GitHub Actions runners have 7 GB total, so without swap the OOM killer
-        # terminates the compile, ninja restarts, and we loop forever on file
-        # [1/562]. With 10 GB swap + parallel level 2 the build completes in
-        # ~50-70 minutes (cached on subsequent runs).
+        # GitHub Actions runners have 7 GB total + a default 4 GB /swapfile —
+        # not enough. We add 10 GB more on /mnt (which has plenty of disk on
+        # GitHub-hosted runners). The two swap files sum, giving ~14 GB swap.
         run: |
-          sudo fallocate -l 10G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          # GitHub runners already have /swapfile active; create ours elsewhere.
+          sudo fallocate -l 10G /mnt/turbogram-swap
+          sudo chmod 600 /mnt/turbogram-swap
+          sudo mkswap /mnt/turbogram-swap
+          sudo swapon /mnt/turbogram-swap
           free -h
-          echo "Swap configured."
+          swapon --show
+          echo "Extra swap configured."
 
       - name: Resolve TDLib commit
         id: tdlib-rev
