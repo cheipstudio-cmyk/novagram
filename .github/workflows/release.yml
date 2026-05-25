@@ -14,7 +14,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     permissions:
       contents: write
 
@@ -44,6 +44,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             make git zlib1g-dev libssl-dev gperf cmake clang libc++-dev libc++abi-dev ninja-build perl
+
+      - name: Setup 10GB swap
+        # TDLib's td_jni.cpp pulls in tens of megabytes of generated headers
+        # (td_api, telegram_api). Compiling it takes 6-8 GB of RAM per worker.
+        # GitHub Actions runners have 7 GB total, so without swap the OOM killer
+        # terminates the compile, ninja restarts, and we loop forever on file
+        # [1/562]. With 10 GB swap + parallel level 2 the build completes in
+        # ~50-70 minutes (cached on subsequent runs).
+        run: |
+          sudo fallocate -l 10G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+          echo "Swap configured."
 
       - name: Resolve TDLib commit
         id: tdlib-rev
@@ -76,6 +91,12 @@ jobs:
 
       - name: Build TDLib AAR
         if: steps.cache-tdlib.outputs.cache-hit != 'true'
+        env:
+          # Cap parallel CMake/ninja workers to 2. Each tdjni.cpp compile uses
+          # several GB of RAM; on the 7 GB GitHub runner -j 4 (default) triggers
+          # OOM kill. -j 1 would be safe but doubles the build time.
+          CMAKE_BUILD_PARALLEL_LEVEL: "2"
+          MAKEFLAGS: "-j2"
         run: |
           set -euxo pipefail
 
@@ -94,6 +115,11 @@ jobs:
             if [ -f "$f" ]; then
               sed -i 's/^ANDROID_ABIS=.*/ANDROID_ABIS="arm64-v8a"/' "$f"
               sed -i 's/^arches=.*/arches="arm64-v8a"/' "$f" || true
+              # Force parallelism cap at the script level too: TDLib's scripts
+              # use cmake --build with implicit parallelism, but some call
+              # ninja directly with -j$(nproc). Patch -j flags conservatively.
+              sed -i -E 's/(ninja|make)([[:space:]]+)-j[[:space:]]*[0-9]+/\1\2-j 2/g' "$f" || true
+              sed -i -E 's/--parallel[[:space:]]+[0-9]+/--parallel 2/g' "$f" || true
             fi
           done
 
@@ -105,10 +131,10 @@ jobs:
           # Run the build pipeline as documented in TDLib README for Android.
           ./fetch-sdk.sh || true
 
-          # Build OpenSSL for arm64-v8a
+          # Build OpenSSL for arm64-v8a (small, parallel safe)
           ./build-openssl.sh
 
-          # Build TDLib for arm64-v8a
+          # Build TDLib for arm64-v8a (memory-heavy, capped to -j 2 via env above)
           ./build-tdlib.sh
 
           # Find the produced AAR
