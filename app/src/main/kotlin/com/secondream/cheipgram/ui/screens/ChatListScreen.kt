@@ -58,18 +58,20 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import com.secondream.cheipgram.td.ChatKind
 import com.secondream.cheipgram.td.ChatSummary
+import com.secondream.cheipgram.R
+import androidx.compose.ui.res.stringResource
 import com.secondream.cheipgram.td.TdClient
 import com.secondream.cheipgram.ui.theme.Ink
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private data class TabSpec(val kind: ChatKind, val label: String)
+private data class TabSpec(val kind: ChatKind, val labelRes: Int)
 
 private val TAB_SPECS = listOf(
-    TabSpec(ChatKind.Private, "Chat"),
-    TabSpec(ChatKind.Group, "Gruppi"),
-    TabSpec(ChatKind.Channel, "Canali")
+    TabSpec(ChatKind.Private, R.string.tab_chats),
+    TabSpec(ChatKind.Group, R.string.tab_groups),
+    TabSpec(ChatKind.Channel, R.string.tab_channels)
 )
 
 @Composable
@@ -104,7 +106,7 @@ fun ChatListScreen(
                             )
                         } else {
                             Text(
-                                "CheipGram",
+                                stringResource(R.string.app_name),
                                 style = MaterialTheme.typography.displayMedium,
                                 fontStyle = FontStyle.Italic
                             )
@@ -116,17 +118,29 @@ fun ChatListScreen(
                                 searchOpen = false
                                 searchQuery = ""
                             }) {
-                                Icon(Icons.Outlined.Close, contentDescription = "Chiudi ricerca")
+                                Icon(
+                                    Icons.Outlined.Close,
+                                    contentDescription = stringResource(R.string.search_close)
+                                )
                             }
                         } else {
                             IconButton(onClick = { searchOpen = true }) {
-                                Icon(Icons.Outlined.Search, contentDescription = "Cerca")
+                                Icon(
+                                    Icons.Outlined.Search,
+                                    contentDescription = stringResource(R.string.search_action)
+                                )
                             }
                             IconButton(onClick = onOpenSettings) {
-                                Icon(Icons.Outlined.Settings, contentDescription = "Impostazioni")
+                                Icon(
+                                    Icons.Outlined.Settings,
+                                    contentDescription = stringResource(R.string.action_settings)
+                                )
                             }
                             IconButton(onClick = { scope.launch { TdClient.logOut() } }) {
-                                Icon(Icons.Outlined.Logout, contentDescription = "Logout")
+                                Icon(
+                                    Icons.Outlined.Logout,
+                                    contentDescription = stringResource(R.string.action_logout)
+                                )
                             }
                         }
                     },
@@ -145,7 +159,7 @@ fun ChatListScreen(
                             onClick = { selectedTab = i },
                             text = {
                                 Text(
-                                    spec.label,
+                                    stringResource(spec.labelRes),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = if (selectedTab == i) FontWeight.SemiBold else FontWeight.Normal
                                 )
@@ -163,10 +177,11 @@ fun ChatListScreen(
             ) {
                 Text(
                     when {
-                        searchQuery.isNotBlank() -> "Nessun risultato per \"${searchQuery.trim()}\"."
-                        selectedTab == 1 -> "Nessun gruppo."
-                        selectedTab == 2 -> "Nessun canale."
-                        else -> "Nessuna chat ancora."
+                        searchQuery.isNotBlank() ->
+                            stringResource(R.string.empty_search_results, searchQuery.trim())
+                        selectedTab == 1 -> stringResource(R.string.empty_groups)
+                        selectedTab == 2 -> stringResource(R.string.empty_channels)
+                        else -> stringResource(R.string.empty_chats)
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -218,7 +233,7 @@ private fun SearchField(
             Box(modifier = Modifier.weight(1f)) {
                 if (value.isEmpty()) {
                     Text(
-                        "Cerca chat",
+                        stringResource(R.string.search_chats_placeholder),
                         color = Ink.Faint,
                         style = MaterialTheme.typography.bodyLarge
                     )
@@ -271,7 +286,7 @@ private fun ChatRow(
                     ChatKind.Group -> {
                         Icon(
                             Icons.Outlined.PeopleAlt,
-                            contentDescription = "Gruppo",
+                            contentDescription = stringResource(R.string.kind_group),
                             modifier = Modifier.size(14.dp).padding(end = 4.dp),
                             tint = Ink.Muted
                         )
@@ -279,7 +294,7 @@ private fun ChatRow(
                     ChatKind.Channel -> {
                         Icon(
                             Icons.Outlined.Campaign,
-                            contentDescription = "Canale",
+                            contentDescription = stringResource(R.string.kind_channel),
                             modifier = Modifier.size(14.dp).padding(end = 4.dp),
                             tint = Ink.Muted
                         )

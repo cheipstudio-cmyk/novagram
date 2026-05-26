@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notif_channel_messages">Messages</string>
+    <string name="notif_channel_messages_desc">Notifications de nouveaux messages</string>
+    <string name="notif_channel_service">Service d\'arrière-plan</string>
+    <string name="notif_channel_service_desc">Maintient la connexion active</string>
+
+    <string name="action_continue">Continuer</string>
+    <string name="action_ok">OK</string>
+    <string name="action_open">Ouvrir</string>
+    <string name="action_back">Retour</string>
+    <string name="action_send_code">Envoyer le code</string>
+    <string name="action_unlock">Déverrouiller</string>
+    <string name="action_next">Suivant</string>
+
+    <string name="api_config_intro">Pour commencer il te faut des identifiants API. Va sur my.telegram.org, connecte-toi, crée une application et colle ci-dessous api_id et api_hash. Ils restent sur ton appareil.</string>
+    <string name="api_id_label">API ID</string>
+    <string name="api_hash_label">API Hash</string>
+    <string name="api_invalid_values">Vérifie les valeurs saisies.</string>
+
+    <string name="login_phone_label">Numéro de téléphone (avec indicatif)</string>
+    <string name="login_code_label">Code reçu</string>
+    <string name="login_password_label">Mot de passe 2FA</string>
+    <string name="login_step_phone">Saisis ton numéro pour recevoir le code.</string>
+    <string name="login_step_code">Vérifie l\'app Telegram ou tes SMS.</string>
+    <string name="login_step_password">Saisis ton mot de passe 2FA.</string>
+    <string name="login_step_ready">Prêt.</string>
+    <string name="login_step_connecting">Connexion en cours.</string>
+    <string name="login_step_loading">Chargement…</string>
+    <string name="login_step_configuring">Configuration…</string>
+    <string name="login_step_sending">Envoi…</string>
+    <string name="login_step_verifying">Vérification…</string>
+    <string name="login_step_done">Connecté.</string>
+    <string name="login_password_hint">Indice : %1$s</string>
+    <string name="login_unknown_error">Erreur inconnue</string>
+
+    <string name="tab_chats">Discussions</string>
+    <string name="tab_groups">Groupes</string>
+    <string name="tab_channels">Chaînes</string>
+    <string name="search_chats_placeholder">Rechercher</string>
+    <string name="search_action">Rechercher</string>
+    <string name="search_close">Fermer la recherche</string>
+    <string name="empty_chats">Aucune discussion.</string>
+    <string name="empty_groups">Aucun groupe.</string>
+    <string name="empty_channels">Aucune chaîne.</string>
+    <string name="empty_search_results">Aucun résultat pour \"%1$s\".</string>
+    <string name="action_logout">Déconnexion</string>
+    <string name="action_settings">Paramètres</string>
+    <string name="kind_group">Groupe</string>
+    <string name="kind_channel">Chaîne</string>
+
+    <string name="chat_default_title">Discussion</string>
+    <string name="input_placeholder">Message</string>
+    <string name="recording_hint">Enregistrement… relâche pour envoyer, glisse pour annuler</string>
+    <string name="mic_permission_title">Microphone</string>
+    <string name="mic_permission_body">L\'accès au microphone est requis pour enregistrer des notes vocales.</string>
+    <string name="attach_title">Joindre</string>
+    <string name="attach_photo_or_video">Photo ou vidéo</string>
+    <string name="attach_document_or_file">Document ou fichier</string>
+    <string name="delete_title">Supprimer le message</string>
+    <string name="delete_for_me">Supprimer pour moi</string>
+    <string name="delete_for_everyone">Supprimer pour tous</string>
+
+    <string name="media_photo">Photo</string>
+    <string name="media_video">Vidéo</string>
+    <string name="media_gif">GIF</string>
+    <string name="media_voice_note">Note vocale</string>
+    <string name="media_document">Document</string>
+    <string name="media_audio">Audio</string>
+    <string name="media_sticker">Sticker</string>
+    <string name="media_unsupported">Type de message non pris en charge</string>
+
+    <string name="settings_title">Paramètres</string>
+    <string name="settings_section_appearance">Apparence</string>
+    <string name="settings_theme">Thème</string>
+    <string name="settings_theme_system">Système</string>
+    <string name="settings_theme_light">Clair</string>
+    <string name="settings_theme_dark">Sombre</string>
+    <string name="settings_accent">Couleur d\'accent</string>
+    <string name="settings_accent_amber">Ambre</string>
+    <string name="settings_accent_blue">Bleu</string>
+    <string name="settings_accent_green">Vert</string>
+    <string name="settings_accent_violet">Violet</string>
+    <string name="settings_section_language">Langue</string>
+    <string name="settings_language_system">Système</string>
+    <string name="settings_language_it">Italiano</string>
+    <string name="settings_language_en">English</string>
+    <string name="settings_language_es">Español</string>
+    <string name="settings_language_fr">Français</string>
+    <string name="settings_language_de">Deutsch</string>
+    <string name="settings_section_account">Compte</string>
+    <string name="settings_logout_confirm_title">Se déconnecter ?</string>
+    <string name="settings_logout_confirm_body">Tu seras déconnecté et toutes les données locales de session seront supprimées.</string>
+    <string name="settings_logout_confirm_action">Déconnexion</string>
+    <string name="settings_logout_cancel">Annuler</string>
+    <string name="settings_section_info">À propos</string>
+    <string name="settings_version">Version</string>
+    <string name="settings_build">Build</string>
+</resources>

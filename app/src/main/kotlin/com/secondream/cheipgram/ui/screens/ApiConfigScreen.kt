@@ -24,10 +24,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import com.secondream.cheipgram.R
 import com.secondream.cheipgram.settings.AppSettings
 import com.secondream.cheipgram.td.TdClient
 
@@ -38,6 +40,11 @@ fun ApiConfigScreen() {
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    // stringResource() can only be called from a composable scope, so we
+    // capture the localised error strings here and reference them from the
+    // Button onClick lambda below.
+    val invalidValuesMsg = stringResource(R.string.api_invalid_values)
+    val unknownErrorMsg = stringResource(R.string.login_unknown_error)
 
     Scaffold { padding ->
         Column(
@@ -55,7 +62,7 @@ fun ApiConfigScreen() {
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "Per iniziare ti servono le credenziali API. Vai su my.telegram.org, accedi, crea un'applicazione e copia qui sotto api_id e api_hash. Restano sul tuo dispositivo.",
+                text = stringResource(R.string.api_config_intro),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -64,7 +71,7 @@ fun ApiConfigScreen() {
             OutlinedTextField(
                 value = apiId,
                 onValueChange = { apiId = it.filter { c -> c.isDigit() } },
-                label = { Text("api_id") },
+                label = { Text(stringResource(R.string.api_id_label)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
@@ -73,7 +80,7 @@ fun ApiConfigScreen() {
             OutlinedTextField(
                 value = apiHash,
                 onValueChange = { apiHash = it.trim() },
-                label = { Text("api_hash") },
+                label = { Text(stringResource(R.string.api_hash_label)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -88,7 +95,7 @@ fun ApiConfigScreen() {
                 onClick = {
                     val id = apiId.toIntOrNull()
                     if (id == null || id <= 0 || apiHash.length < 8) {
-                        error = "Controlla i valori inseriti."
+                        error = invalidValuesMsg
                         return@Button
                     }
                     loading = true
@@ -97,7 +104,7 @@ fun ApiConfigScreen() {
                         try {
                             TdClient.configureApi(id, apiHash)
                         } catch (e: Throwable) {
-                            error = e.message ?: "Errore sconosciuto"
+                            error = e.message ?: unknownErrorMsg
                             loading = false
                         }
                     }
@@ -105,7 +112,7 @@ fun ApiConfigScreen() {
                 enabled = !loading,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (loading) "Configurazione…" else "Avanti")
+                Text(stringResource(if (loading) R.string.login_step_configuring else R.string.action_next))
             }
             Spacer(Modifier.height(40.dp))
         }

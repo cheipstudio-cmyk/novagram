@@ -40,6 +40,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.secondream.cheipgram.R
+import androidx.compose.ui.res.stringResource
 import com.secondream.cheipgram.td.TdClient
 import com.secondream.cheipgram.ui.theme.Ink
 import org.drinkless.tdlib.TdApi
@@ -103,7 +105,7 @@ private fun MessageContent(message: TdApi.Message) {
             DownloadingImage(
                 initialFile = photo,
                 placeholderIcon = { Icon(Icons.Outlined.Image, null, tint = Ink.Muted) },
-                placeholderLabel = "Foto"
+                placeholderLabel = stringResource(R.string.media_photo)
             )
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
@@ -118,7 +120,7 @@ private fun MessageContent(message: TdApi.Message) {
                 DownloadingImage(
                     initialFile = thumb,
                     placeholderIcon = { Icon(Icons.Outlined.PlayArrow, null, tint = Ink.Cream) },
-                    placeholderLabel = "Video"
+                    placeholderLabel = stringResource(R.string.media_video)
                 )
                 Box(
                     modifier = Modifier
@@ -146,7 +148,7 @@ private fun MessageContent(message: TdApi.Message) {
             DownloadingImage(
                 initialFile = thumb,
                 placeholderIcon = { Icon(Icons.Outlined.Image, null, tint = Ink.Muted) },
-                placeholderLabel = "GIF"
+                placeholderLabel = stringResource(R.string.media_gif)
             )
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
@@ -159,7 +161,7 @@ private fun MessageContent(message: TdApi.Message) {
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Text(
-                        c.document.fileName.ifBlank { "Documento" },
+                        c.document.fileName.ifBlank { stringResource(R.string.media_document) },
                         style = MaterialTheme.typography.titleSmall,
                         color = Ink.Cream,
                         maxLines = 2,
@@ -182,7 +184,7 @@ private fun MessageContent(message: TdApi.Message) {
                 Icon(Icons.Outlined.GraphicEq, null, tint = Ink.Amber, modifier = Modifier.size(28.dp))
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    Text("Nota vocale", style = MaterialTheme.typography.titleSmall, color = Ink.Cream)
+                    Text(stringResource(R.string.media_voice_note), style = MaterialTheme.typography.titleSmall, color = Ink.Cream)
                     Text("${c.voiceNote.duration}s", style = MaterialTheme.typography.labelSmall, color = Ink.Muted)
                 }
             }
@@ -193,7 +195,7 @@ private fun MessageContent(message: TdApi.Message) {
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Text(
-                        c.audio.title.ifBlank { c.audio.fileName }.ifBlank { "Audio" },
+                        c.audio.title.ifBlank { c.audio.fileName }.ifBlank { stringResource(R.string.media_audio) },
                         style = MaterialTheme.typography.titleSmall,
                         color = Ink.Cream
                     )
@@ -201,8 +203,8 @@ private fun MessageContent(message: TdApi.Message) {
                 }
             }
         }
-        is TdApi.MessageSticker -> Text("Sticker", style = MaterialTheme.typography.bodyMedium, color = Ink.Muted)
-        else -> Text("Tipo messaggio non supportato", style = MaterialTheme.typography.bodySmall, color = Ink.Muted)
+        is TdApi.MessageSticker -> Text(stringResource(R.string.media_sticker), style = MaterialTheme.typography.bodyMedium, color = Ink.Muted)
+        else -> Text(stringResource(R.string.media_unsupported), style = MaterialTheme.typography.bodySmall, color = Ink.Muted)
     }
 }
 

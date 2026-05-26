@@ -42,7 +42,13 @@ class MainActivity : ComponentActivity() {
         startTdServiceIfPossible()
 
         setContent {
-            CheipGramTheme {
+            val appearance by AppSettings.appearance.collectAsState(
+                initial = com.secondream.cheipgram.settings.AppearancePrefs()
+            )
+            CheipGramTheme(
+                themeMode = appearance.themeMode,
+                accentColor = appearance.accentColor
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = Color.Unspecified

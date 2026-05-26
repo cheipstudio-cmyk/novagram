@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notif_channel_messages">Mensajes</string>
+    <string name="notif_channel_messages_desc">Notificaciones de mensajes nuevos</string>
+    <string name="notif_channel_service">Servicio en segundo plano</string>
+    <string name="notif_channel_service_desc">Mantiene la conexión activa</string>
+
+    <string name="action_continue">Continuar</string>
+    <string name="action_ok">OK</string>
+    <string name="action_open">Abrir</string>
+    <string name="action_back">Atrás</string>
+    <string name="action_send_code">Enviar código</string>
+    <string name="action_unlock">Desbloquear</string>
+    <string name="action_next">Siguiente</string>
+
+    <string name="api_config_intro">Para empezar necesitas credenciales de API. Entra en my.telegram.org, inicia sesión, crea una aplicación y pega abajo tu api_id y api_hash. Se guardan solo en tu dispositivo.</string>
+    <string name="api_id_label">API ID</string>
+    <string name="api_hash_label">API Hash</string>
+    <string name="api_invalid_values">Revisa los valores introducidos.</string>
+
+    <string name="login_phone_label">Número de teléfono (con prefijo)</string>
+    <string name="login_code_label">Código recibido</string>
+    <string name="login_password_label">Contraseña 2FA</string>
+    <string name="login_step_phone">Introduce tu número para recibir el código.</string>
+    <string name="login_step_code">Revisa la app de Telegram o tus SMS.</string>
+    <string name="login_step_password">Introduce tu contraseña 2FA.</string>
+    <string name="login_step_ready">Listo.</string>
+    <string name="login_step_connecting">Conectando.</string>
+    <string name="login_step_loading">Cargando…</string>
+    <string name="login_step_configuring">Configurando…</string>
+    <string name="login_step_sending">Enviando…</string>
+    <string name="login_step_verifying">Verificando…</string>
+    <string name="login_step_done">Sesión iniciada.</string>
+    <string name="login_password_hint">Pista: %1$s</string>
+    <string name="login_unknown_error">Error desconocido</string>
+
+    <string name="tab_chats">Chats</string>
+    <string name="tab_groups">Grupos</string>
+    <string name="tab_channels">Canales</string>
+    <string name="search_chats_placeholder">Buscar chats</string>
+    <string name="search_action">Buscar</string>
+    <string name="search_close">Cerrar búsqueda</string>
+    <string name="empty_chats">Aún no hay chats.</string>
+    <string name="empty_groups">No hay grupos.</string>
+    <string name="empty_channels">No hay canales.</string>
+    <string name="empty_search_results">Sin resultados para \"%1$s\".</string>
+    <string name="action_logout">Cerrar sesión</string>
+    <string name="action_settings">Ajustes</string>
+    <string name="kind_group">Grupo</string>
+    <string name="kind_channel">Canal</string>
+
+    <string name="chat_default_title">Chat</string>
+    <string name="input_placeholder">Mensaje</string>
+    <string name="recording_hint">Grabando… suelta para enviar, desliza para cancelar</string>
+    <string name="mic_permission_title">Micrófono</string>
+    <string name="mic_permission_body">Se necesita permiso de micrófono para grabar notas de voz.</string>
+    <string name="attach_title">Adjuntar</string>
+    <string name="attach_photo_or_video">Foto o vídeo</string>
+    <string name="attach_document_or_file">Documento o archivo</string>
+    <string name="delete_title">Eliminar mensaje</string>
+    <string name="delete_for_me">Eliminar para mí</string>
+    <string name="delete_for_everyone">Eliminar para todos</string>
+
+    <string name="media_photo">Foto</string>
+    <string name="media_video">Vídeo</string>
+    <string name="media_gif">GIF</string>
+    <string name="media_voice_note">Nota de voz</string>
+    <string name="media_document">Documento</string>
+    <string name="media_audio">Audio</string>
+    <string name="media_sticker">Sticker</string>
+    <string name="media_unsupported">Tipo de mensaje no compatible</string>
+
+    <string name="settings_title">Ajustes</string>
+    <string name="settings_section_appearance">Apariencia</string>
+    <string name="settings_theme">Tema</string>
+    <string name="settings_theme_system">Sistema</string>
+    <string name="settings_theme_light">Claro</string>
+    <string name="settings_theme_dark">Oscuro</string>
+    <string name="settings_accent">Color de acento</string>
+    <string name="settings_accent_amber">Ámbar</string>
+    <string name="settings_accent_blue">Azul</string>
+    <string name="settings_accent_green">Verde</string>
+    <string name="settings_accent_violet">Violeta</string>
+    <string name="settings_section_language">Idioma</string>
+    <string name="settings_language_system">Sistema</string>
+    <string name="settings_language_it">Italiano</string>
+    <string name="settings_language_en">English</string>
+    <string name="settings_language_es">Español</string>
+    <string name="settings_language_fr">Français</string>
+    <string name="settings_language_de">Deutsch</string>
+    <string name="settings_section_account">Cuenta</string>
+    <string name="settings_logout_confirm_title">¿Cerrar sesión?</string>
+    <string name="settings_logout_confirm_body">Cerrarás sesión y se eliminarán los datos locales de la sesión.</string>
+    <string name="settings_logout_confirm_action">Cerrar sesión</string>
+    <string name="settings_logout_cancel">Cancelar</string>
+    <string name="settings_section_info">Información</string>
+    <string name="settings_version">Versión</string>
+    <string name="settings_build">Build</string>
+</resources>

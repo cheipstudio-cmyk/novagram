@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notif_channel_messages">Nachrichten</string>
+    <string name="notif_channel_messages_desc">Benachrichtigungen für neue Nachrichten</string>
+    <string name="notif_channel_service">Hintergrunddienst</string>
+    <string name="notif_channel_service_desc">Hält die Verbindung aktiv</string>
+
+    <string name="action_continue">Weiter</string>
+    <string name="action_ok">OK</string>
+    <string name="action_open">Öffnen</string>
+    <string name="action_back">Zurück</string>
+    <string name="action_send_code">Code senden</string>
+    <string name="action_unlock">Entsperren</string>
+    <string name="action_next">Weiter</string>
+
+    <string name="api_config_intro">Du brauchst API-Zugangsdaten. Geh auf my.telegram.org, melde dich an, erstelle eine Anwendung und füge api_id und api_hash unten ein. Sie bleiben auf deinem Gerät.</string>
+    <string name="api_id_label">API ID</string>
+    <string name="api_hash_label">API Hash</string>
+    <string name="api_invalid_values">Überprüfe die eingegebenen Werte.</string>
+
+    <string name="login_phone_label">Telefonnummer (mit Vorwahl)</string>
+    <string name="login_code_label">Empfangener Code</string>
+    <string name="login_password_label">2FA-Passwort</string>
+    <string name="login_step_phone">Gib deine Nummer ein, um den Code zu erhalten.</string>
+    <string name="login_step_code">Sieh in der Telegram-App oder den SMS nach.</string>
+    <string name="login_step_password">Gib dein 2FA-Passwort ein.</string>
+    <string name="login_step_ready">Bereit.</string>
+    <string name="login_step_connecting">Verbindung läuft.</string>
+    <string name="login_step_loading">Wird geladen…</string>
+    <string name="login_step_configuring">Konfiguration…</string>
+    <string name="login_step_sending">Wird gesendet…</string>
+    <string name="login_step_verifying">Wird geprüft…</string>
+    <string name="login_step_done">Angemeldet.</string>
+    <string name="login_password_hint">Hinweis: %1$s</string>
+    <string name="login_unknown_error">Unbekannter Fehler</string>
+
+    <string name="tab_chats">Chats</string>
+    <string name="tab_groups">Gruppen</string>
+    <string name="tab_channels">Kanäle</string>
+    <string name="search_chats_placeholder">Chats suchen</string>
+    <string name="search_action">Suchen</string>
+    <string name="search_close">Suche schließen</string>
+    <string name="empty_chats">Noch keine Chats.</string>
+    <string name="empty_groups">Keine Gruppen.</string>
+    <string name="empty_channels">Keine Kanäle.</string>
+    <string name="empty_search_results">Keine Ergebnisse für \"%1$s\".</string>
+    <string name="action_logout">Abmelden</string>
+    <string name="action_settings">Einstellungen</string>
+    <string name="kind_group">Gruppe</string>
+    <string name="kind_channel">Kanal</string>
+
+    <string name="chat_default_title">Chat</string>
+    <string name="input_placeholder">Nachricht</string>
+    <string name="recording_hint">Aufnahme… loslassen zum Senden, wischen zum Abbrechen</string>
+    <string name="mic_permission_title">Mikrofon</string>
+    <string name="mic_permission_body">Mikrofonberechtigung wird benötigt, um Sprachnotizen aufzunehmen.</string>
+    <string name="attach_title">Anhängen</string>
+    <string name="attach_photo_or_video">Foto oder Video</string>
+    <string name="attach_document_or_file">Dokument oder Datei</string>
+    <string name="delete_title">Nachricht löschen</string>
+    <string name="delete_for_me">Für mich löschen</string>
+    <string name="delete_for_everyone">Für alle löschen</string>
+
+    <string name="media_photo">Foto</string>
+    <string name="media_video">Video</string>
+    <string name="media_gif">GIF</string>
+    <string name="media_voice_note">Sprachnotiz</string>
+    <string name="media_document">Dokument</string>
+    <string name="media_audio">Audio</string>
+    <string name="media_sticker">Sticker</string>
+    <string name="media_unsupported">Nicht unterstützter Nachrichtentyp</string>
+
+    <string name="settings_title">Einstellungen</string>
+    <string name="settings_section_appearance">Darstellung</string>
+    <string name="settings_theme">Design</string>
+    <string name="settings_theme_system">System</string>
+    <string name="settings_theme_light">Hell</string>
+    <string name="settings_theme_dark">Dunkel</string>
+    <string name="settings_accent">Akzentfarbe</string>
+    <string name="settings_accent_amber">Bernstein</string>
+    <string name="settings_accent_blue">Blau</string>
+    <string name="settings_accent_green">Grün</string>
+    <string name="settings_accent_violet">Violett</string>
+    <string name="settings_section_language">Sprache</string>
+    <string name="settings_language_system">System</string>
+    <string name="settings_language_it">Italiano</string>
+    <string name="settings_language_en">English</string>
+    <string name="settings_language_es">Español</string>
+    <string name="settings_language_fr">Français</string>
+    <string name="settings_language_de">Deutsch</string>
+    <string name="settings_section_account">Konto</string>
+    <string name="settings_logout_confirm_title">Abmelden?</string>
+    <string name="settings_logout_confirm_body">Du wirst abgemeldet und alle lokalen Sitzungsdaten werden entfernt.</string>
+    <string name="settings_logout_confirm_action">Abmelden</string>
+    <string name="settings_logout_cancel">Abbrechen</string>
+    <string name="settings_section_info">Info</string>
+    <string name="settings_version">Version</string>
+    <string name="settings_build">Build</string>
+</resources>

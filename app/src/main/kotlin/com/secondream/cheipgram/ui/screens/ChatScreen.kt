@@ -67,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,6 +78,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.secondream.cheipgram.R
 import com.secondream.cheipgram.td.TdClient
 import com.secondream.cheipgram.ui.components.MessageBubble
 import com.secondream.cheipgram.ui.theme.Ink
@@ -101,9 +103,10 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit) {
     val listState = rememberLazyListState()
     val recorder = remember { VoiceRecorder(context) }
 
-    val chatTitle by produceState(initialValue = "Chat", chatId) {
+    val defaultChatTitle = stringResource(R.string.chat_default_title)
+    val chatTitle by produceState(initialValue = defaultChatTitle, chatId) {
         value = withContext(Dispatchers.IO) {
-            runCatching { TdClient.getChat(chatId).title }.getOrDefault("Chat")
+            runCatching { TdClient.getChat(chatId).title }.getOrDefault(defaultChatTitle)
         }
     }
 
@@ -348,10 +351,10 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit) {
     if (needMicPermission) {
         AlertDialog(
             onDismissRequest = { needMicPermission = false },
-            title = { Text("Microfono") },
-            text = { Text("Servono i permessi del microfono per registrare note vocali.") },
+            title = { Text(stringResource(R.string.mic_permission_title)) },
+            text = { Text(stringResource(R.string.mic_permission_body)) },
             confirmButton = {
-                TextButton(onClick = { needMicPermission = false }) { Text("OK") }
+                TextButton(onClick = { needMicPermission = false }) { Text(stringResource(R.string.action_ok)) }
             }
         )
     }
@@ -383,7 +386,7 @@ private fun InputBar(
                     modifier = Modifier.size(10.dp).clip(CircleShape).background(Ink.Error)
                 )
                 Spacer(Modifier.width(10.dp))
-                Text("Registrazione in corso… rilascia per inviare, scorri per annullare",
+                Text(stringResource(R.string.recording_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = Ink.Muted,
                     modifier = Modifier.weight(1f),
@@ -407,7 +410,7 @@ private fun InputBar(
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
                     if (value.isEmpty()) {
-                        Text("Messaggio", color = Ink.Faint, style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.input_placeholder), color = Ink.Faint, style = MaterialTheme.typography.bodyLarge)
                     }
                     BasicTextField(
                         value = value,
@@ -478,11 +481,11 @@ private fun AttachSheet(
         containerColor = Ink.Surface
     ) {
         Column(modifier = Modifier.padding(20.dp).navigationBarsPadding()) {
-            Text("Allega", style = MaterialTheme.typography.titleLarge, fontStyle = FontStyle.Italic)
+            Text(stringResource(R.string.attach_title), style = MaterialTheme.typography.titleLarge, fontStyle = FontStyle.Italic)
             Spacer(Modifier.height(16.dp))
-            AttachOption("Foto o video", Icons.Outlined.Image, onPickPhoto)
+            AttachOption(stringResource(R.string.attach_photo_or_video), Icons.Outlined.Image, onPickPhoto)
             Spacer(Modifier.height(4.dp))
-            AttachOption("Documento o file", Icons.Outlined.Description, onPickDocument)
+            AttachOption(stringResource(R.string.attach_document_or_file), Icons.Outlined.Description, onPickDocument)
             Spacer(Modifier.height(8.dp))
         }
     }
@@ -508,7 +511,7 @@ private fun AttachOption(label: String, icon: androidx.compose.ui.graphics.vecto
         Text(label, style = MaterialTheme.typography.titleMedium, color = Ink.Cream)
         Spacer(Modifier.weight(1f))
         TextButton(onClick = onClick) {
-            Text("Apri", color = Ink.Amber)
+            Text(stringResource(R.string.action_open), color = Ink.Amber)
         }
     }
 }
@@ -536,12 +539,12 @@ private fun DeleteSheet(
         containerColor = Ink.Surface
     ) {
         Column(modifier = Modifier.padding(20.dp).navigationBarsPadding()) {
-            Text("Elimina messaggio", style = MaterialTheme.typography.titleLarge, fontStyle = FontStyle.Italic)
+            Text(stringResource(R.string.delete_title), style = MaterialTheme.typography.titleLarge, fontStyle = FontStyle.Italic)
             Spacer(Modifier.height(16.dp))
-            DeleteOption("Elimina per me", onDeleteForMe)
+            DeleteOption(stringResource(R.string.delete_for_me), onDeleteForMe)
             if (canRevoke) {
                 Spacer(Modifier.height(4.dp))
-                DeleteOption("Elimina per tutti", onDeleteForEveryone, destructive = true)
+                DeleteOption(stringResource(R.string.delete_for_everyone), onDeleteForEveryone, destructive = true)
             }
             Spacer(Modifier.height(8.dp))
         }

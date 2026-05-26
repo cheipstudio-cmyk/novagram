@@ -15,12 +15,14 @@ import com.secondream.cheipgram.ui.screens.ApiConfigScreen
 import com.secondream.cheipgram.ui.screens.ChatListScreen
 import com.secondream.cheipgram.ui.screens.ChatScreen
 import com.secondream.cheipgram.ui.screens.LoginScreen
+import com.secondream.cheipgram.ui.screens.SettingsScreen
 
 object Routes {
     const val CONFIG = "config"
     const val LOGIN = "login"
     const val CHATS = "chats"
     const val CHAT = "chat/{chatId}"
+    const val SETTINGS = "settings"
     fun chat(id: Long) = "chat/$id"
 }
 
@@ -59,7 +61,13 @@ fun AppRouter() {
         composable(Routes.CONFIG) { ApiConfigScreen() }
         composable(Routes.LOGIN) { LoginScreen() }
         composable(Routes.CHATS) {
-            ChatListScreen(onChatClick = { id -> nav.navigate(Routes.chat(id)) })
+            ChatListScreen(
+                onChatClick = { id -> nav.navigate(Routes.chat(id)) },
+                onOpenSettings = { nav.navigate(Routes.SETTINGS) }
+            )
+        }
+        composable(Routes.SETTINGS) {
+            SettingsScreen(onBack = { nav.popBackStack() })
         }
         composable(
             Routes.CHAT,

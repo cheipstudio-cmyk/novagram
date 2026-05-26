@@ -23,11 +23,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import com.secondream.cheipgram.R
 import com.secondream.cheipgram.td.AuthState
 import com.secondream.cheipgram.td.TdClient
 
@@ -69,7 +71,7 @@ fun LoginScreen() {
                     OutlinedTextField(
                         value = phone,
                         onValueChange = { phone = it },
-                        label = { Text("Numero di telefono (con prefisso)") },
+                        label = { Text(stringResource(R.string.login_phone_label)) },
                         placeholder = { Text("+39…") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -88,13 +90,19 @@ fun LoginScreen() {
                         },
                         enabled = !busy && phone.length >= 6,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (busy) "Invio…" else "Invia codice") }
+                    ) {
+                        Text(
+                            stringResource(
+                                if (busy) R.string.login_step_sending else R.string.action_send_code
+                            )
+                        )
+                    }
                 }
                 is AuthState.WaitCode -> {
                     OutlinedTextField(
                         value = code,
                         onValueChange = { code = it.filter { c -> c.isDigit() } },
-                        label = { Text("Codice ricevuto") },
+                        label = { Text(stringResource(R.string.login_code_label)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
@@ -112,17 +120,27 @@ fun LoginScreen() {
                         },
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (busy) "Verifica…" else "Continua") }
+                    ) {
+                        Text(
+                            stringResource(
+                                if (busy) R.string.login_step_verifying else R.string.action_continue
+                            )
+                        )
+                    }
                 }
                 is AuthState.WaitPassword -> {
                     if (!s.hint.isNullOrBlank()) {
-                        Text("Suggerimento: ${s.hint}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            stringResource(R.string.login_password_hint, s.hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Spacer(Modifier.height(8.dp))
                     }
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
-                        label = { Text("Password 2FA") },
+                        label = { Text(stringResource(R.string.login_password_label)) },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth(),
@@ -141,16 +159,28 @@ fun LoginScreen() {
                         },
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (busy) "Verifica…" else "Sblocca") }
+                    ) {
+                        Text(
+                            stringResource(
+                                if (busy) R.string.login_step_verifying else R.string.action_unlock
+                            )
+                        )
+                    }
                 }
                 AuthState.Ready -> {
-                    Text("Accesso completato.", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        stringResource(R.string.login_step_done),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
                 is AuthState.Error -> {
                     Text(s.message, color = MaterialTheme.colorScheme.error)
                 }
                 else -> {
-                    Text("Caricamento…", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        stringResource(R.string.login_step_loading),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
 
@@ -163,10 +193,11 @@ fun LoginScreen() {
     }
 }
 
+@Composable
 private fun stepLabel(state: AuthState): String = when (state) {
-    is AuthState.WaitPhoneNumber -> "Inserisci il tuo numero per ricevere il codice."
-    is AuthState.WaitCode -> "Controlla l'app Telegram o gli SMS."
-    is AuthState.WaitPassword -> "Inserisci la password 2FA."
-    is AuthState.Ready -> "Pronto."
-    else -> "Connessione in corso."
+    is AuthState.WaitPhoneNumber -> stringResource(R.string.login_step_phone)
+    is AuthState.WaitCode -> stringResource(R.string.login_step_code)
+    is AuthState.WaitPassword -> stringResource(R.string.login_step_password)
+    is AuthState.Ready -> stringResource(R.string.login_step_ready)
+    else -> stringResource(R.string.login_step_connecting)
 }
