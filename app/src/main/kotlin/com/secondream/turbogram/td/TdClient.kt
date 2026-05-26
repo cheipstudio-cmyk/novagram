@@ -314,17 +314,17 @@ object TdClient {
 
     suspend fun sendText(chatId: Long, text: String) {
         val content = TdApi.InputMessageText(TdApi.FormattedText(text, emptyArray()), null, true)
-        send(TdApi.SendMessage(chatId, 0, null, null, null, content))
+        send(TdApi.SendMessage(chatId, null, null, null, null, content))
     }
 
     suspend fun sendPhoto(chatId: Long, filePath: String, caption: String? = null) {
         val content = TdApi.InputMessagePhoto(
             TdApi.InputFileLocal(filePath),
-            null, emptyArray(), 0, 0,
+            null, null, emptyArray(), 0, 0,
             caption?.let { TdApi.FormattedText(it, emptyArray()) },
             false, null, false
         )
-        send(TdApi.SendMessage(chatId, 0, null, null, null, content))
+        send(TdApi.SendMessage(chatId, null, null, null, null, content))
     }
 
     suspend fun sendDocument(chatId: Long, filePath: String, caption: String? = null) {
@@ -333,7 +333,7 @@ object TdClient {
             null, false,
             caption?.let { TdApi.FormattedText(it, emptyArray()) }
         )
-        send(TdApi.SendMessage(chatId, 0, null, null, null, content))
+        send(TdApi.SendMessage(chatId, null, null, null, null, content))
     }
 
     suspend fun sendVoiceNote(chatId: Long, filePath: String, durationSeconds: Int) {
@@ -341,7 +341,7 @@ object TdClient {
             TdApi.InputFileLocal(filePath),
             durationSeconds, ByteArray(0), null, null
         )
-        send(TdApi.SendMessage(chatId, 0, null, null, null, content))
+        send(TdApi.SendMessage(chatId, null, null, null, null, content))
     }
 
     suspend fun downloadFile(fileId: Int): TdApi.File {
