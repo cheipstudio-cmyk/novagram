@@ -197,12 +197,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                         fontWeight = FontWeight.Light
                     )
                 }
-                AnimatedVisibility(
-                    visible = saving,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier.fillMaxSize()
-                ) {
+                if (saving) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
