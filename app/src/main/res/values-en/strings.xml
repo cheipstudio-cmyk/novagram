@@ -136,4 +136,21 @@
     <string name="bubble_green">Green</string>
     <string name="bubble_violet">Violet</string>
     <string name="bubble_rose">Rose</string>
+    <string name="action_mute_chat">Mute notifications</string>
+    <string name="action_unmute_chat">Unmute notifications</string>
+    <string name="service_contact_joined">joined Telegram</string>
+    <string name="service_chat_join">joined the group</string>
+    <string name="service_chat_leave">left the group</string>
+    <string name="service_chat_photo_changed">changed the group photo</string>
+    <string name="service_chat_title_changed">changed the group name</string>
+    <string name="service_pinned_message">pinned a message</string>
+    <string name="media_viewer_close">Close</string>
+    <string name="settings_section_privacy">Privacy</string>
+    <string name="settings_privacy_read_receipts">Show read receipts</string>
+    <string name="settings_privacy_read_receipts_desc">Show others when you have read their messages</string>
+    <string name="credits_built_by">Built by Second Dream</string>
+    <string name="credits_buy_coffee">Buy me a coffee</string>
+    <string name="login_country_code">Country code</string>
+    <string name="login_country_search">Search country</string>
+    <string name="login_phone_only_number">Number (without code)</string>
 </resources>

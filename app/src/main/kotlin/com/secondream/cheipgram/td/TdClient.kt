@@ -115,7 +115,15 @@ object TdClient {
                 refreshChats()
             }
             is TdApi.UpdateChatLastMessage -> {
-                chatCache[obj.chatId]?.lastMessage = obj.lastMessage
+                chatCache[obj.chatId]?.let { chat ->
+                    chat.lastMessage = obj.lastMessage
+                    // The positions array carried by this update supersedes the
+                    // chat's previous positions whenever TDLib decides the new
+                    // message changes the ordering. Without this assignment the
+                    // chat list never re-orders to put the chat with the freshest
+                    // message on top.
+                    if (obj.positions.isNotEmpty()) chat.positions = obj.positions
+                }
                 refreshChats()
             }
             is TdApi.UpdateChatPosition -> {
@@ -134,6 +142,10 @@ object TdClient {
             is TdApi.UpdateChatReadInbox -> {
                 chatCache[obj.chatId]?.unreadCount = obj.unreadCount
                 refreshChats()
+            }
+            is TdApi.UpdateChatReadOutbox -> {
+                chatCache[obj.chatId]?.lastReadOutboxMessageId = obj.lastReadOutboxMessageId
+                scope.launch { _chatUpdates.emit(obj.chatId) }
             }
             is TdApi.UpdateUser -> {
                 userCache[obj.user.id] = obj.user
@@ -168,7 +180,10 @@ object TdClient {
         Log.e(TAG, "TDLib error", error)
     }
 
+    private var refreshRevision = 0L
+
     private fun refreshChats() {
+        val rev = ++refreshRevision
         val list = chatCache.values
             .mapNotNull { chat ->
                 val pos = chat.positions.firstOrNull { it.list is TdApi.ChatListMain }
@@ -181,7 +196,8 @@ object TdClient {
                     lastMessagePreview = buildPreview(chat.lastMessage),
                     lastMessageTimestamp = chat.lastMessage?.date?.toLong()?.times(1000) ?: 0L,
                     kind = resolveKind(chat),
-                    chat = chat
+                    chat = chat,
+                    revision = rev
                 )
             }
             .sortedByDescending { it.order }
@@ -486,6 +502,43 @@ object TdClient {
         send(TdApi.DeleteChatHistory(chatId, removeFromChatList, revoke))
     }
 
+    /**
+     * Mute or unmute a chat. Mute is implemented as Int.MAX_VALUE seconds —
+     * effectively "forever" — which matches Telegram's "Disable notifications".
+     * Unmute clears `muteFor` back to zero. All other notification fields are
+     * left to inherit the scope default (use_default_* = true).
+     */
+    suspend fun setChatMuted(chatId: Long, muted: Boolean) {
+        val muteFor = if (muted) Int.MAX_VALUE else 0
+        val s = TdApi.ChatNotificationSettings(
+            false, muteFor,         // use_default_mute_for, mute_for
+            true, 0L,               // use_default_sound, sound_id
+            true, true,             // use_default_show_preview, show_preview
+            true, false,            // use_default_mute_stories, mute_stories
+            true, 0L,               // use_default_story_sound, story_sound_id
+            true, true,             // use_default_show_story_poster, show_story_poster
+            true, false,            // use_default_disable_pinned_message_notifications, disable_pinned_message_notifications
+            true, false             // use_default_disable_mention_notifications, disable_mention_notifications
+        )
+        send(TdApi.SetChatNotificationSettings(chatId, s))
+    }
+
+    /**
+     * Read whether the account shows the read-date marker (the second tick in
+     * a private chat) to other people. Telegram applies this globally, not
+     * per chat. Defaults to true if TDLib hasn't synced yet.
+     */
+    suspend fun getReadDatePrivacy(): Boolean {
+        val r = runCatching {
+            send(TdApi.GetReadDatePrivacySettings()) as TdApi.ReadDatePrivacySettings
+        }.getOrNull()
+        return r?.showReadDate ?: true
+    }
+
+    suspend fun setReadDatePrivacy(show: Boolean) {
+        send(TdApi.SetReadDatePrivacySettings(TdApi.ReadDatePrivacySettings(show)))
+    }
+
     /** Server-side chat search by title/username. Returns matching chat ids. */
     suspend fun searchChatsRemote(query: String, limit: Int = 50): LongArray {
         if (query.isBlank()) return LongArray(0)
@@ -510,7 +563,8 @@ data class ChatSummary(
     val lastMessagePreview: String,
     val lastMessageTimestamp: Long,
     val kind: ChatKind,
-    val chat: TdApi.Chat
+    val chat: TdApi.Chat,
+    val revision: Long = 0L
 )
 
 data class DeleteEvent(val chatId: Long, val messageIds: LongArray) {

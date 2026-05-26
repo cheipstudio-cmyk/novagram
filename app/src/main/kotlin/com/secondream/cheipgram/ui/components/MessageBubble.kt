@@ -56,7 +56,8 @@ import java.util.Locale
 fun MessageBubble(
     message: TdApi.Message,
     showSender: Boolean = false,
-    onLongPress: (TdApi.Message) -> Unit = {}
+    onLongPress: (TdApi.Message) -> Unit = {},
+    onMediaTap: (String) -> Unit = {}
 ) {
     val mine = message.isOutgoing
     val appearance by AppSettings.appearance.collectAsState(
@@ -104,7 +105,19 @@ fun MessageBubble(
                 .clip(shape)
                 .background(fill.background)
                 .combinedClickable(
-                    onClick = { /* future: open media */ },
+                    onClick = {
+                        val path: String? = when (val c = message.content) {
+                            is TdApi.MessagePhoto -> c.photo.sizes
+                                .lastOrNull { it.photo.local.isDownloadingCompleted }
+                                ?.photo?.local?.path
+                            is TdApi.MessageAnimation -> c.animation.animation
+                                .takeIf { it.local.isDownloadingCompleted }?.local?.path
+                            is TdApi.MessageVideo -> c.video.video
+                                .takeIf { it.local.isDownloadingCompleted }?.local?.path
+                            else -> null
+                        }
+                        if (!path.isNullOrBlank()) onMediaTap(path)
+                    },
                     onLongClick = { onLongPress(message) }
                 )
                 .padding(horizontal = 14.dp, vertical = 10.dp),
@@ -123,11 +136,42 @@ fun MessageBubble(
             }
             MessageContent(message, fill.onBackground)
             Spacer(Modifier.height(2.dp))
-            Text(
-                text = formatHHmm(message.date),
-                style = MaterialTheme.typography.labelSmall,
-                color = fill.onBackground.copy(alpha = 0.55f)
-            )
+            // Outgoing messages in private chats show a tick marker next to
+            // the timestamp: a clock when still sending, an exclamation on
+            // failure, a single tick when delivered, double tick when read.
+            // Groups don't get ticks because TDLib doesn't expose per-member
+            // read state cheaply.
+            val cachedChat = TdClient.getCachedChat(message.chatId)
+            val isPrivateChat = cachedChat?.type is TdApi.ChatTypePrivate
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = formatHHmm(message.date),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = fill.onBackground.copy(alpha = 0.55f)
+                )
+                if (mine && isPrivateChat) {
+                    Spacer(Modifier.width(4.dp))
+                    val sendingState = message.sendingState
+                    val isRead = (cachedChat?.lastReadOutboxMessageId ?: 0L) >= message.id
+                    val ticks = when {
+                        sendingState is TdApi.MessageSendingStatePending -> "⏱"
+                        sendingState is TdApi.MessageSendingStateFailed -> "!"
+                        isRead -> "✓✓"
+                        else -> "✓"
+                    }
+                    val tint = when {
+                        sendingState is TdApi.MessageSendingStateFailed ->
+                            MaterialTheme.colorScheme.error
+                        isRead -> MaterialTheme.colorScheme.primary
+                        else -> fill.onBackground.copy(alpha = 0.55f)
+                    }
+                    Text(
+                        ticks,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tint
+                    )
+                }
+            }
         }
     }
 }
@@ -246,6 +290,36 @@ private fun MessageContent(message: TdApi.Message, onBackground: androidx.compos
             }
         }
         is TdApi.MessageSticker -> Text(stringResource(R.string.media_sticker), style = MaterialTheme.typography.bodyMedium, color = onBackground.copy(alpha = 0.6f))
+        is TdApi.MessageContactRegistered -> Text(
+            stringResource(R.string.service_contact_joined),
+            style = MaterialTheme.typography.labelMedium,
+            color = onBackground.copy(alpha = 0.7f)
+        )
+        is TdApi.MessageChatJoinByLink, is TdApi.MessageChatAddMembers -> Text(
+            stringResource(R.string.service_chat_join),
+            style = MaterialTheme.typography.labelMedium,
+            color = onBackground.copy(alpha = 0.7f)
+        )
+        is TdApi.MessageChatDeleteMember -> Text(
+            stringResource(R.string.service_chat_leave),
+            style = MaterialTheme.typography.labelMedium,
+            color = onBackground.copy(alpha = 0.7f)
+        )
+        is TdApi.MessageChatChangePhoto -> Text(
+            stringResource(R.string.service_chat_photo_changed),
+            style = MaterialTheme.typography.labelMedium,
+            color = onBackground.copy(alpha = 0.7f)
+        )
+        is TdApi.MessageChatChangeTitle -> Text(
+            stringResource(R.string.service_chat_title_changed),
+            style = MaterialTheme.typography.labelMedium,
+            color = onBackground.copy(alpha = 0.7f)
+        )
+        is TdApi.MessagePinMessage -> Text(
+            stringResource(R.string.service_pinned_message),
+            style = MaterialTheme.typography.labelMedium,
+            color = onBackground.copy(alpha = 0.7f)
+        )
         else -> Text(stringResource(R.string.media_unsupported), style = MaterialTheme.typography.bodySmall, color = onBackground.copy(alpha = 0.6f))
     }
 }

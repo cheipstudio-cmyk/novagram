@@ -17,6 +17,8 @@ import com.secondream.cheipgram.ui.screens.ApiConfigScreen
 import com.secondream.cheipgram.ui.screens.ChatListScreen
 import com.secondream.cheipgram.ui.screens.ChatScreen
 import com.secondream.cheipgram.ui.screens.LoginScreen
+import com.secondream.cheipgram.ui.screens.MediaViewerHolder
+import com.secondream.cheipgram.ui.screens.MediaViewerScreen
 import com.secondream.cheipgram.ui.screens.NewChatScreen
 import com.secondream.cheipgram.ui.screens.ProfileScreen
 import com.secondream.cheipgram.ui.screens.SettingsScreen
@@ -29,6 +31,7 @@ object Routes {
     const val SETTINGS = "settings"
     const val PROFILE = "profile"
     const val NEW_CHAT = "new_chat"
+    const val MEDIA_VIEWER = "media_viewer"
     fun chat(id: Long) = "chat/$id"
 }
 
@@ -77,10 +80,10 @@ fun AppRouter(
         }
     }
 
-    // Slide transitions: pushing a new screen slides it in from the right,
-    // popping back slides the previous one from the left. 260ms feels snappy
-    // without being abrupt.
-    val durationMs = 260
+    // Push-style transitions: new screen slides in from the right while the
+    // outgoing screen shrinks slightly, giving a sense of depth (like iOS
+    // navigation). On pop, the back transition mirrors the entry.
+    val durationMs = 300
     NavHost(
         navController = nav,
         startDestination = Routes.LOGIN,
@@ -88,25 +91,25 @@ fun AppRouter(
             slideIntoContainer(
                 AnimatedContentTransitionScope.SlideDirection.Start,
                 animationSpec = tween(durationMs)
-            )
+            ) + androidx.compose.animation.fadeIn(tween(220))
         },
         exitTransition = {
-            slideOutOfContainer(
-                AnimatedContentTransitionScope.SlideDirection.Start,
+            androidx.compose.animation.scaleOut(
+                targetScale = 0.92f,
                 animationSpec = tween(durationMs)
-            )
+            ) + androidx.compose.animation.fadeOut(tween(220))
         },
         popEnterTransition = {
-            slideIntoContainer(
-                AnimatedContentTransitionScope.SlideDirection.End,
+            androidx.compose.animation.scaleIn(
+                initialScale = 0.92f,
                 animationSpec = tween(durationMs)
-            )
+            ) + androidx.compose.animation.fadeIn(tween(220))
         },
         popExitTransition = {
             slideOutOfContainer(
                 AnimatedContentTransitionScope.SlideDirection.End,
                 animationSpec = tween(durationMs)
-            )
+            ) + androidx.compose.animation.fadeOut(tween(220))
         }
     ) {
         composable(Routes.CONFIG) { ApiConfigScreen() }
@@ -134,12 +137,31 @@ fun AppRouter(
                 }
             )
         }
+        composable(Routes.MEDIA_VIEWER) {
+            val path = MediaViewerHolder.currentPath
+            if (path != null) {
+                MediaViewerScreen(
+                    filePath = path,
+                    onClose = {
+                        MediaViewerHolder.currentPath = null
+                        nav.popBackStack()
+                    }
+                )
+            } else {
+                // Path was lost (process death etc) — just go back.
+                androidx.compose.runtime.LaunchedEffect(Unit) { nav.popBackStack() }
+            }
+        }
         composable(
             Routes.CHAT,
             arguments = listOf(navArgument("chatId") { type = NavType.LongType })
         ) { entry ->
             val id = entry.arguments?.getLong("chatId") ?: 0L
-            ChatScreen(chatId = id, onBack = { nav.popBackStack() })
+            ChatScreen(
+                chatId = id,
+                onBack = { nav.popBackStack() },
+                onOpenMediaViewer = { nav.navigate(Routes.MEDIA_VIEWER) }
+            )
         }
     }
 }

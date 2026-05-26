@@ -33,14 +33,19 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* user choice handled implicitly */ }
 
-    /**
-     * When a notification is tapped, NotificationHelper stuffs the source
-     * chat id into the launch Intent. We surface it here as a StateFlow so
-     * AppRouter can navigate as soon as the auth state is Ready. It's reset
-     * to null after navigation so subsequent re-renders don't keep jumping
-     * back into the same chat.
-     */
     private val pendingChatId = MutableStateFlow<Long?>(null)
+
+    /**
+     * Apply the user's per-app locale before any onCreate runs, so resource
+     * lookups (stringResource, etc.) see the right strings.xml. AppCompat's
+     * setApplicationLocales does not work on ComponentActivity, so we wrap
+     * the base context manually via LocaleHelper.
+     */
+    override fun attachBaseContext(newBase: android.content.Context) {
+        AppSettings.init(newBase)
+        val tag = kotlinx.coroutines.runBlocking { AppSettings.currentLanguageTag() }
+        super.attachBaseContext(com.secondream.cheipgram.util.LocaleHelper.wrap(newBase, tag))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

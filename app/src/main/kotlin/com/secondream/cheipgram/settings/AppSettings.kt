@@ -50,7 +50,11 @@ object AppSettings {
     private val OTHERS_BUBBLE = stringPreferencesKey("others_bubble_color")
 
     fun init(ctx: Context) {
-        appContext = ctx.applicationContext
+        // idempotent — Activity.attachBaseContext runs before Application.onCreate
+        // when the OS restores the process, so this can be called more than once.
+        if (!::appContext.isInitialized) {
+            appContext = ctx.applicationContext
+        }
     }
 
     val apiConfig: Flow<ApiConfig>

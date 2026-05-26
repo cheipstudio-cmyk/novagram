@@ -1,11 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Notification status-bar icon: same C+play silhouette as the launcher,
+    rendered as a single-tint mask so Android can color it according to the
+    notification's accent color. Viewport 24x24, content centered with a 2dp
+    margin so the icon stays clear of the status-bar edge.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24"
     android:tint="#FFFFFFFF">
+    <!-- C: arc opened to the right -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M4,4 L20,4 C21.1,4 22,4.9 22,6 L22,16 C22,17.1 21.1,18 20,18 L8,18 L4,22 L4,6 C4,4.9 4.9,4 5,4 Z" />
+        android:pathData="M11,3 C7,3 4,6.2 4,12 C4,17.8 7,21 11,21 C12.6,21 14.2,20.6 15.4,19.8 L13.8,16 C13,16.4 12.2,16.6 11.4,16.6 C8.6,16.6 7,14.8 7,12 C7,9.2 8.6,7.4 11.4,7.4 C12.2,7.4 13,7.6 13.8,8 L15.4,4.2 C14.2,3.4 12.6,3 11,3 Z" />
+    <!-- Play triangle in the C opening -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M14,7 L21,12 L14,17 Z" />
 </vector>

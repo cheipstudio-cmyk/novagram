@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -93,7 +94,8 @@ fun ChatListScreen(
     var selectedTab by remember { mutableStateOf(0) }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    var deleteChatTarget by remember { mutableStateOf<ChatSummary?>(null) }
+    var chatActionTarget by remember { mutableStateOf<ChatSummary?>(null) }
+    var deleteConfirmTarget by remember { mutableStateOf<ChatSummary?>(null) }
 
     // Current-user avatar shown in the TopBar's profile button. We fetch
     // once when the screen lands and let TdClient.fileUpdates refresh it.
@@ -105,14 +107,6 @@ fun ChatListScreen(
             myInitial = me.firstName.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
             myAvatarFile = me.profilePhoto?.small
         }
-    }
-
-    // Filter pipeline: tab first (cheap), then local query.
-    val visibleChats = remember(allChats, selectedTab, searchQuery) {
-        val activeKind = TAB_SPECS[selectedTab].kind
-        val byKind = allChats.filter { it.kind == activeKind }
-        if (searchQuery.isBlank()) byKind
-        else byKind.filter { it.title.contains(searchQuery.trim(), ignoreCase = true) }
     }
 
     Scaffold(
@@ -138,11 +132,25 @@ fun ChatListScreen(
                                 onValueChange = { searchQuery = it }
                             )
                         } else {
-                            Text(
-                                stringResource(R.string.app_name),
-                                style = MaterialTheme.typography.displayMedium,
-                                fontStyle = FontStyle.Italic
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                androidx.compose.foundation.Image(
+                                    painter = androidx.compose.ui.res.painterResource(
+                                        R.drawable.ic_cheipgram_logo
+                                    ),
+                                    contentDescription = null,
+                                    colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
+                                        MaterialTheme.colorScheme.primary
+                                    ),
+                                    modifier = Modifier.size(28.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    stringResource(R.string.app_name),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontStyle = FontStyle.Italic,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     },
                     actions = {
@@ -184,71 +192,108 @@ fun ChatListScreen(
                         titleContentColor = MaterialTheme.colorScheme.onBackground
                     )
                 )
-                PrimaryTabRow(
-                    selectedTabIndex = selectedTab,
-                    containerColor = MaterialTheme.colorScheme.background
+                PillTabs(
+                    titles = TAB_SPECS.map { stringResource(it.labelRes) },
+                    selected = selectedTab,
+                    onSelect = { selectedTab = it }
+                )
+            }
+        }
+    ) { padding ->
+        val pagerState = androidx.compose.foundation.pager.rememberPagerState(
+            initialPage = selectedTab,
+            pageCount = { TAB_SPECS.size }
+        )
+        // Two-way sync between the pill tabs and the pager.
+        LaunchedEffect(selectedTab) {
+            if (pagerState.currentPage != selectedTab) {
+                pagerState.animateScrollToPage(selectedTab)
+            }
+        }
+        LaunchedEffect(pagerState.currentPage, pagerState.isScrollInProgress) {
+            if (!pagerState.isScrollInProgress && selectedTab != pagerState.currentPage) {
+                selectedTab = pagerState.currentPage
+            }
+        }
+        androidx.compose.foundation.pager.HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize().padding(padding)
+        ) { page ->
+            val pageKind = TAB_SPECS[page].kind
+            val pageChats = remember(allChats, page, searchQuery) {
+                val q = searchQuery.trim()
+                allChats
+                    .filter { it.kind == pageKind }
+                    .let { list ->
+                        if (q.isBlank()) list
+                        else list.filter { it.title.contains(q, ignoreCase = true) }
+                    }
+            }
+            if (pageChats.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
-                    TAB_SPECS.forEachIndexed { i, spec ->
-                        Tab(
-                            selected = selectedTab == i,
-                            onClick = { selectedTab = i },
-                            text = {
-                                Text(
-                                    stringResource(spec.labelRes),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = if (selectedTab == i) FontWeight.SemiBold else FontWeight.Normal
-                                )
-                            }
+                    Text(
+                        when {
+                            searchQuery.isNotBlank() ->
+                                stringResource(R.string.empty_search_results, searchQuery.trim())
+                            pageKind == ChatKind.Group -> stringResource(R.string.empty_groups)
+                            pageKind == ChatKind.Channel -> stringResource(R.string.empty_channels)
+                            else -> stringResource(R.string.empty_chats)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(vertical = 4.dp)
+                ) {
+                    items(pageChats, key = { it.id }) { c ->
+                        ChatRow(
+                            c,
+                            onClick = { onChatClick(c.id) },
+                            onLongClick = { chatActionTarget = c },
+                            modifier = Modifier.animateItem()
+                        )
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outline,
+                            thickness = 0.5.dp,
+                            modifier = Modifier.padding(start = 88.dp)
                         )
                     }
                 }
             }
         }
-    ) { padding ->
-        if (visibleChats.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    when {
-                        searchQuery.isNotBlank() ->
-                            stringResource(R.string.empty_search_results, searchQuery.trim())
-                        selectedTab == 1 -> stringResource(R.string.empty_groups)
-                        selectedTab == 2 -> stringResource(R.string.empty_channels)
-                        else -> stringResource(R.string.empty_chats)
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            return@Scaffold
-        }
-
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(vertical = 4.dp)
-        ) {
-            items(visibleChats, key = { it.id }) { c ->
-                ChatRow(
-                    c,
-                    onClick = { onChatClick(c.id) },
-                    onLongClick = { deleteChatTarget = c },
-                    modifier = Modifier.animateItem()
-                )
-                HorizontalDivider(
-                    color = Ink.SurfaceLine,
-                    thickness = 0.5.dp,
-                    modifier = Modifier.padding(start = 88.dp)
-                )
-            }
-        }
     }
 
-    deleteChatTarget?.let { target ->
+    chatActionTarget?.let { target ->
+        val cachedChat = TdClient.getCachedChat(target.id)
+        val isMuted = (cachedChat?.notificationSettings?.muteFor ?: 0) > 0
+        ChatActionSheet(
+            chatTitle = target.title,
+            isMuted = isMuted,
+            onDismiss = { chatActionTarget = null },
+            onToggleMute = {
+                val cid = target.id
+                chatActionTarget = null
+                scope.launch {
+                    runCatching { TdClient.setChatMuted(cid, !isMuted) }
+                }
+            },
+            onDeleteRequest = {
+                deleteConfirmTarget = target
+                chatActionTarget = null
+            }
+        )
+    }
+
+    deleteConfirmTarget?.let { target ->
         var alsoRevoke by remember { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { deleteChatTarget = null },
+            onDismissRequest = { deleteConfirmTarget = null },
             title = { Text(stringResource(R.string.delete_chat_confirm_title)) },
             text = {
                 Column {
@@ -281,7 +326,7 @@ fun ChatListScreen(
                 androidx.compose.material3.TextButton(onClick = {
                     val cid = target.id
                     val revoke = alsoRevoke && target.kind == ChatKind.Private
-                    deleteChatTarget = null
+                    deleteConfirmTarget = null
                     scope.launch {
                         runCatching {
                             TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = revoke)
@@ -295,11 +340,115 @@ fun ChatListScreen(
                 }
             },
             dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { deleteChatTarget = null }) {
+                androidx.compose.material3.TextButton(onClick = { deleteConfirmTarget = null }) {
                     Text(stringResource(R.string.delete_chat_cancel))
                 }
             }
         )
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatActionSheet(
+    chatTitle: String,
+    isMuted: Boolean,
+    onDismiss: () -> Unit,
+    onToggleMute: () -> Unit,
+    onDeleteRequest: () -> Unit
+) {
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 8.dp)
+            .navigationBarsPadding()
+        ) {
+            Text(
+                chatTitle,
+                style = MaterialTheme.typography.titleLarge,
+                fontStyle = FontStyle.Italic
+            )
+            Spacer(Modifier.height(20.dp))
+            ChatActionRow(
+                label = stringResource(
+                    if (isMuted) R.string.action_unmute_chat else R.string.action_mute_chat
+                ),
+                onClick = onToggleMute
+            )
+            Spacer(Modifier.height(4.dp))
+            ChatActionRow(
+                label = stringResource(R.string.action_delete_chat),
+                destructive = true,
+                onClick = onDeleteRequest
+            )
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun ChatActionRow(
+    label: String,
+    destructive: Boolean = false,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 14.dp, horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.titleMedium,
+            color = if (destructive) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.primary
+        )
+    }
+}
+
+@Composable
+private fun PillTabs(
+    titles: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit
+) {
+    val animatedPrimary = MaterialTheme.colorScheme.primary
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
+    val onSurfaceMuted = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        titles.forEachIndexed { i, title ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                    .background(if (selected == i) animatedPrimary else androidx.compose.ui.graphics.Color.Transparent)
+                    .clickable { onSelect(i) }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected == i) onPrimary else onSurfaceMuted,
+                    fontWeight = if (selected == i) FontWeight.SemiBold else FontWeight.Medium
+                )
+            }
+        }
     }
 }
 

@@ -87,7 +87,11 @@ import com.secondream.cheipgram.util.VoiceRecorder
 import org.drinkless.tdlib.TdApi
 
 @Composable
-fun ChatScreen(chatId: Long, onBack: () -> Unit) {
+fun ChatScreen(
+    chatId: Long,
+    onBack: () -> Unit,
+    onOpenMediaViewer: () -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -269,7 +273,11 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit) {
                     MessageBubble(
                         message = msg,
                         showSender = isGroupChat,
-                        onLongPress = { deleteTarget = it }
+                        onLongPress = { deleteTarget = it },
+                        onMediaTap = { path ->
+                            com.secondream.cheipgram.ui.screens.MediaViewerHolder.currentPath = path
+                            onOpenMediaViewer()
+                        }
                     )
                 }
             }

@@ -9,6 +9,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -122,16 +123,29 @@ private fun buildLightScheme(accent: Accent): ColorScheme = lightColorScheme(
 /**
  * Resolve the persisted BubbleColor preference into a concrete (background,
  * onBackground) pair. `Default` falls back to whatever the active theme
- * defines via Ink.BubbleMine / Ink.BubbleTheirs, so users who never open
- * Settings keep the previous look.
+ * defines via Ink.BubbleMine / Ink.BubbleTheirs in dark themes, or to the
+ * lighter beige equivalents in the light theme, so users who never open
+ * Settings keep the readable look in either mode.
  */
 @Composable
 fun bubbleFillFor(color: BubbleColor, isOutgoing: Boolean): BubbleFill {
+    // Detect light mode by looking at the colorScheme's background luminance.
+    // We deliberately don't read isSystemInDarkTheme() because the user could
+    // have forced Light/Dark/AMOLED via Settings.
+    val cs = MaterialTheme.colorScheme
+    val isLight = cs.background.luminance() > 0.5f
     return when (color) {
-        BubbleColor.Default -> BubbleFill(
-            background = if (isOutgoing) Ink.BubbleMine else Ink.BubbleTheirs,
-            onBackground = MaterialTheme.colorScheme.onSurface
-        )
+        BubbleColor.Default -> if (isLight) {
+            BubbleFill(
+                background = if (isOutgoing) Ink.LightBubbleMine else Ink.LightBubbleTheirs,
+                onBackground = Ink.LightInk
+            )
+        } else {
+            BubbleFill(
+                background = if (isOutgoing) Ink.BubbleMine else Ink.BubbleTheirs,
+                onBackground = cs.onSurface
+            )
+        }
         BubbleColor.Amber  -> BubblePalette.Amber
         BubbleColor.Blue   -> BubblePalette.Blue
         BubbleColor.Green  -> BubblePalette.Green

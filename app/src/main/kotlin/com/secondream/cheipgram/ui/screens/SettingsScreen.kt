@@ -68,7 +68,10 @@ fun SettingsScreen(onBack: () -> Unit) {
     val appearance by AppSettings.appearance.collectAsState(
         initial = com.secondream.cheipgram.settings.AppearancePrefs()
     )
-    var confirmLogout by remember { mutableStateOf(false) }
+    var showReadDate by remember { mutableStateOf(true) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        runCatching { showReadDate = TdClient.getReadDatePrivacy() }
+    }
 
     Scaffold(
         topBar = {
@@ -125,18 +128,17 @@ fun SettingsScreen(onBack: () -> Unit) {
                     onPick = { tag ->
                         scope.launch {
                             AppSettings.setLanguageTag(tag)
+                            // The new per-app locale gets picked up by
+                            // MainActivity.attachBaseContext on recreate.
+                            // AppCompatDelegate.setApplicationLocales is also
+                            // kept for API 33+ where the system honours it
+                            // even with non-AppCompat activities.
                             val locales = if (tag == "system") {
                                 LocaleListCompat.getEmptyLocaleList()
                             } else {
                                 LocaleListCompat.forLanguageTags(tag)
                             }
                             AppCompatDelegate.setApplicationLocales(locales)
-                            // MainActivity extends ComponentActivity, not
-                            // AppCompatActivity. setApplicationLocales stores
-                            // the preference but does NOT trigger a recreate on
-                            // its own (AppCompat only auto-recreates its own
-                            // base classes). Recreate manually so the new
-                            // strings.xml takes effect on the visible screen.
                             (context as? android.app.Activity)?.recreate()
                         }
                     }
@@ -163,13 +165,19 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(20.dp))
 
-            // ACCOUNT
-            SectionHeader(stringResource(R.string.settings_section_account))
+            // PRIVACY
+            SectionHeader(stringResource(R.string.settings_section_privacy))
             SectionCard {
-                ActionRow(
-                    label = stringResource(R.string.action_logout),
-                    destructive = true,
-                    onClick = { confirmLogout = true }
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_privacy_read_receipts),
+                    description = stringResource(R.string.settings_privacy_read_receipts_desc),
+                    checked = showReadDate,
+                    onToggle = { newValue ->
+                        showReadDate = newValue
+                        scope.launch {
+                            runCatching { TdClient.setReadDatePrivacy(newValue) }
+                        }
+                    }
                 )
             }
 
@@ -189,32 +197,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
+            Spacer(Modifier.height(20.dp))
+
+            // CREDITS
+            CreditsBlock()
+
             Spacer(Modifier.height(40.dp))
         }
-    }
-
-    if (confirmLogout) {
-        AlertDialog(
-            onDismissRequest = { confirmLogout = false },
-            title = { Text(stringResource(R.string.settings_logout_confirm_title)) },
-            text = { Text(stringResource(R.string.settings_logout_confirm_body)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmLogout = false
-                    scope.launch { TdClient.logOut() }
-                }) {
-                    Text(
-                        stringResource(R.string.settings_logout_confirm_action),
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmLogout = false }) {
-                    Text(stringResource(R.string.settings_logout_cancel))
-                }
-            }
-        )
     }
 }
 
@@ -545,5 +534,76 @@ private fun InfoRow(label: String, value: String) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun PrivacyToggleRow(
+    label: String,
+    description: String,
+    checked: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle(!checked) }
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        androidx.compose.material3.Switch(checked = checked, onCheckedChange = onToggle)
+    }
+}
+
+@Composable
+private fun CreditsBlock() {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            stringResource(R.string.credits_built_by),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(22.dp))
+                .background(MaterialTheme.colorScheme.primary)
+                .clickable {
+                    runCatching {
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://buymeacoffee.com/M12oPyJwty")
+                        )
+                        context.startActivity(intent)
+                    }
+                }
+                .padding(horizontal = 18.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("☕", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                stringResource(R.string.credits_buy_coffee),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimary,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
     }
 }

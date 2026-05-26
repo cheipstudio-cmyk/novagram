@@ -1,13 +1,21 @@
 package com.secondream.cheipgram.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -23,7 +31,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.KeyboardType
@@ -81,27 +91,60 @@ fun LoginScreen() {
 
             when (val s = state) {
                 is AuthState.WaitPhoneNumber, AuthState.Initial, AuthState.WaitParameters -> {
-                    OutlinedTextField(
-                        value = phone,
-                        onValueChange = { phone = it },
-                        label = { Text(stringResource(R.string.login_phone_label)) },
-                        placeholder = { Text("+39…") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
-                    )
+                    var country by remember { mutableStateOf(com.secondream.cheipgram.util.Countries.DEFAULT) }
+                    var showCountryPicker by remember { mutableStateOf(false) }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Country code picker button
+                        Box(
+                            modifier = Modifier
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable { showCountryPicker = true }
+                                .padding(horizontal = 14.dp, vertical = 16.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(country.flag, style = MaterialTheme.typography.titleLarge)
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    country.dialCode,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        // Number-only input
+                        OutlinedTextField(
+                            value = phone,
+                            onValueChange = { input -> phone = input.filter { it.isDigit() } },
+                            label = { Text(stringResource(R.string.login_phone_only_number)) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+                        )
+                    }
+                    if (showCountryPicker) {
+                        CountryPickerDialog(
+                            onPick = { c ->
+                                country = c
+                                showCountryPicker = false
+                            },
+                            onDismiss = { showCountryPicker = false }
+                        )
+                    }
                     Spacer(Modifier.height(20.dp))
                     Button(
                         onClick = {
                             if (phone.isBlank()) return@Button
                             busy = true; error = null
+                            val full = "${country.dialCode}${phone.trim()}"
                             scope.launch {
-                                runCatching { TdClient.setPhone(phone.trim()) }
+                                runCatching { TdClient.setPhone(full) }
                                     .onFailure { error = it.message }
                                 busy = false
                             }
                         },
-                        enabled = !busy && phone.length >= 6,
+                        enabled = !busy && phone.length >= 5,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
@@ -213,4 +256,65 @@ private fun stepLabel(state: AuthState): String = when (state) {
     is AuthState.WaitPassword -> stringResource(R.string.login_step_password)
     is AuthState.Ready -> stringResource(R.string.login_step_ready)
     else -> stringResource(R.string.login_step_connecting)
+}
+
+@Composable
+private fun CountryPickerDialog(
+    onPick: (com.secondream.cheipgram.util.Country) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val countries = remember(query) {
+        val q = query.trim()
+        if (q.isBlank()) com.secondream.cheipgram.util.Countries.ALL
+        else com.secondream.cheipgram.util.Countries.ALL.filter {
+            it.name.contains(q, ignoreCase = true) || it.dialCode.contains(q) || it.iso.contains(q, ignoreCase = true)
+        }
+    }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text(stringResource(R.string.login_country_search)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 380.dp)
+                ) {
+                    items(countries, key = { it.iso }) { c ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPick(c) }
+                                .padding(vertical = 12.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(c.flag, style = MaterialTheme.typography.titleLarge)
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                c.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                c.dialCode,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

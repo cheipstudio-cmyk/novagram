@@ -43,11 +43,13 @@ fun Avatar(
     var current by remember(file?.id) { mutableStateOf(file) }
     LaunchedEffect(file?.id) {
         val f = file ?: return@LaunchedEffect
-        // Kick off the download if we don't have the file yet. priority 1 is
-        // low (chat list scrolls fast, we don't want to bog TDLib down).
-        if (!f.local.isDownloadingCompleted && !f.local.isDownloadingActive) {
-            runCatching { TdClient.downloadFile(f.id) }
-        }
+        // Always pull the latest file state. TDLib's downloadFile is idempotent:
+        // if the file is already complete it returns the cached File instantly,
+        // if it's downloading we just wait for it. This fixes the case where
+        // another Avatar started the download before we subscribed to
+        // fileUpdates and we missed the completion event.
+        val initial = runCatching { TdClient.downloadFile(f.id) }.getOrNull()
+        if (initial != null) current = initial
         TdClient.fileUpdates.collect { updated ->
             if (updated.id == f.id) current = updated
         }
