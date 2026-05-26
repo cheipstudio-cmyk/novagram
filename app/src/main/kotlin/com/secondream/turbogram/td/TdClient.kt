@@ -320,7 +320,7 @@ object TdClient {
     suspend fun sendPhoto(chatId: Long, filePath: String, caption: String? = null) {
         val content = TdApi.InputMessagePhoto(
             TdApi.InputFileLocal(filePath),
-            null, null, emptyArray(), 0, 0,
+            null, null, intArrayOf(), 0, 0,
             caption?.let { TdApi.FormattedText(it, emptyArray()) },
             false, null, false
         )
