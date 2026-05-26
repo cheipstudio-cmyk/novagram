@@ -119,4 +119,21 @@
     <string name="new_chat_phone_on_telegram">Auf Telegram</string>
     <string name="new_chat_phone_invite">Einladen</string>
     <string name="new_chat_syncing">Kontakte werden synchronisiert…</string>
+    <string name="settings_theme_amoled">AMOLED</string>
+    <string name="action_copy">Kopieren</string>
+    <string name="action_copied">Kopiert</string>
+    <string name="action_delete_chat">Chat löschen</string>
+    <string name="delete_chat_confirm_title">Chat löschen?</string>
+    <string name="delete_chat_confirm_body">Die Unterhaltung wird aus deiner Chat-Liste entfernt.</string>
+    <string name="delete_chat_for_everyone">Auch für andere löschen</string>
+    <string name="delete_chat_cancel">Abbrechen</string>
+    <string name="settings_section_bubbles">Nachrichtenfarben</string>
+    <string name="settings_bubble_mine">Deine Nachrichten</string>
+    <string name="settings_bubble_others">Nachrichten anderer</string>
+    <string name="bubble_default">Standard</string>
+    <string name="bubble_amber">Bernstein</string>
+    <string name="bubble_blue">Blau</string>
+    <string name="bubble_green">Grün</string>
+    <string name="bubble_violet">Violett</string>
+    <string name="bubble_rose">Rosa</string>
 </resources>

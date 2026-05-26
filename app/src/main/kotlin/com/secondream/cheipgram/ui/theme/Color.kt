@@ -80,3 +80,18 @@ object AccentPalette {
         onPrimary = Color(0xFF14101F)
     )
 }
+
+/**
+ * Concrete fill applied to a chat bubble. We carry both background and the
+ * preferred text color so the user can pick contrasting tints without us
+ * recomputing the right `onColor` at every call site.
+ */
+data class BubbleFill(val background: Color, val onBackground: Color)
+
+object BubblePalette {
+    val Amber  = BubbleFill(Color(0xFF3D2E18), Color(0xFFF5E7D0))
+    val Blue   = BubbleFill(Color(0xFF1B3142), Color(0xFFDCE7EF))
+    val Green  = BubbleFill(Color(0xFF1F3324), Color(0xFFDDE9DE))
+    val Violet = BubbleFill(Color(0xFF291F3D), Color(0xFFE2DCE9))
+    val Rose   = BubbleFill(Color(0xFF3A1F25), Color(0xFFE9DCDE))
+}

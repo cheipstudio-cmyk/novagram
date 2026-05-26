@@ -13,11 +13,18 @@ private val Context.dataStore by preferencesDataStore(name = "telegram_light_pre
 
 data class ApiConfig(val apiId: Int, val apiHash: String)
 
-/** Light, Dark or follow system. Persisted as the lowercase enum name. */
-enum class ThemeMode { System, Light, Dark }
+/** Light, Dark, AMOLED (true black), or follow system. Persisted as the lowercase enum name. */
+enum class ThemeMode { System, Light, Dark, Amoled }
 
 /** Accent color preset. Maps to a primary Color in Theme.kt. */
 enum class AccentColor { Amber, Blue, Green, Violet }
+
+/**
+ * Bubble fill preset. Default = follow the active theme (Ink.BubbleMine/
+ * Ink.BubbleTheirs). The other choices tint message bubbles independently
+ * from the accent color, so people can mix and match.
+ */
+enum class BubbleColor { Default, Amber, Blue, Green, Violet, Rose }
 
 /**
  * App language preference. "system" means honour the device locale, anything
@@ -26,7 +33,9 @@ enum class AccentColor { Amber, Blue, Green, Violet }
 data class AppearancePrefs(
     val themeMode: ThemeMode = ThemeMode.Dark,
     val accentColor: AccentColor = AccentColor.Amber,
-    val languageTag: String = "system"
+    val languageTag: String = "system",
+    val myBubbleColor: BubbleColor = BubbleColor.Default,
+    val othersBubbleColor: BubbleColor = BubbleColor.Default
 )
 
 object AppSettings {
@@ -37,6 +46,8 @@ object AppSettings {
     private val THEME_MODE = stringPreferencesKey("theme_mode")
     private val ACCENT_COLOR = stringPreferencesKey("accent_color")
     private val LANGUAGE_TAG = stringPreferencesKey("language_tag")
+    private val MY_BUBBLE = stringPreferencesKey("my_bubble_color")
+    private val OTHERS_BUBBLE = stringPreferencesKey("others_bubble_color")
 
     fun init(ctx: Context) {
         appContext = ctx.applicationContext
@@ -62,7 +73,9 @@ object AppSettings {
             AppearancePrefs(
                 themeMode = parseEnumOrNull<ThemeMode>(prefs[THEME_MODE]) ?: ThemeMode.Dark,
                 accentColor = parseEnumOrNull<AccentColor>(prefs[ACCENT_COLOR]) ?: AccentColor.Amber,
-                languageTag = prefs[LANGUAGE_TAG] ?: "system"
+                languageTag = prefs[LANGUAGE_TAG] ?: "system",
+                myBubbleColor = parseEnumOrNull<BubbleColor>(prefs[MY_BUBBLE]) ?: BubbleColor.Default,
+                othersBubbleColor = parseEnumOrNull<BubbleColor>(prefs[OTHERS_BUBBLE]) ?: BubbleColor.Default
             )
         }
 
@@ -76,6 +89,14 @@ object AppSettings {
 
     suspend fun setLanguageTag(tag: String) {
         appContext.dataStore.edit { it[LANGUAGE_TAG] = tag }
+    }
+
+    suspend fun setMyBubbleColor(color: BubbleColor) {
+        appContext.dataStore.edit { it[MY_BUBBLE] = color.name }
+    }
+
+    suspend fun setOthersBubbleColor(color: BubbleColor) {
+        appContext.dataStore.edit { it[OTHERS_BUBBLE] = color.name }
     }
 
     /**

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Compact CheipGram mark for inline use (send button, splash screens).
+    Same shapes as the launcher foreground but the viewport is the bounding
+    box of the artwork, so it fills its container without launcher padding.
+    Uses tint passthrough (#FFFFFF + android:tint at use site) so it can pick
+    up the active accent colour from the Material theme.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="56"
+    android:viewportHeight="36"
+    android:tint="?attr/colorControlNormal">
+    <!-- C: open-arc shape -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M14,0 C5,0 0,7 0,18 C0,29 5,36 14,36 C19,36 22,35 25,33 L22,25 C20,26 18,26 16,26 C11,26 7,23 7,18 C7,13 11,10 16,10 C18,10 20,10 22,11 L26,3 C22,1 18,0 14,0 Z" />
+    <!-- Play triangle in the opening -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M22,9 L40,18 L22,27 Z" />
+</vector>

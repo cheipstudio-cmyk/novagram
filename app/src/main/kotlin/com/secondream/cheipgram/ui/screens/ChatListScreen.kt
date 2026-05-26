@@ -6,6 +6,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.outlined.PeopleAlt
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,10 +44,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,11 +60,13 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.secondream.cheipgram.td.ChatKind
 import com.secondream.cheipgram.td.ChatSummary
 import com.secondream.cheipgram.R
 import androidx.compose.ui.res.stringResource
 import com.secondream.cheipgram.td.TdClient
+import com.secondream.cheipgram.ui.components.Avatar
 import com.secondream.cheipgram.ui.theme.Ink
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -82,10 +88,24 @@ fun ChatListScreen(
     onNewChat: () -> Unit = {}
 ) {
     val allChats by TdClient.chats.collectAsState()
+    val scope = rememberCoroutineScope()
 
     var selectedTab by remember { mutableStateOf(0) }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    var deleteChatTarget by remember { mutableStateOf<ChatSummary?>(null) }
+
+    // Current-user avatar shown in the TopBar's profile button. We fetch
+    // once when the screen lands and let TdClient.fileUpdates refresh it.
+    var myAvatarFile by remember { mutableStateOf<org.drinkless.tdlib.TdApi.File?>(null) }
+    var myInitial by remember { mutableStateOf("?") }
+    LaunchedEffect(Unit) {
+        runCatching {
+            val me = TdClient.getMe()
+            myInitial = me.firstName.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+            myAvatarFile = me.profilePhoto?.small
+        }
+    }
 
     // Filter pipeline: tab first (cheap), then local query.
     val visibleChats = remember(allChats, selectedTab, searchQuery) {
@@ -144,9 +164,11 @@ fun ChatListScreen(
                                 )
                             }
                             IconButton(onClick = onOpenProfile) {
-                                Icon(
-                                    Icons.Outlined.AccountCircle,
-                                    contentDescription = stringResource(R.string.profile_title)
+                                Avatar(
+                                    file = myAvatarFile,
+                                    fallbackText = myInitial,
+                                    bgColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    size = 32.dp
                                 )
                             }
                             IconButton(onClick = onOpenSettings) {
@@ -211,6 +233,7 @@ fun ChatListScreen(
                 ChatRow(
                     c,
                     onClick = { onChatClick(c.id) },
+                    onLongClick = { deleteChatTarget = c },
                     modifier = Modifier.animateItem()
                 )
                 HorizontalDivider(
@@ -220,6 +243,63 @@ fun ChatListScreen(
                 )
             }
         }
+    }
+
+    deleteChatTarget?.let { target ->
+        var alsoRevoke by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { deleteChatTarget = null },
+            title = { Text(stringResource(R.string.delete_chat_confirm_title)) },
+            text = {
+                Column {
+                    Text(
+                        stringResource(R.string.delete_chat_confirm_body),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    if (target.kind == ChatKind.Private) {
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { alsoRevoke = !alsoRevoke }
+                        ) {
+                            androidx.compose.material3.Checkbox(
+                                checked = alsoRevoke,
+                                onCheckedChange = { alsoRevoke = it }
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                stringResource(R.string.delete_chat_for_everyone),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    val cid = target.id
+                    val revoke = alsoRevoke && target.kind == ChatKind.Private
+                    deleteChatTarget = null
+                    scope.launch {
+                        runCatching {
+                            TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = revoke)
+                        }
+                    }
+                }) {
+                    Text(
+                        stringResource(R.string.action_delete_chat),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { deleteChatTarget = null }) {
+                    Text(stringResource(R.string.delete_chat_cancel))
+                }
+            }
+        )
     }
 }
 
@@ -264,34 +344,28 @@ private fun SearchField(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ChatRow(
     c: ChatSummary,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         val bg = avatarBackgroundFor(c.id)
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(bg),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = c.title.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                style = MaterialTheme.typography.titleLarge,
-                color = Ink.Cream,
-                fontStyle = FontStyle.Italic
-            )
-        }
+        Avatar(
+            file = c.chat.photo?.small,
+            fallbackText = c.title,
+            bgColor = bg,
+            size = 48.dp
+        )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -119,4 +119,21 @@
     <string name="new_chat_phone_on_telegram">On Telegram</string>
     <string name="new_chat_phone_invite">Invite</string>
     <string name="new_chat_syncing">Syncing contacts…</string>
+    <string name="settings_theme_amoled">AMOLED</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_copied">Copied</string>
+    <string name="action_delete_chat">Delete chat</string>
+    <string name="delete_chat_confirm_title">Delete the chat?</string>
+    <string name="delete_chat_confirm_body">The conversation will be removed from your chat list.</string>
+    <string name="delete_chat_for_everyone">Also delete for the other person</string>
+    <string name="delete_chat_cancel">Cancel</string>
+    <string name="settings_section_bubbles">Message colors</string>
+    <string name="settings_bubble_mine">Your messages</string>
+    <string name="settings_bubble_others">Other people\'s messages</string>
+    <string name="bubble_default">Default</string>
+    <string name="bubble_amber">Amber</string>
+    <string name="bubble_blue">Blue</string>
+    <string name="bubble_green">Green</string>
+    <string name="bubble_violet">Violet</string>
+    <string name="bubble_rose">Rose</string>
 </resources>

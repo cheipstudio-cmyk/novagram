@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,8 +43,10 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.secondream.cheipgram.R
 import androidx.compose.ui.res.stringResource
+import com.secondream.cheipgram.settings.AppSettings
 import com.secondream.cheipgram.td.TdClient
 import com.secondream.cheipgram.ui.theme.Ink
+import com.secondream.cheipgram.ui.theme.bubbleFillFor
 import org.drinkless.tdlib.TdApi
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -52,26 +55,54 @@ import java.util.Locale
 @Composable
 fun MessageBubble(
     message: TdApi.Message,
+    showSender: Boolean = false,
     onLongPress: (TdApi.Message) -> Unit = {}
 ) {
     val mine = message.isOutgoing
+    val appearance by AppSettings.appearance.collectAsState(
+        initial = com.secondream.cheipgram.settings.AppearancePrefs()
+    )
+    val bubbleColorPref = if (mine) appearance.myBubbleColor else appearance.othersBubbleColor
+    val fill = bubbleFillFor(bubbleColorPref, mine)
     val align = if (mine) Alignment.End else Alignment.Start
-    val bubbleColor = if (mine) Ink.BubbleMine else Ink.BubbleTheirs
     val shape = if (mine) {
         RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp)
     } else {
         RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 4.dp, bottomEnd = 18.dp)
     }
 
+    // Resolve sender user once (groups/supergroups, non-outgoing). The user
+    // arrives in TdClient.userCache as soon as TDLib emits UpdateUser; the
+    // first call to getUser() may have to wait for the first round-trip, so
+    // we wrap it in a remember+LaunchedEffect rather than do it synchronously.
+    var senderUser by remember(message.id) { mutableStateOf<TdApi.User?>(null) }
+    LaunchedEffect(message.id, message.senderId) {
+        if (!showSender || mine) return@LaunchedEffect
+        val sid = message.senderId
+        if (sid is TdApi.MessageSenderUser) {
+            senderUser = TdClient.getCachedUser(sid.userId)
+                ?: runCatching { TdClient.getUser(sid.userId) }.getOrNull()
+        }
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
-        horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start
+        horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Bottom
     ) {
+        if (showSender && !mine) {
+            Avatar(
+                file = senderUser?.profilePhoto?.small,
+                fallbackText = senderUser?.firstName ?: "?",
+                size = 28.dp
+            )
+            Spacer(Modifier.width(6.dp))
+        }
         Column(
             modifier = Modifier
                 .widthIn(max = 300.dp)
                 .clip(shape)
-                .background(bubbleColor)
+                .background(fill.background)
                 .combinedClickable(
                     onClick = { /* future: open media */ },
                     onLongClick = { onLongPress(message) }
@@ -79,25 +110,36 @@ fun MessageBubble(
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalAlignment = align
         ) {
-            MessageContent(message)
+            if (showSender && !mine) {
+                val name = senderUser?.let { "${it.firstName} ${it.lastName}".trim() }.orEmpty()
+                if (name.isNotBlank()) {
+                    Text(
+                        name,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(2.dp))
+                }
+            }
+            MessageContent(message, fill.onBackground)
             Spacer(Modifier.height(2.dp))
             Text(
                 text = formatHHmm(message.date),
                 style = MaterialTheme.typography.labelSmall,
-                color = Ink.Faint
+                color = fill.onBackground.copy(alpha = 0.55f)
             )
         }
     }
 }
 
 @Composable
-private fun MessageContent(message: TdApi.Message) {
+private fun MessageContent(message: TdApi.Message, onBackground: androidx.compose.ui.graphics.Color) {
     when (val c = message.content) {
         is TdApi.MessageText -> {
             Text(
                 c.text.text,
                 style = MaterialTheme.typography.bodyLarge,
-                color = Ink.Cream
+                color = onBackground
             )
         }
         is TdApi.MessagePhoto -> {
@@ -109,7 +151,7 @@ private fun MessageContent(message: TdApi.Message) {
             )
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = Ink.Cream)
+                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = onBackground)
             }
         }
         is TdApi.MessageVideo -> {
@@ -139,7 +181,7 @@ private fun MessageContent(message: TdApi.Message) {
             }
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = Ink.Cream)
+                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = onBackground)
             }
         }
         is TdApi.MessageAnimation -> {
@@ -152,7 +194,7 @@ private fun MessageContent(message: TdApi.Message) {
             )
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = Ink.Cream)
+                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = onBackground)
             }
         }
         is TdApi.MessageDocument -> {
@@ -163,20 +205,20 @@ private fun MessageContent(message: TdApi.Message) {
                     Text(
                         c.document.fileName.ifBlank { stringResource(R.string.media_document) },
                         style = MaterialTheme.typography.titleSmall,
-                        color = Ink.Cream,
+                        color = onBackground,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         formatBytes(c.document.document.size),
                         style = MaterialTheme.typography.labelSmall,
-                        color = Ink.Muted
+                        color = onBackground.copy(alpha = 0.6f)
                     )
                 }
             }
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = Ink.Cream)
+                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = onBackground)
             }
         }
         is TdApi.MessageVoiceNote -> {
@@ -184,8 +226,8 @@ private fun MessageContent(message: TdApi.Message) {
                 Icon(Icons.Outlined.GraphicEq, null, tint = Ink.Amber, modifier = Modifier.size(28.dp))
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    Text(stringResource(R.string.media_voice_note), style = MaterialTheme.typography.titleSmall, color = Ink.Cream)
-                    Text("${c.voiceNote.duration}s", style = MaterialTheme.typography.labelSmall, color = Ink.Muted)
+                    Text(stringResource(R.string.media_voice_note), style = MaterialTheme.typography.titleSmall, color = onBackground)
+                    Text("${c.voiceNote.duration}s", style = MaterialTheme.typography.labelSmall, color = onBackground.copy(alpha = 0.6f))
                 }
             }
         }
@@ -197,14 +239,14 @@ private fun MessageContent(message: TdApi.Message) {
                     Text(
                         c.audio.title.ifBlank { c.audio.fileName }.ifBlank { stringResource(R.string.media_audio) },
                         style = MaterialTheme.typography.titleSmall,
-                        color = Ink.Cream
+                        color = onBackground
                     )
-                    Text("${c.audio.duration}s", style = MaterialTheme.typography.labelSmall, color = Ink.Muted)
+                    Text("${c.audio.duration}s", style = MaterialTheme.typography.labelSmall, color = onBackground.copy(alpha = 0.6f))
                 }
             }
         }
-        is TdApi.MessageSticker -> Text(stringResource(R.string.media_sticker), style = MaterialTheme.typography.bodyMedium, color = Ink.Muted)
-        else -> Text(stringResource(R.string.media_unsupported), style = MaterialTheme.typography.bodySmall, color = Ink.Muted)
+        is TdApi.MessageSticker -> Text(stringResource(R.string.media_sticker), style = MaterialTheme.typography.bodyMedium, color = onBackground.copy(alpha = 0.6f))
+        else -> Text(stringResource(R.string.media_unsupported), style = MaterialTheme.typography.bodySmall, color = onBackground.copy(alpha = 0.6f))
     }
 }
 

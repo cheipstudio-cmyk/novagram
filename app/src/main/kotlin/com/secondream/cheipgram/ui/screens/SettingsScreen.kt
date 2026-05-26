@@ -54,14 +54,17 @@ import kotlinx.coroutines.launch
 import com.secondream.cheipgram.BuildConfig
 import com.secondream.cheipgram.R
 import com.secondream.cheipgram.settings.AccentColor
+import com.secondream.cheipgram.settings.BubbleColor
 import com.secondream.cheipgram.settings.AppSettings
 import com.secondream.cheipgram.settings.ThemeMode
 import com.secondream.cheipgram.td.TdClient
 import com.secondream.cheipgram.ui.theme.AccentPalette
+import com.secondream.cheipgram.ui.theme.BubblePalette
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val appearance by AppSettings.appearance.collectAsState(
         initial = com.secondream.cheipgram.settings.AppearancePrefs()
     )
@@ -122,16 +125,39 @@ fun SettingsScreen(onBack: () -> Unit) {
                     onPick = { tag ->
                         scope.launch {
                             AppSettings.setLanguageTag(tag)
-                            // Tell AppCompat to swap the locale immediately;
-                            // it handles activity recreate for us.
                             val locales = if (tag == "system") {
                                 LocaleListCompat.getEmptyLocaleList()
                             } else {
                                 LocaleListCompat.forLanguageTags(tag)
                             }
                             AppCompatDelegate.setApplicationLocales(locales)
+                            // MainActivity extends ComponentActivity, not
+                            // AppCompatActivity. setApplicationLocales stores
+                            // the preference but does NOT trigger a recreate on
+                            // its own (AppCompat only auto-recreates its own
+                            // base classes). Recreate manually so the new
+                            // strings.xml takes effect on the visible screen.
+                            (context as? android.app.Activity)?.recreate()
                         }
                     }
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // MESSAGE COLORS
+            SectionHeader(stringResource(R.string.settings_section_bubbles))
+            SectionCard {
+                BubbleColorRow(
+                    label = stringResource(R.string.settings_bubble_mine),
+                    current = appearance.myBubbleColor,
+                    onPick = { c -> scope.launch { AppSettings.setMyBubbleColor(c) } }
+                )
+                Divider()
+                BubbleColorRow(
+                    label = stringResource(R.string.settings_bubble_others),
+                    current = appearance.othersBubbleColor,
+                    onPick = { c -> scope.launch { AppSettings.setOthersBubbleColor(c) } }
                 )
             }
 
@@ -238,6 +264,7 @@ private fun ThemeRow(current: ThemeMode, onPick: (ThemeMode) -> Unit) {
             color = MaterialTheme.colorScheme.onSurface
         )
         Spacer(Modifier.height(10.dp))
+        // First row: System / Light
         Row(modifier = Modifier.fillMaxWidth()) {
             SegmentedChip(
                 label = stringResource(R.string.settings_theme_system),
@@ -252,11 +279,21 @@ private fun ThemeRow(current: ThemeMode, onPick: (ThemeMode) -> Unit) {
                 onClick = { onPick(ThemeMode.Light) },
                 modifier = Modifier.weight(1f)
             )
-            Spacer(Modifier.width(8.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        // Second row: Dark / AMOLED
+        Row(modifier = Modifier.fillMaxWidth()) {
             SegmentedChip(
                 label = stringResource(R.string.settings_theme_dark),
                 selected = current == ThemeMode.Dark,
                 onClick = { onPick(ThemeMode.Dark) },
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            SegmentedChip(
+                label = stringResource(R.string.settings_theme_amoled),
+                selected = current == ThemeMode.Amoled,
+                onClick = { onPick(ThemeMode.Amoled) },
                 modifier = Modifier.weight(1f)
             )
         }
@@ -407,6 +444,66 @@ private fun LanguageRow(current: String, onPick: (String) -> Unit) {
                 }
             }
             if (i < LANGUAGE_OPTIONS.lastIndex) Divider()
+        }
+    }
+}
+
+private data class BubbleSwatch(val color: BubbleColor, val labelRes: Int, val previewBg: Color, val previewBorder: Color?)
+
+@Composable
+private fun BubbleColorRow(
+    label: String,
+    current: BubbleColor,
+    onPick: (BubbleColor) -> Unit
+) {
+    val swatches = listOf(
+        // Default has no fixed fill, use surfaceVariant + outline so the user
+        // sees it as "follow theme".
+        BubbleSwatch(BubbleColor.Default, R.string.bubble_default,
+            MaterialTheme.colorScheme.surfaceVariant,
+            MaterialTheme.colorScheme.outline),
+        BubbleSwatch(BubbleColor.Amber,  R.string.bubble_amber,  BubblePalette.Amber.background,  null),
+        BubbleSwatch(BubbleColor.Blue,   R.string.bubble_blue,   BubblePalette.Blue.background,   null),
+        BubbleSwatch(BubbleColor.Green,  R.string.bubble_green,  BubblePalette.Green.background,  null),
+        BubbleSwatch(BubbleColor.Violet, R.string.bubble_violet, BubblePalette.Violet.background, null),
+        BubbleSwatch(BubbleColor.Rose,   R.string.bubble_rose,   BubblePalette.Rose.background,   null),
+    )
+    Column(modifier = Modifier.padding(16.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            swatches.forEachIndexed { idx, s ->
+                if (idx > 0) Spacer(Modifier.width(12.dp))
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(s.previewBg)
+                        .border(
+                            width = if (current == s.color) 2.5.dp else (if (s.previewBorder != null) 1.dp else 0.dp),
+                            color = if (current == s.color) MaterialTheme.colorScheme.onBackground
+                                    else (s.previewBorder ?: Color.Transparent),
+                            shape = CircleShape
+                        )
+                        .clickable { onPick(s.color) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (current == s.color) {
+                        Icon(
+                            Icons.Outlined.Check,
+                            contentDescription = null,
+                            tint = if (s.color == BubbleColor.Default)
+                                MaterialTheme.colorScheme.onSurface
+                            else Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }

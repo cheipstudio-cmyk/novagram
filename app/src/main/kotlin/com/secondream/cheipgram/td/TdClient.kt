@@ -477,6 +477,15 @@ object TdClient {
         send(TdApi.DeleteMessages(chatId, messageIds, revoke))
     }
 
+    /**
+     * Delete the entire history of a chat. removeFromChatList=true also drops
+     * the chat from the user's chat list (Telegram's "Delete chat" behaviour).
+     * revoke=true erases the messages for everyone where permitted.
+     */
+    suspend fun deleteChatHistory(chatId: Long, removeFromChatList: Boolean, revoke: Boolean) {
+        send(TdApi.DeleteChatHistory(chatId, removeFromChatList, revoke))
+    }
+
     /** Server-side chat search by title/username. Returns matching chat ids. */
     suspend fun searchChatsRemote(query: String, limit: Int = 50): LongArray {
         if (query.isBlank()) return LongArray(0)

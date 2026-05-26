@@ -90,6 +90,7 @@ import org.drinkless.tdlib.TdApi
 fun ChatScreen(chatId: Long, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     val messages = remember { mutableStateListOf<TdApi.Message>() }
     var loading by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
@@ -108,6 +109,13 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit) {
         value = withContext(Dispatchers.IO) {
             runCatching { TdClient.getChat(chatId).title }.getOrDefault(defaultChatTitle)
         }
+    }
+    // Non-private chats (groups, supergroups, channels) show sender name +
+    // avatar above each incoming bubble. Cached chat type is reliable once
+    // TDLib has streamed UpdateNewChat for this id, which happens before the
+    // chat list ever renders, so we read it synchronously.
+    val isGroupChat = remember(chatId) {
+        TdClient.getCachedChat(chatId)?.type !is TdApi.ChatTypePrivate
     }
 
     val micLauncher = rememberLauncherForActivityResult(
@@ -260,6 +268,7 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit) {
                 itemsIndexed(messages, key = { _, m -> m.id }) { _, msg ->
                     MessageBubble(
                         message = msg,
+                        showSender = isGroupChat,
                         onLongPress = { deleteTarget = it }
                     )
                 }
@@ -326,9 +335,23 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit) {
     }
 
     deleteTarget?.let { msg ->
+        val copyableText: String? = when (val c = msg.content) {
+            is TdApi.MessageText -> c.text.text
+            is TdApi.MessagePhoto -> c.caption.text.ifBlank { null }
+            is TdApi.MessageVideo -> c.caption.text.ifBlank { null }
+            is TdApi.MessageDocument -> c.caption.text.ifBlank { null }
+            is TdApi.MessageAnimation -> c.caption.text.ifBlank { null }
+            else -> null
+        }
         DeleteSheet(
             message = msg,
             onDismiss = { deleteTarget = null },
+            onCopy = if (!copyableText.isNullOrBlank()) {
+                {
+                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(copyableText))
+                    deleteTarget = null
+                }
+            } else null,
             onDeleteForMe = {
                 scope.launch {
                     runCatching {
@@ -427,13 +450,15 @@ private fun InputBar(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .background(Ink.Amber),
+                                .background(MaterialTheme.colorScheme.primary),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                Icons.AutoMirrored.Outlined.Send,
-                                null,
-                                tint = Ink.OnAmber,
+                                painter = androidx.compose.ui.res.painterResource(
+                                    R.drawable.ic_cheipgram_logo
+                                ),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -520,6 +545,7 @@ private fun AttachOption(label: String, icon: androidx.compose.ui.graphics.vecto
 private fun DeleteSheet(
     message: TdApi.Message,
     onDismiss: () -> Unit,
+    onCopy: (() -> Unit)?,
     onDeleteForMe: () -> Unit,
     onDeleteForEveryone: () -> Unit
 ) {
@@ -541,6 +567,10 @@ private fun DeleteSheet(
         Column(modifier = Modifier.padding(20.dp).navigationBarsPadding()) {
             Text(stringResource(R.string.delete_title), style = MaterialTheme.typography.titleLarge, fontStyle = FontStyle.Italic)
             Spacer(Modifier.height(16.dp))
+            if (onCopy != null) {
+                DeleteOption(stringResource(R.string.action_copy), onCopy)
+                Spacer(Modifier.height(4.dp))
+            }
             DeleteOption(stringResource(R.string.delete_for_me), onDeleteForMe)
             if (canRevoke) {
                 Spacer(Modifier.height(4.dp))

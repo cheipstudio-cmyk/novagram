@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -53,6 +54,18 @@ fun LoginScreen() {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.Center
         ) {
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(
+                    com.secondream.cheipgram.R.drawable.ic_cheipgram_logo
+                ),
+                contentDescription = null,
+                colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
+                    MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier
+                    .size(72.dp)
+                    .padding(bottom = 12.dp)
+            )
             Text(
                 text = "CheipGram",
                 style = MaterialTheme.typography.displayLarge,

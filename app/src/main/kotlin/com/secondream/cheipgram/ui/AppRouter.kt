@@ -33,7 +33,10 @@ object Routes {
 }
 
 @Composable
-fun AppRouter() {
+fun AppRouter(
+    pendingChatId: Long? = null,
+    onChatOpened: () -> Unit = {}
+) {
     val nav = rememberNavController()
     val auth by TdClient.authState.collectAsState()
 
@@ -60,6 +63,17 @@ fun AppRouter() {
                 nav.navigate(Routes.LOGIN) { popUpTo(0) { inclusive = true } }
             }
             else -> { }
+        }
+    }
+
+    // Notification tap → open the linked chat directly. Wait until auth is
+    // Ready so we don't try to navigate while the splash/login flow is still
+    // running. After navigation we call onChatOpened to clear the request so
+    // a future recomposition (e.g. theme change) doesn't re-open the chat.
+    LaunchedEffect(pendingChatId, auth) {
+        if (pendingChatId != null && pendingChatId != 0L && auth is AuthState.Ready) {
+            nav.navigate(Routes.chat(pendingChatId))
+            onChatOpened()
         }
     }
 

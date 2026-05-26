@@ -18,11 +18,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.secondream.cheipgram.notifications.TdService
 import com.secondream.cheipgram.settings.AppSettings
-import com.secondream.cheipgram.td.AuthState
 import com.secondream.cheipgram.td.TdClient
 import com.secondream.cheipgram.ui.AppRouter
 import com.secondream.cheipgram.ui.theme.CheipGramTheme
@@ -33,6 +33,15 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* user choice handled implicitly */ }
 
+    /**
+     * When a notification is tapped, NotificationHelper stuffs the source
+     * chat id into the launch Intent. We surface it here as a StateFlow so
+     * AppRouter can navigate as soon as the auth state is Ready. It's reset
+     * to null after navigation so subsequent re-renders don't keep jumping
+     * back into the same chat.
+     */
+    private val pendingChatId = MutableStateFlow<Long?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -40,11 +49,13 @@ class MainActivity : ComponentActivity() {
 
         requestNotifPermissionIfNeeded()
         startTdServiceIfPossible()
+        pendingChatId.value = intent?.getLongExtra("chatId", 0L)?.takeIf { it != 0L }
 
         setContent {
             val appearance by AppSettings.appearance.collectAsState(
                 initial = com.secondream.cheipgram.settings.AppearancePrefs()
             )
+            val chatToOpen by pendingChatId.collectAsState()
             CheipGramTheme(
                 themeMode = appearance.themeMode,
                 accentColor = appearance.accentColor
@@ -53,10 +64,25 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = Color.Unspecified
                 ) {
-                    AppRouter()
+                    AppRouter(
+                        pendingChatId = chatToOpen,
+                        onChatOpened = { pendingChatId.value = null }
+                    )
                 }
             }
         }
+    }
+
+    /**
+     * Called when an existing MainActivity receives a fresh Intent — most
+     * commonly because the user tapped a notification while the app was
+     * already in the foreground or back stack.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val cid = intent.getLongExtra("chatId", 0L)
+        if (cid != 0L) pendingChatId.value = cid
     }
 
     private fun requestNotifPermissionIfNeeded() {

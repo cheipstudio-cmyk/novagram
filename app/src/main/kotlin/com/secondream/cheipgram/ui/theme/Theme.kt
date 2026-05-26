@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import com.secondream.cheipgram.settings.AccentColor
+import com.secondream.cheipgram.settings.BubbleColor
 import com.secondream.cheipgram.settings.ThemeMode
 
 @Composable
@@ -25,6 +26,7 @@ fun CheipGramTheme(
         ThemeMode.System -> isSystemInDarkTheme()
         ThemeMode.Light -> false
         ThemeMode.Dark -> true
+        ThemeMode.Amoled -> true
     }
     val accent = when (accentColor) {
         AccentColor.Amber -> AccentPalette.Amber
@@ -32,7 +34,11 @@ fun CheipGramTheme(
         AccentColor.Green -> AccentPalette.Green
         AccentColor.Violet -> AccentPalette.Violet
     }
-    val colorScheme = if (isDark) buildDarkScheme(accent) else buildLightScheme(accent)
+    val colorScheme = when {
+        themeMode == ThemeMode.Amoled -> buildAmoledScheme(accent)
+        isDark -> buildDarkScheme(accent)
+        else -> buildLightScheme(accent)
+    }
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
@@ -70,6 +76,30 @@ private fun buildDarkScheme(accent: Accent): ColorScheme = darkColorScheme(
     onError = Ink.Cream,
 )
 
+/**
+ * True-black AMOLED scheme. Background and surfaces stay at pure black so
+ * pixels are switched off on OLED panels; surfaces are differentiated only
+ * by their borders/outlines and tiny brightness lifts on hover.
+ */
+private fun buildAmoledScheme(accent: Accent): ColorScheme = darkColorScheme(
+    primary = accent.primary,
+    onPrimary = accent.onPrimary,
+    primaryContainer = accent.primaryDeep,
+    onPrimaryContainer = accent.onPrimary,
+    secondary = Ink.Cream,
+    onSecondary = Color.Black,
+    background = Color.Black,
+    onBackground = Ink.Cream,
+    surface = Color.Black,
+    onSurface = Ink.Cream,
+    surfaceVariant = Color(0xFF0A0A0A),
+    onSurfaceVariant = Ink.Muted,
+    outline = Color(0xFF1F1F1F),
+    outlineVariant = Color(0xFF161616),
+    error = Ink.Error,
+    onError = Ink.Cream,
+)
+
 private fun buildLightScheme(accent: Accent): ColorScheme = lightColorScheme(
     primary = accent.primary,
     onPrimary = accent.onPrimary,
@@ -88,3 +118,24 @@ private fun buildLightScheme(accent: Accent): ColorScheme = lightColorScheme(
     error = Ink.Error,
     onError = Color.White,
 )
+
+/**
+ * Resolve the persisted BubbleColor preference into a concrete (background,
+ * onBackground) pair. `Default` falls back to whatever the active theme
+ * defines via Ink.BubbleMine / Ink.BubbleTheirs, so users who never open
+ * Settings keep the previous look.
+ */
+@Composable
+fun bubbleFillFor(color: BubbleColor, isOutgoing: Boolean): BubbleFill {
+    return when (color) {
+        BubbleColor.Default -> BubbleFill(
+            background = if (isOutgoing) Ink.BubbleMine else Ink.BubbleTheirs,
+            onBackground = MaterialTheme.colorScheme.onSurface
+        )
+        BubbleColor.Amber  -> BubblePalette.Amber
+        BubbleColor.Blue   -> BubblePalette.Blue
+        BubbleColor.Green  -> BubblePalette.Green
+        BubbleColor.Violet -> BubblePalette.Violet
+        BubbleColor.Rose   -> BubblePalette.Rose
+    }
+}
