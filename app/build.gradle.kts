@@ -15,16 +15,16 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.secondream.turbogram"
+    namespace = "com.secondream.cheipgram"
     compileSdk = 35
     ndkVersion = "26.1.10909125"
 
     defaultConfig {
-        applicationId = "com.secondream.turbogram"
+        applicationId = "com.secondream.cheipgram"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 7
+        versionName = "0.3.0"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

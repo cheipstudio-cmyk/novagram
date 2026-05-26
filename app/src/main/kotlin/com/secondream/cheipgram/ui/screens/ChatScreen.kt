@@ -1,6 +1,6 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 
-package com.secondream.turbogram.ui.screens
+package com.secondream.cheipgram.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -9,8 +9,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Mic
@@ -64,7 +65,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
@@ -77,11 +77,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.secondream.turbogram.td.TdClient
-import com.secondream.turbogram.ui.components.MessageBubble
-import com.secondream.turbogram.ui.theme.Ink
-import com.secondream.turbogram.util.FileUtils
-import com.secondream.turbogram.util.VoiceRecorder
+import com.secondream.cheipgram.td.TdClient
+import com.secondream.cheipgram.ui.components.MessageBubble
+import com.secondream.cheipgram.ui.theme.Ink
+import com.secondream.cheipgram.util.FileUtils
+import com.secondream.cheipgram.util.VoiceRecorder
 import org.drinkless.tdlib.TdApi
 
 @Composable
@@ -96,6 +96,7 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit) {
     var showAttach by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     var needMicPermission by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<TdApi.Message?>(null) }
 
     val listState = rememberLazyListState()
     val recorder = remember { VoiceRecorder(context) }
@@ -131,20 +132,39 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit) {
         }
     }
 
-    // Initial history load
+    // Initial history load.
+    // TDLib's getChatHistory first call returns only what's already in the
+    // local DB cache, even with onlyLocal=false. For a chat never opened
+    // before, that cache is just lastMessage. We iterate (and let TDLib
+    // backfill from the server between calls) until we have ~20 messages
+    // or the server stops returning more.
     LaunchedEffect(chatId) {
+        messages.clear()
+        noMore = false
         loading = true
         runCatching {
-            val res = TdClient.getChatHistory(chatId, 0L, 50)
-            messages.clear()
-            messages.addAll(res.messages.toList())
+            var fromId = 0L
+            var attempts = 0
+            var consecutiveEmpty = 0
+            while (messages.size < 20 && attempts < 6 && consecutiveEmpty < 2) {
+                val res = TdClient.getChatHistory(chatId, fromId, 50)
+                if (res.messages.isEmpty()) {
+                    consecutiveEmpty++
+                    if (consecutiveEmpty < 2) delay(350)
+                } else {
+                    consecutiveEmpty = 0
+                    messages.addAll(res.messages.toList())
+                    fromId = res.messages.last().id
+                }
+                attempts++
+            }
             val ids = messages.filter { !it.isOutgoing }.map { it.id }.toLongArray()
             if (ids.isNotEmpty()) runCatching { TdClient.viewMessages(chatId, ids) }
         }
         loading = false
     }
 
-    // Listen for new messages in this chat
+    // Listen for new messages in this chat.
     LaunchedEffect(chatId) {
         TdClient.newMessages.collect { msg ->
             if (msg.chatId == chatId) {
@@ -156,7 +176,34 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit) {
         }
     }
 
-    // Auto load older when scroll near top of reversed list (bottom of memory)
+    // React to server-side deletions: drop the matching ids from the
+    // local list so the bubble disappears as soon as TDLib confirms.
+    LaunchedEffect(chatId) {
+        TdClient.deletedMessages.collect { event ->
+            if (event.chatId == chatId) {
+                val toDrop = event.messageIds.toHashSet()
+                messages.removeAll { it.id in toDrop }
+            }
+        }
+    }
+
+    // Auto-scroll behaviour:
+    //   - When the user sends a message (outgoing) → always scroll to bottom.
+    //   - When an incoming message arrives → only scroll if the user is
+    //     already near the bottom, otherwise we'd yank them out of history.
+    LaunchedEffect(listState) {
+        snapshotFlow { messages.firstOrNull()?.id }
+            .distinctUntilChanged()
+            .filter { it != null }
+            .collect {
+                val first = messages.firstOrNull() ?: return@collect
+                if (first.isOutgoing || listState.firstVisibleItemIndex <= 2) {
+                    runCatching { listState.animateScrollToItem(0) }
+                }
+            }
+    }
+
+    // Auto load older when scroll near top of reversed list (i.e. bottom of memory).
     LaunchedEffect(listState, chatId) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
             .distinctUntilChanged()
@@ -208,7 +255,10 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit) {
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
                 itemsIndexed(messages, key = { _, m -> m.id }) { _, msg ->
-                    MessageBubble(message = msg)
+                    MessageBubble(
+                        message = msg,
+                        onLongPress = { deleteTarget = it }
+                    )
                 }
             }
             InputBar(
@@ -269,6 +319,29 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit) {
                 )
             },
             onPickDocument = { docLauncher.launch(arrayOf("*/*")) }
+        )
+    }
+
+    deleteTarget?.let { msg ->
+        DeleteSheet(
+            message = msg,
+            onDismiss = { deleteTarget = null },
+            onDeleteForMe = {
+                scope.launch {
+                    runCatching {
+                        TdClient.deleteMessages(chatId, longArrayOf(msg.id), revoke = false)
+                    }
+                }
+                deleteTarget = null
+            },
+            onDeleteForEveryone = {
+                scope.launch {
+                    runCatching {
+                        TdClient.deleteMessages(chatId, longArrayOf(msg.id), revoke = true)
+                    }
+                }
+                deleteTarget = null
+            }
         )
     }
 
@@ -437,6 +510,65 @@ private fun AttachOption(label: String, icon: androidx.compose.ui.graphics.vecto
         TextButton(onClick = onClick) {
             Text("Apri", color = Ink.Amber)
         }
+    }
+}
+
+@Composable
+private fun DeleteSheet(
+    message: TdApi.Message,
+    onDismiss: () -> Unit,
+    onDeleteForMe: () -> Unit,
+    onDeleteForEveryone: () -> Unit
+) {
+    val state = rememberModalBottomSheetState()
+    // canRevoke is true when the user can delete the message for everyone.
+    // We use the flag TDLib sets directly on the Message object.
+    val canRevoke = message.canBeDeletedForAllUsers
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = state,
+        containerColor = Ink.Surface
+    ) {
+        Column(modifier = Modifier.padding(20.dp).navigationBarsPadding()) {
+            Text("Elimina messaggio", style = MaterialTheme.typography.titleLarge, fontStyle = FontStyle.Italic)
+            Spacer(Modifier.height(16.dp))
+            DeleteOption("Elimina per me", onDeleteForMe)
+            if (canRevoke) {
+                Spacer(Modifier.height(4.dp))
+                DeleteOption("Elimina per tutti", onDeleteForEveryone, destructive = true)
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun DeleteOption(label: String, onClick: () -> Unit, destructive: Boolean = false) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Ink.SurfaceHi)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp).clip(CircleShape).background(Ink.Bg),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Outlined.Delete, null,
+                tint = if (destructive) Ink.Error else Ink.Amber,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+        Spacer(Modifier.width(14.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.titleMedium,
+            color = if (destructive) Ink.Error else Ink.Cream
+        )
     }
 }
 

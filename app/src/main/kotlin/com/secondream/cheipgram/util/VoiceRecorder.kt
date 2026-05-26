@@ -1,4 +1,4 @@
-package com.secondream.turbogram.util
+package com.secondream.cheipgram.util
 
 import android.content.Context
 import android.media.MediaRecorder

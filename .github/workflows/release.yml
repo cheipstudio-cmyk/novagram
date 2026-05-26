@@ -71,10 +71,10 @@ jobs:
         # not enough. We add 10 GB more on /mnt (which has plenty of disk on
         # GitHub-hosted runners). The two swap files sum, giving ~14 GB swap.
         run: |
-          sudo fallocate -l 10G /mnt/turbogram-swap
-          sudo chmod 600 /mnt/turbogram-swap
-          sudo mkswap /mnt/turbogram-swap
-          sudo swapon /mnt/turbogram-swap
+          sudo fallocate -l 10G /mnt/cheipgram-swap
+          sudo chmod 600 /mnt/cheipgram-swap
+          sudo mkswap /mnt/cheipgram-swap
+          sudo swapon /mnt/cheipgram-swap
           free -h
           swapon --show
           echo "Extra swap configured."
@@ -213,14 +213,14 @@ jobs:
           else
             keytool -genkeypair -v \
               -keystore keystore.jks \
-              -alias turbogram \
+              -alias cheipgram \
               -keyalg RSA -keysize 2048 -validity 36500 \
               -storepass changeit -keypass changeit \
               -dname "CN=Second Dream, O=Second Dream, C=IT"
             cat > keystore.properties <<EOF
           storeFile=../keystore.jks
           storePassword=changeit
-          keyAlias=turbogram
+          keyAlias=cheipgram
           keyPassword=changeit
           EOF
             echo "Using generated ephemeral keystore (set KEYSTORE_BASE64 secret to override)"
@@ -239,14 +239,14 @@ jobs:
         run: |
           APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n1)
           test -n "$APK"
-          cp "$APK" turbogram-${GITHUB_REF_NAME}.apk
-          echo "path=turbogram-${GITHUB_REF_NAME}.apk" >> $GITHUB_OUTPUT
+          cp "$APK" cheipgram-${GITHUB_REF_NAME}.apk
+          echo "path=cheipgram-${GITHUB_REF_NAME}.apk" >> $GITHUB_OUTPUT
           ls -lh "$APK"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: turbogram-apk
+          name: cheipgram-apk
           path: ${{ steps.apk.outputs.path }}
 
       - name: Create GitHub Release

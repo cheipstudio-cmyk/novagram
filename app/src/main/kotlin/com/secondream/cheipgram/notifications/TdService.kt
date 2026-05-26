@@ -1,4 +1,4 @@
-package com.secondream.turbogram.notifications
+package com.secondream.cheipgram.notifications
 
 import android.app.Service
 import android.content.Intent
@@ -11,7 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
-import com.secondream.turbogram.td.TdClient
+import com.secondream.cheipgram.td.TdClient
 
 class TdService : Service() {
 

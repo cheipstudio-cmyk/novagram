@@ -1,4 +1,4 @@
-package com.secondream.turbogram.td
+package com.secondream.cheipgram.td
 
 sealed class AuthState {
     data object Initial : AuthState()

@@ -23,5 +23,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Turbogram"
+rootProject.name = "CheipGram"
 include(":app")

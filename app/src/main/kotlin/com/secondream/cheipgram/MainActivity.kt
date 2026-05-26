@@ -1,4 +1,4 @@
-package com.secondream.turbogram
+package com.secondream.cheipgram
 
 import android.Manifest
 import android.content.Intent
@@ -20,12 +20,12 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import com.secondream.turbogram.notifications.TdService
-import com.secondream.turbogram.settings.AppSettings
-import com.secondream.turbogram.td.AuthState
-import com.secondream.turbogram.td.TdClient
-import com.secondream.turbogram.ui.AppRouter
-import com.secondream.turbogram.ui.theme.TurbogramTheme
+import com.secondream.cheipgram.notifications.TdService
+import com.secondream.cheipgram.settings.AppSettings
+import com.secondream.cheipgram.td.AuthState
+import com.secondream.cheipgram.td.TdClient
+import com.secondream.cheipgram.ui.AppRouter
+import com.secondream.cheipgram.ui.theme.CheipGramTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
         startTdServiceIfPossible()
 
         setContent {
-            TurbogramTheme {
+            CheipGramTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = Color.Unspecified
@@ -66,8 +66,8 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val config = AppSettings.apiConfig.first()
             val hasUserCfg = config.apiId != 0 && config.apiHash.isNotBlank()
-            val hasBakedCfg = com.secondream.turbogram.BuildConfig.TG_API_ID != 0 &&
-                com.secondream.turbogram.BuildConfig.TG_API_HASH.isNotBlank()
+            val hasBakedCfg = com.secondream.cheipgram.BuildConfig.TG_API_ID != 0 &&
+                com.secondream.cheipgram.BuildConfig.TG_API_HASH.isNotBlank()
             if (hasUserCfg || hasBakedCfg) {
                 val intent = Intent(this@MainActivity, TdService::class.java)
                 ContextCompat.startForegroundService(this@MainActivity, intent)

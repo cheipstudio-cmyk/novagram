@@ -1,4 +1,4 @@
-package com.secondream.turbogram.ui.theme
+package com.secondream.cheipgram.ui.theme
 
 import android.app.Activity
 import androidx.compose.material3.MaterialTheme
@@ -30,7 +30,7 @@ private val InkDark = darkColorScheme(
 )
 
 @Composable
-fun TurbogramTheme(content: @Composable () -> Unit) {
+fun CheipGramTheme(content: @Composable () -> Unit) {
     val colorScheme = InkDark
     val view = LocalView.current
     if (!view.isInEditMode) {

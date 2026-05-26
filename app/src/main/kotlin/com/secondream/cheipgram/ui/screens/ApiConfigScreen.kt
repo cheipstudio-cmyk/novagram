@@ -1,4 +1,4 @@
-package com.secondream.turbogram.ui.screens
+package com.secondream.cheipgram.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -28,8 +28,8 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import com.secondream.turbogram.settings.AppSettings
-import com.secondream.turbogram.td.TdClient
+import com.secondream.cheipgram.settings.AppSettings
+import com.secondream.cheipgram.td.TdClient
 
 @Composable
 fun ApiConfigScreen() {
@@ -49,7 +49,7 @@ fun ApiConfigScreen() {
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "Telegram\nLight",
+                text = "CheipGram",
                 style = MaterialTheme.typography.displayLarge,
                 fontStyle = FontStyle.Italic
             )

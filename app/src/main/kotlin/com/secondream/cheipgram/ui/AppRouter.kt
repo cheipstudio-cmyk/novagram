@@ -1,4 +1,4 @@
-package com.secondream.turbogram.ui
+package com.secondream.cheipgram.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -9,12 +9,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.secondream.turbogram.td.AuthState
-import com.secondream.turbogram.td.TdClient
-import com.secondream.turbogram.ui.screens.ApiConfigScreen
-import com.secondream.turbogram.ui.screens.ChatListScreen
-import com.secondream.turbogram.ui.screens.ChatScreen
-import com.secondream.turbogram.ui.screens.LoginScreen
+import com.secondream.cheipgram.td.AuthState
+import com.secondream.cheipgram.td.TdClient
+import com.secondream.cheipgram.ui.screens.ApiConfigScreen
+import com.secondream.cheipgram.ui.screens.ChatListScreen
+import com.secondream.cheipgram.ui.screens.ChatScreen
+import com.secondream.cheipgram.ui.screens.LoginScreen
 
 object Routes {
     const val CONFIG = "config"

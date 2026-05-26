@@ -23,7 +23,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Turbogram"
+        android:theme="@style/Theme.Cheipgram"
         android:enableOnBackInvokedCallback="true"
         tools:targetApi="35">
 
@@ -32,7 +32,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.Turbogram">
+            android:theme="@style/Theme.Cheipgram">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

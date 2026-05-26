@@ -1,4 +1,4 @@
-package com.secondream.turbogram.settings
+package com.secondream.cheipgram.settings
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit

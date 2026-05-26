@@ -1,9 +1,10 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 
-package com.secondream.turbogram.ui.screens
+package com.secondream.cheipgram.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,73 +20,154 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Campaign
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material.icons.outlined.PeopleAlt
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import com.secondream.turbogram.td.ChatKind
-import com.secondream.turbogram.td.ChatSummary
-import com.secondream.turbogram.td.TdClient
-import com.secondream.turbogram.ui.theme.Ink
+import com.secondream.cheipgram.td.ChatKind
+import com.secondream.cheipgram.td.ChatSummary
+import com.secondream.cheipgram.td.TdClient
+import com.secondream.cheipgram.ui.theme.Ink
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private data class TabSpec(val kind: ChatKind, val label: String)
+
+private val TAB_SPECS = listOf(
+    TabSpec(ChatKind.Private, "Chat"),
+    TabSpec(ChatKind.Group, "Gruppi"),
+    TabSpec(ChatKind.Channel, "Canali")
+)
+
 @Composable
-fun ChatListScreen(onChatClick: (Long) -> Unit) {
-    val chats by TdClient.chats.collectAsState()
+fun ChatListScreen(
+    onChatClick: (Long) -> Unit,
+    onOpenSettings: () -> Unit = {}
+) {
+    val allChats by TdClient.chats.collectAsState()
     val scope = rememberCoroutineScope()
+
+    var selectedTab by remember { mutableStateOf(0) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    // Filter pipeline: tab first (cheap), then local query.
+    val visibleChats = remember(allChats, selectedTab, searchQuery) {
+        val activeKind = TAB_SPECS[selectedTab].kind
+        val byKind = allChats.filter { it.kind == activeKind }
+        if (searchQuery.isBlank()) byKind
+        else byKind.filter { it.title.contains(searchQuery.trim(), ignoreCase = true) }
+    }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        "Chat",
-                        style = MaterialTheme.typography.displayMedium,
-                        fontStyle = FontStyle.Italic
+            Column {
+                TopAppBar(
+                    title = {
+                        if (searchOpen) {
+                            SearchField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it }
+                            )
+                        } else {
+                            Text(
+                                "CheipGram",
+                                style = MaterialTheme.typography.displayMedium,
+                                fontStyle = FontStyle.Italic
+                            )
+                        }
+                    },
+                    actions = {
+                        if (searchOpen) {
+                            IconButton(onClick = {
+                                searchOpen = false
+                                searchQuery = ""
+                            }) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Chiudi ricerca")
+                            }
+                        } else {
+                            IconButton(onClick = { searchOpen = true }) {
+                                Icon(Icons.Outlined.Search, contentDescription = "Cerca")
+                            }
+                            IconButton(onClick = onOpenSettings) {
+                                Icon(Icons.Outlined.Settings, contentDescription = "Impostazioni")
+                            }
+                            IconButton(onClick = { scope.launch { TdClient.logOut() } }) {
+                                Icon(Icons.Outlined.Logout, contentDescription = "Logout")
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground
                     )
-                },
-                actions = {
-                    IconButton(onClick = { scope.launch { TdClient.logOut() } }) {
-                        Icon(Icons.Outlined.Logout, contentDescription = "Logout")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
                 )
-            )
+                PrimaryTabRow(
+                    selectedTabIndex = selectedTab,
+                    containerColor = MaterialTheme.colorScheme.background
+                ) {
+                    TAB_SPECS.forEachIndexed { i, spec ->
+                        Tab(
+                            selected = selectedTab == i,
+                            onClick = { selectedTab = i },
+                            text = {
+                                Text(
+                                    spec.label,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = if (selectedTab == i) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                            }
+                        )
+                    }
+                }
+            }
         }
     ) { padding ->
-        if (chats.isEmpty()) {
+        if (visibleChats.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "Nessuna chat ancora.",
+                    when {
+                        searchQuery.isNotBlank() -> "Nessun risultato per \"${searchQuery.trim()}\"."
+                        selectedTab == 1 -> "Nessun gruppo."
+                        selectedTab == 2 -> "Nessun canale."
+                        else -> "Nessuna chat ancora."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -97,18 +179,57 @@ fun ChatListScreen(onChatClick: (Long) -> Unit) {
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(vertical = 4.dp)
         ) {
-            items(chats, key = { it.id }) { c ->
+            items(visibleChats, key = { it.id }) { c ->
                 ChatRow(
                     c,
                     onClick = { onChatClick(c.id) },
-                    // animateItem positions items smoothly when the chat order changes
-                    // (e.g. new message bumps a chat to the top). Foundation 1.7+ API.
                     modifier = Modifier.animateItem()
                 )
                 HorizontalDivider(
                     color = Ink.SurfaceLine,
                     thickness = 0.5.dp,
                     modifier = Modifier.padding(start = 88.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchField(
+    value: String,
+    onValueChange: (String) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(Ink.SurfaceHi)
+            .border(0.5.dp, Ink.SurfaceLine, RoundedCornerShape(22.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Outlined.Search, null,
+                tint = Ink.Muted,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Box(modifier = Modifier.weight(1f)) {
+                if (value.isEmpty()) {
+                    Text(
+                        "Cerca chat",
+                        color = Ink.Faint,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Ink.Cream),
+                    cursorBrush = SolidColor(Ink.Amber),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
@@ -128,7 +249,6 @@ private fun ChatRow(
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Avatar placeholder with deterministic colour per chat id
         val bg = avatarBackgroundFor(c.id)
         Box(
             modifier = Modifier
@@ -147,7 +267,6 @@ private fun ChatRow(
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Kind indicator: tiny icon for groups and channels (private chats: none)
                 when (c.kind) {
                     ChatKind.Group -> {
                         Icon(
@@ -220,14 +339,14 @@ private fun ChatRow(
  */
 private fun avatarBackgroundFor(chatId: Long): Color {
     val palette = listOf(
-        Color(0xFF4A4032), // warm brown
-        Color(0xFF3D4032), // moss
-        Color(0xFF323D40), // teal
-        Color(0xFF3A3240), // plum
-        Color(0xFF40383A), // mauve
-        Color(0xFF3D3A32), // olive
-        Color(0xFF323A3A), // slate
-        Color(0xFF40333E)  // mulberry
+        Color(0xFF4A4032),
+        Color(0xFF3D4032),
+        Color(0xFF323D40),
+        Color(0xFF3A3240),
+        Color(0xFF40383A),
+        Color(0xFF3D3A32),
+        Color(0xFF323A3A),
+        Color(0xFF40333E)
     )
     val idx = ((chatId.hashCode() and 0x7fffffff) % palette.size)
     return palette[idx]

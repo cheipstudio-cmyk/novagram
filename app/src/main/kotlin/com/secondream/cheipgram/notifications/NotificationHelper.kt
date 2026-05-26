@@ -1,4 +1,4 @@
-package com.secondream.turbogram.notifications
+package com.secondream.cheipgram.notifications
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,17 +8,17 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import com.secondream.turbogram.MainActivity
-import com.secondream.turbogram.R
-import com.secondream.turbogram.td.TdClient
+import com.secondream.cheipgram.MainActivity
+import com.secondream.cheipgram.R
+import com.secondream.cheipgram.td.TdClient
 import org.drinkless.tdlib.TdApi
 
 object NotificationHelper {
 
-    const val CHANNEL_MESSAGES = "turbogram_messages"
-    const val CHANNEL_SERVICE = "turbogram_service"
+    const val CHANNEL_MESSAGES = "cheipgram_messages"
+    const val CHANNEL_SERVICE = "cheipgram_service"
     const val SERVICE_NOTIF_ID = 9999
-    private const val GROUP_KEY_MESSAGES = "turbogram_messages_group"
+    private const val GROUP_KEY_MESSAGES = "cheipgram_messages_group"
 
     private lateinit var appContext: Context
 
@@ -31,7 +31,7 @@ object NotificationHelper {
                 "Messaggi",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Nuovi messaggi Turbogram"
+                description = "Nuovi messaggi CheipGram"
                 enableLights(true)
                 enableVibration(true)
                 setShowBadge(true)
@@ -56,7 +56,7 @@ object NotificationHelper {
         )
         return NotificationCompat.Builder(appContext, CHANNEL_SERVICE)
             .setSmallIcon(R.drawable.ic_stat_messenger)
-            .setContentTitle("Turbogram attivo")
+            .setContentTitle("CheipGram attivo")
             .setContentText("In ascolto per nuovi messaggi")
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setOngoing(true)
@@ -84,7 +84,7 @@ object NotificationHelper {
         } ?: false
         if (muted) return
 
-        val chatTitle = chat?.title?.takeIf { it.isNotBlank() } ?: "Turbogram"
+        val chatTitle = chat?.title?.takeIf { it.isNotBlank() } ?: "CheipGram"
         val isChannel = (chat?.type as? TdApi.ChatTypeSupergroup)?.isChannel == true
         val isGroup = chat?.type is TdApi.ChatTypeBasicGroup ||
             (chat?.type as? TdApi.ChatTypeSupergroup)?.isChannel == false

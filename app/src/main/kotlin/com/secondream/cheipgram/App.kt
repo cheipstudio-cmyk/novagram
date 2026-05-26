@@ -1,9 +1,9 @@
-package com.secondream.turbogram
+package com.secondream.cheipgram
 
 import android.app.Application
-import com.secondream.turbogram.notifications.NotificationHelper
-import com.secondream.turbogram.settings.AppSettings
-import com.secondream.turbogram.td.TdClient
+import com.secondream.cheipgram.notifications.NotificationHelper
+import com.secondream.cheipgram.settings.AppSettings
+import com.secondream.cheipgram.td.TdClient
 
 class App : Application() {
     override fun onCreate() {

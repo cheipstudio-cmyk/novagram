@@ -1,4 +1,4 @@
-package com.secondream.turbogram.td
+package com.secondream.cheipgram.td
 
 import android.content.Context
 import android.os.Build
@@ -14,8 +14,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import com.secondream.turbogram.BuildConfig
-import com.secondream.turbogram.settings.AppSettings
+import com.secondream.cheipgram.BuildConfig
+import com.secondream.cheipgram.settings.AppSettings
 import org.drinkless.tdlib.Client
 import org.drinkless.tdlib.TdApi
 import java.io.File
@@ -41,6 +41,28 @@ object TdClient {
 
     private val _chatUpdates = MutableSharedFlow<Long>(extraBufferCapacity = 32)
     val chatUpdates = _chatUpdates.asSharedFlow()
+
+    /**
+     * Emits whenever TDLib notifies the deletion of one or more messages
+     * (permanent deletes only, transient updates ignored). Consumers should
+     * remove the matching ids from their in-memory message lists.
+     */
+    private val _deletedMessages = MutableSharedFlow<DeleteEvent>(extraBufferCapacity = 32)
+    val deletedMessages = _deletedMessages.asSharedFlow()
+
+    /**
+     * Emits every UpdateFile so message bubbles can react to download
+     * progress without us re-fetching whole chat histories.
+     */
+    private val _fileUpdates = MutableSharedFlow<TdApi.File>(extraBufferCapacity = 64)
+    val fileUpdates = _fileUpdates.asSharedFlow()
+
+    /**
+     * Emits whenever the content of a specific message is edited or replaced
+     * (e.g. a photo finished uploading and now has a server file id).
+     */
+    private val _messageContentUpdates = MutableSharedFlow<MessageContentUpdate>(extraBufferCapacity = 32)
+    val messageContentUpdates = _messageContentUpdates.asSharedFlow()
 
     private val chatCache = mutableMapOf<Long, TdApi.Chat>()
     private val userCache = mutableMapOf<Long, TdApi.User>()
@@ -117,16 +139,26 @@ object TdClient {
                 userCache[obj.user.id] = obj.user
             }
             is TdApi.UpdateMessageContent -> {
-                scope.launch { _chatUpdates.emit(obj.chatId) }
+                scope.launch {
+                    _messageContentUpdates.emit(MessageContentUpdate(obj.chatId, obj.messageId, obj.newContent))
+                    _chatUpdates.emit(obj.chatId)
+                }
             }
             is TdApi.UpdateDeleteMessages -> {
-                scope.launch { _chatUpdates.emit(obj.chatId) }
+                // isPermanent=false fires when messages slide out of cache,
+                // not on user-initiated delete. Only forward the real ones.
+                if (obj.isPermanent) {
+                    scope.launch {
+                        _deletedMessages.emit(DeleteEvent(obj.chatId, obj.messageIds))
+                        _chatUpdates.emit(obj.chatId)
+                    }
+                }
             }
             is TdApi.UpdateMessageSendSucceeded -> {
                 scope.launch { _chatUpdates.emit(obj.message.chatId) }
             }
             is TdApi.UpdateFile -> {
-                scope.launch { _chatUpdates.emit(0L) }
+                scope.launch { _fileUpdates.emit(obj.file) }
             }
             else -> { /* noop */ }
         }
@@ -348,6 +380,23 @@ object TdClient {
         return send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
     }
 
+    /**
+     * Delete messages. `revoke=true` removes the messages for everyone in the
+     * chat when allowed (private chats, own messages in groups), otherwise it
+     * only deletes the local copy.
+     */
+    suspend fun deleteMessages(chatId: Long, messageIds: LongArray, revoke: Boolean) {
+        send(TdApi.DeleteMessages(chatId, messageIds, revoke))
+    }
+
+    /** Server-side chat search by title/username. Returns matching chat ids. */
+    suspend fun searchChatsRemote(query: String, limit: Int = 50): LongArray {
+        if (query.isBlank()) return LongArray(0)
+        return runCatching {
+            (send(TdApi.SearchChats(query, limit)) as TdApi.Chats).chatIds
+        }.getOrDefault(LongArray(0))
+    }
+
     fun getCachedChat(id: Long): TdApi.Chat? = chatCache[id]
     fun getCachedUser(id: Long): TdApi.User? = userCache[id]
 }
@@ -365,4 +414,17 @@ data class ChatSummary(
     val lastMessageTimestamp: Long,
     val kind: ChatKind,
     val chat: TdApi.Chat
+)
+
+data class DeleteEvent(val chatId: Long, val messageIds: LongArray) {
+    // equals/hashCode are content-based here only to silence the
+    // Array-property lint; we don't actually compare DeleteEvents anywhere.
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = chatId.hashCode() * 31 + messageIds.contentHashCode()
+}
+
+data class MessageContentUpdate(
+    val chatId: Long,
+    val messageId: Long,
+    val newContent: TdApi.MessageContent
 )

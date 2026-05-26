@@ -1,4 +1,4 @@
-package com.secondream.turbogram.ui.theme
+package com.secondream.cheipgram.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
