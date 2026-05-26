@@ -380,6 +380,94 @@ object TdClient {
         return send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
     }
 
+    // ----- Profile -----
+
+    /** Returns the currently signed-in user. */
+    suspend fun getMe(): TdApi.User = send(TdApi.GetMe())
+
+    /** Returns a specific user by id. */
+    suspend fun getUser(userId: Long): TdApi.User = send(TdApi.GetUser(userId))
+
+    /**
+     * Returns extended user info (bio, photo, etc) that the lightweight User
+     * object doesn't carry. Pulled lazily when the Profile screen opens.
+     */
+    suspend fun getUserFullInfo(userId: Long): TdApi.UserFullInfo =
+        send(TdApi.GetUserFullInfo(userId))
+
+    /** Update the signed-in user's first/last name (last name may be empty). */
+    suspend fun setName(firstName: String, lastName: String) {
+        send(TdApi.SetName(firstName, lastName))
+    }
+
+    /**
+     * Update the signed-in user's bio (about). Pass an empty string to clear.
+     * Telegram limits the bio length (currently 70 chars for free, 140 for premium).
+     */
+    suspend fun setBio(bio: String) {
+        send(TdApi.SetBio(bio))
+    }
+
+    /**
+     * Update the signed-in user's public @username. Pass an empty string to
+     * remove. Telegram rejects taken usernames; runCatching at the call site.
+     */
+    suspend fun setUsername(username: String) {
+        send(TdApi.SetUsername(username))
+    }
+
+    /**
+     * Replace the signed-in user's profile photo from a local image file path.
+     * isPublic=true makes it visible to non-contacts (default Telegram).
+     */
+    suspend fun setProfilePhoto(filePath: String, isPublic: Boolean = true) {
+        send(TdApi.SetProfilePhoto(TdApi.InputChatPhotoStatic(TdApi.InputFileLocal(filePath)), isPublic))
+    }
+
+    // ----- Contacts & creating chats -----
+
+    /**
+     * Returns the user ids of every Telegram contact synced for this account.
+     * Resolve to TdApi.User via getUser() (or pull from the cache that TDLib
+     * keeps internally and that we mirror via UpdateUser).
+     */
+    suspend fun getContacts(): LongArray {
+        val r = send(TdApi.GetContacts()) as TdApi.Users
+        return r.userIds
+    }
+
+    /** Search Telegram contacts by name or username, server-side. */
+    suspend fun searchContacts(query: String, limit: Int = 50): LongArray {
+        if (query.isBlank()) return LongArray(0)
+        val r = send(TdApi.SearchContacts(query, limit)) as TdApi.Users
+        return r.userIds
+    }
+
+    /**
+     * Hand TDLib a batch of phone-book contacts so it can tell us which ones
+     * already have a Telegram account. The returned LongArray pairs index-wise
+     * with the input list: position i is the userId of contacts[i], or 0 if
+     * that phone number is not on Telegram.
+     */
+    suspend fun importContacts(contacts: List<PhoneContact>): LongArray {
+        if (contacts.isEmpty()) return LongArray(0)
+        val arr = Array(contacts.size) { i ->
+            val c = contacts[i]
+            TdApi.ImportedContact(c.phoneNumber, c.firstName, c.lastName, TdApi.FormattedText("", emptyArray()))
+        }
+        val r = send(TdApi.ImportContacts(arr)) as TdApi.ImportedContacts
+        return r.userIds
+    }
+
+    /**
+     * Open (or create) a 1:1 chat with the given Telegram user id. With
+     * force=true TDLib will create the chat eagerly even if it didn't exist
+     * before, which is what we want for the "new chat" flow.
+     */
+    suspend fun createPrivateChat(userId: Long, force: Boolean = true): TdApi.Chat {
+        return send(TdApi.CreatePrivateChat(userId, force))
+    }
+
     /**
      * Delete messages. `revoke=true` removes the messages for everyone in the
      * chat when allowed (private chats, own messages in groups), otherwise it
@@ -427,4 +515,16 @@ data class MessageContentUpdate(
     val chatId: Long,
     val messageId: Long,
     val newContent: TdApi.MessageContent
+)
+
+/**
+ * Plain phone-book contact read from the device, before we know whether it's
+ * on Telegram. importContacts() hands these to TDLib and tells us which ones
+ * already have an account.
+ */
+data class PhoneContact(
+    val phoneNumber: String,
+    val firstName: String,
+    val lastName: String,
+    val deviceContactId: Long
 )

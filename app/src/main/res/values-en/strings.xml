@@ -96,4 +96,27 @@
     <string name="settings_section_info">About</string>
     <string name="settings_version">Version</string>
     <string name="settings_build">Build</string>
+    <string name="action_grant_permission">Grant permission</string>
+    <string name="profile_title">Profile</string>
+    <string name="profile_change_photo">Change photo</string>
+    <string name="profile_first_name">First name</string>
+    <string name="profile_last_name">Last name</string>
+    <string name="profile_username">Username</string>
+    <string name="profile_username_hint">5–32 chars, letters, numbers and _</string>
+    <string name="profile_bio">Bio</string>
+    <string name="profile_phone">Phone number</string>
+    <string name="profile_saved">Profile updated.</string>
+    <string name="profile_username_taken">This username is not available.</string>
+    <string name="action_new_chat">New chat</string>
+    <string name="new_chat_title">New chat</string>
+    <string name="new_chat_tab_telegram">Telegram</string>
+    <string name="new_chat_tab_phone">Phone</string>
+    <string name="new_chat_search_placeholder">Search a contact</string>
+    <string name="new_chat_empty_telegram">No Telegram contacts.</string>
+    <string name="new_chat_empty_phone">No contacts found.</string>
+    <string name="new_chat_permission_title">Contacts access</string>
+    <string name="new_chat_permission_body">To search among phone contacts CheipGram needs the contacts permission.</string>
+    <string name="new_chat_phone_on_telegram">On Telegram</string>
+    <string name="new_chat_phone_invite">Invite</string>
+    <string name="new_chat_syncing">Syncing contacts…</string>
 </resources>

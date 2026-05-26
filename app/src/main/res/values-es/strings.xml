@@ -96,4 +96,27 @@
     <string name="settings_section_info">Información</string>
     <string name="settings_version">Versión</string>
     <string name="settings_build">Build</string>
+    <string name="action_grant_permission">Conceder permiso</string>
+    <string name="profile_title">Perfil</string>
+    <string name="profile_change_photo">Cambiar foto</string>
+    <string name="profile_first_name">Nombre</string>
+    <string name="profile_last_name">Apellido</string>
+    <string name="profile_username">Nombre de usuario</string>
+    <string name="profile_username_hint">5–32 caracteres, letras, números y _</string>
+    <string name="profile_bio">Biografía</string>
+    <string name="profile_phone">Número de teléfono</string>
+    <string name="profile_saved">Perfil actualizado.</string>
+    <string name="profile_username_taken">Este nombre de usuario no está disponible.</string>
+    <string name="action_new_chat">Nuevo chat</string>
+    <string name="new_chat_title">Nuevo chat</string>
+    <string name="new_chat_tab_telegram">Telegram</string>
+    <string name="new_chat_tab_phone">Teléfono</string>
+    <string name="new_chat_search_placeholder">Buscar un contacto</string>
+    <string name="new_chat_empty_telegram">Sin contactos de Telegram.</string>
+    <string name="new_chat_empty_phone">No se encontraron contactos.</string>
+    <string name="new_chat_permission_title">Acceso a los contactos</string>
+    <string name="new_chat_permission_body">Para buscar entre los contactos del teléfono CheipGram necesita permiso de contactos.</string>
+    <string name="new_chat_phone_on_telegram">En Telegram</string>
+    <string name="new_chat_phone_invite">Invitar</string>
+    <string name="new_chat_syncing">Sincronizando contactos…</string>
 </resources>

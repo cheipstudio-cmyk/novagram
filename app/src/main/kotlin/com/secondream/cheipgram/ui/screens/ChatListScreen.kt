@@ -23,13 +23,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Logout
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.PeopleAlt
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,7 +46,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,7 +56,6 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 import com.secondream.cheipgram.td.ChatKind
 import com.secondream.cheipgram.td.ChatSummary
 import com.secondream.cheipgram.R
@@ -77,10 +77,11 @@ private val TAB_SPECS = listOf(
 @Composable
 fun ChatListScreen(
     onChatClick: (Long) -> Unit,
-    onOpenSettings: () -> Unit = {}
+    onOpenSettings: () -> Unit = {},
+    onOpenProfile: () -> Unit = {},
+    onNewChat: () -> Unit = {}
 ) {
     val allChats by TdClient.chats.collectAsState()
-    val scope = rememberCoroutineScope()
 
     var selectedTab by remember { mutableStateOf(0) }
     var searchOpen by remember { mutableStateOf(false) }
@@ -95,6 +96,18 @@ fun ChatListScreen(
     }
 
     Scaffold(
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = onNewChat,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ) {
+                Icon(
+                    Icons.Outlined.Edit,
+                    contentDescription = stringResource(R.string.action_new_chat)
+                )
+            }
+        },
         topBar = {
             Column {
                 TopAppBar(
@@ -130,16 +143,16 @@ fun ChatListScreen(
                                     contentDescription = stringResource(R.string.search_action)
                                 )
                             }
+                            IconButton(onClick = onOpenProfile) {
+                                Icon(
+                                    Icons.Outlined.AccountCircle,
+                                    contentDescription = stringResource(R.string.profile_title)
+                                )
+                            }
                             IconButton(onClick = onOpenSettings) {
                                 Icon(
                                     Icons.Outlined.Settings,
                                     contentDescription = stringResource(R.string.action_settings)
-                                )
-                            }
-                            IconButton(onClick = { scope.launch { TdClient.logOut() } }) {
-                                Icon(
-                                    Icons.Outlined.Logout,
-                                    contentDescription = stringResource(R.string.action_logout)
                                 )
                             }
                         }

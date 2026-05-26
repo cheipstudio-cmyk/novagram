@@ -1,5 +1,7 @@
 package com.secondream.cheipgram.ui
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -15,6 +17,8 @@ import com.secondream.cheipgram.ui.screens.ApiConfigScreen
 import com.secondream.cheipgram.ui.screens.ChatListScreen
 import com.secondream.cheipgram.ui.screens.ChatScreen
 import com.secondream.cheipgram.ui.screens.LoginScreen
+import com.secondream.cheipgram.ui.screens.NewChatScreen
+import com.secondream.cheipgram.ui.screens.ProfileScreen
 import com.secondream.cheipgram.ui.screens.SettingsScreen
 
 object Routes {
@@ -23,6 +27,8 @@ object Routes {
     const val CHATS = "chats"
     const val CHAT = "chat/{chatId}"
     const val SETTINGS = "settings"
+    const val PROFILE = "profile"
+    const val NEW_CHAT = "new_chat"
     fun chat(id: Long) = "chat/$id"
 }
 
@@ -57,17 +63,62 @@ fun AppRouter() {
         }
     }
 
-    NavHost(navController = nav, startDestination = Routes.LOGIN) {
+    // Slide transitions: pushing a new screen slides it in from the right,
+    // popping back slides the previous one from the left. 260ms feels snappy
+    // without being abrupt.
+    val durationMs = 260
+    NavHost(
+        navController = nav,
+        startDestination = Routes.LOGIN,
+        enterTransition = {
+            slideIntoContainer(
+                AnimatedContentTransitionScope.SlideDirection.Start,
+                animationSpec = tween(durationMs)
+            )
+        },
+        exitTransition = {
+            slideOutOfContainer(
+                AnimatedContentTransitionScope.SlideDirection.Start,
+                animationSpec = tween(durationMs)
+            )
+        },
+        popEnterTransition = {
+            slideIntoContainer(
+                AnimatedContentTransitionScope.SlideDirection.End,
+                animationSpec = tween(durationMs)
+            )
+        },
+        popExitTransition = {
+            slideOutOfContainer(
+                AnimatedContentTransitionScope.SlideDirection.End,
+                animationSpec = tween(durationMs)
+            )
+        }
+    ) {
         composable(Routes.CONFIG) { ApiConfigScreen() }
         composable(Routes.LOGIN) { LoginScreen() }
         composable(Routes.CHATS) {
             ChatListScreen(
                 onChatClick = { id -> nav.navigate(Routes.chat(id)) },
-                onOpenSettings = { nav.navigate(Routes.SETTINGS) }
+                onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                onOpenProfile = { nav.navigate(Routes.PROFILE) },
+                onNewChat = { nav.navigate(Routes.NEW_CHAT) }
             )
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(onBack = { nav.popBackStack() })
+        }
+        composable(Routes.PROFILE) {
+            ProfileScreen(onBack = { nav.popBackStack() })
+        }
+        composable(Routes.NEW_CHAT) {
+            NewChatScreen(
+                onBack = { nav.popBackStack() },
+                onOpenChat = { id ->
+                    nav.popBackStack()
+                    nav.navigate(Routes.chat(id))
+                }
+            )
         }
         composable(
             Routes.CHAT,
