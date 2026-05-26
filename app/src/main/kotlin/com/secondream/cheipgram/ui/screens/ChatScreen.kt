@@ -521,9 +521,15 @@ private fun DeleteSheet(
     onDeleteForEveryone: () -> Unit
 ) {
     val state = rememberModalBottomSheetState()
-    // canRevoke is true when the user can delete the message for everyone.
-    // We use the flag TDLib sets directly on the Message object.
-    val canRevoke = message.canBeDeletedForAllUsers
+    // TDLib master moved per-message permission flags off of Message and onto
+    // a separate MessageProperties object fetched via getMessageProperties().
+    // Doing that round-trip just to render a sheet is overkill, so we use a
+    // conservative client-side guess: outgoing messages can almost always be
+    // revoked (Telegram still enforces the 48h limit server-side, runCatching
+    // swallows the rejection if it fires); incoming messages can be revoked
+    // only in 1:1 private chats.
+    val cachedChat = TdClient.getCachedChat(message.chatId)
+    val canRevoke = message.isOutgoing || (cachedChat?.type is TdApi.ChatTypePrivate)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = state,
