@@ -411,6 +411,45 @@ object TdClient {
         send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
+    // ===== Editing =====
+
+    /**
+     * Replace the text content of a previously-sent text message. TDLib
+     * decides whether the edit is allowed (time window, bot-vs-user rules,
+     * channel admin permissions) and returns an error otherwise — we let
+     * that propagate so the caller can surface "modifica non possibile".
+     *
+     * Only valid for messages whose content is [TdApi.MessageText]. For
+     * media messages (photo/video/document with caption) use
+     * [editMessageCaption] instead — captions and text bodies are stored
+     * separately in TDLib.
+     */
+    suspend fun editMessageText(chatId: Long, messageId: Long, newText: String) {
+        val content = TdApi.InputMessageText(
+            TdApi.FormattedText(newText, emptyArray()),
+            /* linkPreviewOptions = */ null,
+            /* clearDraft = */ false
+        )
+        send(TdApi.EditMessageText(chatId, messageId, null, content))
+    }
+
+    /**
+     * Replace only the caption of a media message (photo/video/document/
+     * animation/audio with caption). Passing a blank string clears the
+     * caption entirely. Keeps the original media intact — we don't
+     * re-upload or even touch the file.
+     */
+    suspend fun editMessageCaption(chatId: Long, messageId: Long, newCaption: String) {
+        val formatted = if (newCaption.isBlank()) null
+        else TdApi.FormattedText(newCaption, emptyArray())
+        send(TdApi.EditMessageCaption(
+            chatId, messageId,
+            /* replyMarkup = */ null,
+            formatted,
+            /* showAboveText = */ false
+        ))
+    }
+
     // ===== Drafts =====
 
     /**
@@ -464,7 +503,15 @@ object TdClient {
         // refresh without waiting for the round-trip UpdateChatDraftMessage.
         chatCache[chatId]?.draftMessage = draft
         runCatching {
-            send(TdApi.SetChatDraftMessage(chatId, /* messageThreadId = */ 0L, draft))
+            // Recent TDLib replaced the old `messageThreadId: Long` parameter
+            // with `topicId: MessageTopic?`. Field-assignment style stays
+            // compatible with both shapes (kotlin no-arg + setter call) and
+            // we pass null because we only target the main thread of the
+            // chat — topic-specific drafts are out of scope here.
+            send(TdApi.SetChatDraftMessage().apply {
+                this.chatId = chatId
+                this.draftMessage = draft
+            })
         }
     }
 

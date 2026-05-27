@@ -175,19 +175,21 @@ fun MessageBubble(
             // ~400ms expecting the menu to appear — now it does. Also
             // gives a haptic on trigger so the user knows it landed.
             .pointerInput("longpress-${message.id}") {
-                // PointerInputScope IS a CoroutineScope. We grab it here so we
-                // can launch() a timer from a non-restricted scope: delay() is
-                // not allowed inside awaitEachGesture {} because that block has
-                // AwaitPointerEventScope (@RestrictsSuspension) as receiver and
-                // only its own member/extension suspends are callable there.
-                val outerScope = this
+                // We launch the long-press timer from the composable-level
+                // CoroutineScope (`tapScope`) rather than from the
+                // PointerInputScope: in current Compose-foundation that
+                // scope is NOT a CoroutineScope, so .launch{} won't resolve
+                // here. Going through tapScope also keeps the timer's
+                // lifecycle tied to the bubble's composition, which is
+                // exactly what we want (cancelled if the bubble scrolls
+                // off-screen and recomposes elsewhere).
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
                     // 300ms timer fires the long press if the user hasn't lifted
                     // or moved past touchSlop by then. waitForUpOrCancellation()
                     // returns when either of those happens, at which point we
                     // cancel the pending timer.
-                    val timerJob = outerScope.launch {
+                    val timerJob = tapScope.launch {
                         kotlinx.coroutines.delay(300L)
                         haptic.performHapticFeedback(
                             androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
@@ -424,6 +426,19 @@ fun MessageBubble(
             val cachedChat = TdClient.getCachedChat(message.chatId)
             val isPrivateChat = cachedChat?.type is TdApi.ChatTypePrivate
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // "modificato" tag — only on messages TDLib has flagged as
+                // edited (editDate > 0). Sits to the LEFT of the timestamp
+                // so it reads naturally as a property of the time mark, the
+                // same place Telegram puts its "edited" indicator.
+                if (message.editDate > 0) {
+                    Text(
+                        text = stringResource(R.string.bubble_edited_tag),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = fill.onBackground.copy(alpha = 0.55f),
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
                 Text(
                     text = formatHHmm(message.date),
                     style = MaterialTheme.typography.labelSmall,

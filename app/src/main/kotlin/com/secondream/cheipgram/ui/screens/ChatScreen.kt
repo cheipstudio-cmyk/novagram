@@ -41,6 +41,7 @@ import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MoreVert
@@ -145,6 +146,12 @@ fun ChatScreen(
     // Message the user has swiped on (or null if not replying). Cleared on
     // send and on tap of the "x" in the ReplyPreview.
     var replyTarget by remember { mutableStateOf<TdApi.Message?>(null) }
+    // When non-null, the user has tapped Modifica on one of their own
+    // messages. The input bar pre-populates with the existing text and a
+    // banner above it shows "Modifica messaggio" — same visual language
+    // as the reply banner. On send we route to editMessageText (or
+    // editMessageCaption for media) instead of sendText.
+    var editTarget by remember { mutableStateOf<TdApi.Message?>(null) }
     // Forward picker target: the message the user wants to share elsewhere.
     // When non-null we render the picker sheet; tapping a destination chat
     // fires forwardMessages and clears this back to null.
@@ -284,10 +291,36 @@ fun ChatScreen(
             // still persist the last state.
             val finalText = input
             val finalReply = replyTarget?.id
+            val inEditMode = editTarget != null
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
-                runCatching { TdClient.setChatDraft(chatId, finalText, finalReply) }
+                // If the user was editing when they backed out, abandon
+                // the edit but don't repurpose the editor text as a draft
+                // — that would surprise them next visit. The original
+                // message stays unchanged on the server.
+                if (!inEditMode) {
+                    runCatching { TdClient.setChatDraft(chatId, finalText, finalReply) }
+                }
             }
         }
+    }
+
+    // ── Edit-mode prefill ────────────────────────────────────────────
+    // When the user taps Modifica we drop the existing text/caption into
+    // the input bar so they can edit in place — same UX as Telegram.
+    // The launcher key includes the message id so jumping between two
+    // edit-able messages overwrites cleanly.
+    LaunchedEffect(editTarget?.id) {
+        val target = editTarget ?: return@LaunchedEffect
+        val existing = when (val c = target.content) {
+            is TdApi.MessageText -> c.text.text
+            is TdApi.MessagePhoto -> c.caption.text
+            is TdApi.MessageVideo -> c.caption.text
+            is TdApi.MessageDocument -> c.caption.text
+            is TdApi.MessageAnimation -> c.caption.text
+            is TdApi.MessageAudio -> c.caption.text
+            else -> ""
+        }
+        input = existing
     }
 
     // ── Draft persistence ────────────────────────────────────────────
@@ -312,10 +345,16 @@ fun ChatScreen(
     LaunchedEffect(chatId, draftLoaded) {
         if (!draftLoaded) return@LaunchedEffect
         @OptIn(kotlinx.coroutines.FlowPreview::class)
-        snapshotFlow { input to replyTarget?.id }
+        snapshotFlow { Triple(input, replyTarget?.id, editTarget?.id) }
             .debounce(400)
             .distinctUntilChanged()
-            .collect { (text, replyId) ->
+            .collect { (text, replyId, editId) ->
+                // Skip draft persistence while the user is editing an
+                // existing message — the input represents the in-progress
+                // edit, not a new outgoing draft. Saving it would mean
+                // they'd find the edited text waiting as a "new message"
+                // when they next opened the chat, which is confusing.
+                if (editId != null) return@collect
                 runCatching { TdClient.setChatDraft(chatId, text, replyId) }
             }
     }
@@ -392,6 +431,21 @@ fun ChatScreen(
                 // any non-keyed read sees the new info immediately,
                 // then bump the revision so Compose recomposes the bubble.
                 messages[idx].interactionInfo = upd.info
+                interactionRevisions[upd.messageId] =
+                    (interactionRevisions[upd.messageId] ?: 0) + 1
+            }
+        }
+    }
+    // Listen for content updates so edited messages refresh in place.
+    // Same in-place-mutate + bump-revision pattern as interaction info —
+    // the bubble re-reads message.content on recompose, and bumping
+    // interactionRevisions on this id is enough to trigger one.
+    LaunchedEffect(chatId) {
+        TdClient.messageContentUpdates.collect { upd ->
+            if (upd.chatId != chatId) return@collect
+            val idx = messages.indexOfFirst { it.id == upd.messageId }
+            if (idx >= 0) {
+                messages[idx].content = upd.newContent
                 interactionRevisions[upd.messageId] =
                     (interactionRevisions[upd.messageId] ?: 0) + 1
             }
@@ -783,10 +837,23 @@ fun ChatScreen(
                 }
             }
 
-            if (replyTarget != null) {
+            if (replyTarget != null && editTarget == null) {
+                // Hide reply preview during edit — the input represents the
+                // edited message, not a reply. (Replying to a message you
+                // then choose to edit isn't a real scenario, but if it
+                // happens we drop the reply pin so the UI stays unambiguous.)
                 ReplyPreview(
                     message = replyTarget!!,
                     onCancel = { replyTarget = null }
+                )
+            }
+            if (editTarget != null) {
+                EditPreview(
+                    message = editTarget!!,
+                    onCancel = {
+                        editTarget = null
+                        input = ""
+                    }
                 )
             }
             pendingMedia?.let { media ->
@@ -805,30 +872,66 @@ fun ChatScreen(
                     val text = input.trim()
                     val media = pendingMedia
                     val rid = replyTarget?.id
-                    if (media != null) {
-                        // Sending media with optional caption — caption may
-                        // be blank, that's fine. Always clear local state
-                        // before launching so a double-tap doesn't double-send.
-                        input = ""
-                        pendingMedia = null
-                        replyTarget = null
-                        val caption = text.ifBlank { null }
-                        scope.launch(Dispatchers.IO) {
-                            runCatching {
-                                when (media.kind) {
-                                    PendingMediaKind.Photo ->
-                                        TdClient.sendPhoto(chatId, media.file.absolutePath, caption, rid)
-                                    PendingMediaKind.Video ->
-                                        TdClient.sendVideo(chatId, media.file.absolutePath, caption, rid)
-                                    PendingMediaKind.Document ->
-                                        TdClient.sendDocument(chatId, media.file.absolutePath, caption, rid)
+                    val editing = editTarget
+                    when {
+                        editing != null -> {
+                            // Edit branch: dispatch EditMessageText for plain
+                            // text bodies, EditMessageCaption for media. We
+                            // don't allow swapping the underlying media file
+                            // here — that would be a different TDLib call
+                            // (EditMessageMedia) and a bigger UX. Telegram
+                            // itself only supports caption edits via the
+                            // inline editor; new media goes as a new message.
+                            val isTextMsg = editing.content is TdApi.MessageText
+                            // Telegram allows clearing a caption (returns
+                            // text/photo to "no caption" state) but never
+                            // an empty text-message body. Reflect that.
+                            if (isTextMsg && text.isBlank()) {
+                                // Treat empty-on-text as cancel rather than
+                                // surfacing a TDLib error.
+                                editTarget = null
+                                input = ""
+                            } else {
+                                val captured = editing
+                                editTarget = null
+                                input = ""
+                                scope.launch {
+                                    runCatching {
+                                        if (isTextMsg) {
+                                            TdClient.editMessageText(chatId, captured.id, text)
+                                        } else {
+                                            TdClient.editMessageCaption(chatId, captured.id, text)
+                                        }
+                                    }
                                 }
                             }
                         }
-                    } else if (text.isNotEmpty()) {
-                        input = ""
-                        replyTarget = null
-                        scope.launch { runCatching { TdClient.sendText(chatId, text, rid) } }
+                        media != null -> {
+                            // Sending media with optional caption — caption may
+                            // be blank, that's fine. Always clear local state
+                            // before launching so a double-tap doesn't double-send.
+                            input = ""
+                            pendingMedia = null
+                            replyTarget = null
+                            val caption = text.ifBlank { null }
+                            scope.launch(Dispatchers.IO) {
+                                runCatching {
+                                    when (media.kind) {
+                                        PendingMediaKind.Photo ->
+                                            TdClient.sendPhoto(chatId, media.file.absolutePath, caption, rid)
+                                        PendingMediaKind.Video ->
+                                            TdClient.sendVideo(chatId, media.file.absolutePath, caption, rid)
+                                        PendingMediaKind.Document ->
+                                            TdClient.sendDocument(chatId, media.file.absolutePath, caption, rid)
+                                    }
+                                }
+                            }
+                        }
+                        text.isNotEmpty() -> {
+                            input = ""
+                            replyTarget = null
+                            scope.launch { runCatching { TdClient.sendText(chatId, text, rid) } }
+                        }
                     }
                 },
                 onAttach = { showAttach = true },
@@ -866,7 +969,7 @@ fun ChatScreen(
                     }
                 },
                 recording = recording,
-                hasPendingMedia = pendingMedia != null
+                hasPendingMedia = pendingMedia != null || editTarget != null
             )
         }
     }
@@ -958,6 +1061,28 @@ fun ChatScreen(
             else -> null
         }
         val senderUserId = (msg.senderId as? TdApi.MessageSenderUser)?.userId
+        // Only build the onEdit callback for messages where editing makes
+        // sense at all: outgoing, and either pure text OR media with a
+        // caption. TDLib's MessageProperties.canBeEdited inside the sheet
+        // is the authoritative gate (handles time window, channel admin
+        // rules, etc.); this is just the content-type prefilter so we
+        // never offer edit on something structurally un-editable like a
+        // voice note or a poll.
+        val isEditableContent = when (msg.content) {
+            is TdApi.MessageText -> true
+            is TdApi.MessagePhoto,
+            is TdApi.MessageVideo,
+            is TdApi.MessageDocument,
+            is TdApi.MessageAnimation,
+            is TdApi.MessageAudio -> true
+            else -> false
+        }
+        val onEdit: (() -> Unit)? = if (msg.isOutgoing && isEditableContent) {
+            {
+                editTarget = msg
+                deleteTarget = null
+            }
+        } else null
         MessageActionsSheet(
             message = msg,
             isAdmin = isAdmin,
@@ -978,6 +1103,7 @@ fun ChatScreen(
                 forwardTarget = msg
                 deleteTarget = null
             },
+            onEdit = onEdit,
             onReact = { emoji ->
                 val chosenSame = msg.interactionInfo?.reactions?.reactions?.any {
                     it.isChosen && (it.type as? TdApi.ReactionTypeEmoji)?.emoji == emoji
@@ -1579,6 +1705,11 @@ private fun MessageActionsSheet(
     onCopy: (() -> Unit)?,
     onReply: () -> Unit,
     onForward: () -> Unit,
+    /** Triggered when the user taps "Modifica" — only ever wired by the
+     *  parent when the message is one of theirs AND the content type is
+     *  editable (text body or media-with-caption). null hides the option
+     *  entirely so we never offer it on someone else's message. */
+    onEdit: (() -> Unit)?,
     onReact: (String) -> Unit,
     onDeleteForMe: () -> Unit,
     onDeleteForEveryone: () -> Unit,
@@ -1587,16 +1718,20 @@ private fun MessageActionsSheet(
 ) {
     val state = rememberModalBottomSheetState()
     val cachedChat = TdClient.getCachedChat(message.chatId)
-    // Authoritative "delete for everyone" flag from TDLib's MessageProperties.
-    // Telegram applies all server-side rules (time window, admin's
-    // canDeleteMessages permission, basic vs supergroup differences) and
-    // gives us a single boolean. Fetched on sheet open so we don't pay
-    // the round trip until the user actually long-pressed.
+    // Authoritative "can edit" + "delete for everyone" flags from TDLib's
+    // MessageProperties. TDLib applies the actual server-side rules — the
+    // 48h edit window, bot vs user, channel admin permissions — and gives
+    // us booleans we can trust. Both come from the same call so we only
+    // pay one round trip per sheet open.
     var canRevokeFromServer by remember(message.id) { mutableStateOf<Boolean?>(null) }
+    var canEditFromServer by remember(message.id) { mutableStateOf<Boolean?>(null) }
     LaunchedEffect(message.id) {
-        canRevokeFromServer = runCatching {
-            TdClient.getMessageProperties(message.chatId, message.id).canBeDeletedForAllUsers
-        }.getOrNull()
+        runCatching {
+            TdClient.getMessageProperties(message.chatId, message.id)
+        }.onSuccess { props ->
+            canRevokeFromServer = props.canBeDeletedForAllUsers
+            canEditFromServer = props.canBeEdited
+        }
     }
     // While the round trip is in flight we fall back to the conservative
     // heuristic (outgoing || private || isAdmin) so the button is shown
@@ -1652,6 +1787,21 @@ private fun MessageActionsSheet(
 
             DeleteOption(stringResource(R.string.action_reply), onReply, icon = Icons.Outlined.Reply)
             Spacer(Modifier.height(4.dp))
+            // Modifica appears only when (a) the parent wired the callback
+            // (gated by content-type heuristic on outgoing messages) AND
+            // (b) TDLib confirms the message is still inside the edit
+            // window via MessageProperties.canBeEdited. The latter is
+            // optimistic-shown when the round trip hasn't returned yet so
+            // the option doesn't visibly pop in late on common cases.
+            val editAllowed = canEditFromServer ?: message.isOutgoing
+            if (onEdit != null && editAllowed) {
+                DeleteOption(
+                    stringResource(R.string.action_edit),
+                    onEdit,
+                    icon = Icons.Outlined.Edit
+                )
+                Spacer(Modifier.height(4.dp))
+            }
             DeleteOption(stringResource(R.string.action_forward), onForward,
                 icon = Icons.AutoMirrored.Outlined.Forward)
             Spacer(Modifier.height(4.dp))
@@ -1792,6 +1942,84 @@ private fun ReplyPreview(message: TdApi.Message, onCancel: () -> Unit) {
             )
             Text(
                 preview,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        IconButton(onClick = onCancel) {
+            Icon(
+                Icons.Outlined.Close,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Twin of [ReplyPreview], shown above the InputBar while the user is
+ * editing one of their own messages. Visually it mirrors the reply
+ * banner (same 3dp accent stripe + two-line layout) but the heading
+ * reads "Modifica messaggio" so the affordance is unmistakable, and
+ * the preview shows the ORIGINAL text/caption — useful when the user
+ * has already started typing changes and wants a reference of what
+ * the message looked like before.
+ *
+ * Tapping the X clears editTarget and resets the input back to empty
+ * (handled by the caller). Sending while this banner is visible routes
+ * to EditMessageText / EditMessageCaption in the chat's onSend handler.
+ */
+@Composable
+private fun EditPreview(message: TdApi.Message, onCancel: () -> Unit) {
+    val originalPreview = remember(message.id) {
+        when (val c = message.content) {
+            is TdApi.MessageText -> c.text.text.take(120)
+            is TdApi.MessagePhoto -> "📷 Foto" +
+                (c.caption.text.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+            is TdApi.MessageVideo -> "🎬 Video" +
+                (c.caption.text.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+            is TdApi.MessageDocument -> "📎 ${c.document.fileName}" +
+                (c.caption.text.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+            is TdApi.MessageAnimation -> "GIF" +
+                (c.caption.text.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+            is TdApi.MessageAudio -> "🎵 " +
+                c.audio.title.ifBlank { c.audio.fileName.ifBlank { "Audio" } }
+            else -> "Messaggio"
+        }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .height(36.dp)
+                .background(MaterialTheme.colorScheme.primary)
+        )
+        Spacer(Modifier.width(10.dp))
+        Icon(
+            Icons.Outlined.Edit,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                stringResource(R.string.edit_preview_title),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                originalPreview,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

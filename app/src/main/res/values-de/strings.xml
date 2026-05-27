@@ -241,4 +241,7 @@
     <string name="home_period_afternoon">Guten Tag</string>
     <string name="home_period_evening">Guten Abend</string>
     <string name="chat_jump_to_bottom">Nach unten</string>
+    <string name="action_edit">Bearbeiten</string>
+    <string name="edit_preview_title">Nachricht bearbeiten</string>
+    <string name="bubble_edited_tag">bearbeitet</string>
 </resources>

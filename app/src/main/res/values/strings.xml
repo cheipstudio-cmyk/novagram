@@ -256,4 +256,7 @@
     <string name="home_period_afternoon">Buon pomeriggio</string>
     <string name="home_period_evening">Buonasera</string>
     <string name="chat_jump_to_bottom">Vai in fondo</string>
+    <string name="action_edit">Modifica</string>
+    <string name="edit_preview_title">Modifica messaggio</string>
+    <string name="bubble_edited_tag">modificato</string>
 </resources>
