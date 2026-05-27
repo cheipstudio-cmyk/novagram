@@ -65,6 +65,24 @@ object TdClient {
     val messageContentUpdates = _messageContentUpdates.asSharedFlow()
 
     /**
+     * Emitted when TDLib confirms (or rejects) a message we sent. Carries
+     * the original local-only id we put into the list at send time plus
+     * the now-authoritative message. ChatScreen uses both to swap the
+     * placeholder bubble (sendingState=Pending, "⏱" tick) for the real
+     * one with sendingState=null and a proper id — without this the tick
+     * stays on the local message forever, only flipping to a checkmark
+     * after the user backs out and reopens the chat (which forces a full
+     * history reload).
+     */
+    data class MessageSendUpdate(
+        val oldMessageId: Long,
+        val newMessage: TdApi.Message,
+        val failed: Boolean
+    )
+    private val _messageSendUpdates = MutableSharedFlow<MessageSendUpdate>(extraBufferCapacity = 16)
+    val messageSendUpdates = _messageSendUpdates.asSharedFlow()
+
+    /**
      * Emitted when a message's interaction info (reactions, view count,
      * forward count) changes. ChatScreen listens to this to swap in the
      * fresh `interactionInfo` on the matching cached message so reactions
@@ -202,7 +220,31 @@ object TdClient {
                 }
             }
             is TdApi.UpdateMessageSendSucceeded -> {
-                scope.launch { _chatUpdates.emit(obj.message.chatId) }
+                scope.launch {
+                    // ChatScreen needs the (oldId, newMessage) pair to swap
+                    // its optimistic placeholder bubble for the confirmed
+                    // one. Without this swap the ⏱ tick stays forever.
+                    _messageSendUpdates.emit(
+                        MessageSendUpdate(
+                            oldMessageId = obj.oldMessageId,
+                            newMessage = obj.message,
+                            failed = false
+                        )
+                    )
+                    _chatUpdates.emit(obj.message.chatId)
+                }
+            }
+            is TdApi.UpdateMessageSendFailed -> {
+                scope.launch {
+                    _messageSendUpdates.emit(
+                        MessageSendUpdate(
+                            oldMessageId = obj.oldMessageId,
+                            newMessage = obj.message,
+                            failed = true
+                        )
+                    )
+                    _chatUpdates.emit(obj.message.chatId)
+                }
             }
             is TdApi.UpdateFile -> {
                 scope.launch { _fileUpdates.emit(obj.file) }

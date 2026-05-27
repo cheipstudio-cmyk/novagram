@@ -261,4 +261,11 @@
     <string name="bubble_edited_tag">modificato</string>
     <string name="chat_pinned_list_title">Messaggi fissati</string>
     <string name="chat_pinned_list_empty">Nessun messaggio fissato</string>
+    <string name="settings_section_media">Media</string>
+    <string name="settings_media_autodownload">Download automatico durante lo scroll</string>
+    <string name="settings_media_autodownload_desc">Se disattivato, foto/video/file vanno scaricati manualmente prima di essere visti</string>
+    <string name="media_tap_to_download">Tocca per scaricare</string>
+    <string name="action_save">Salva</string>
+    <string name="media_save_success">Salvato in Cheip Gram</string>
+    <string name="media_save_error">Salvataggio non riuscito</string>
 </resources>

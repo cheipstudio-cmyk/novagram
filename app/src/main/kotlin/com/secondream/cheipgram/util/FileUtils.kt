@@ -80,3 +80,71 @@ object FileUtils {
         }
     }
 }
+
+    /**
+     * Copy a local TDLib file into the public Downloads directory under a
+     * `Cheip Gram/media` or `Cheip Gram/file` subfolder via MediaStore.
+     * Uses Q+ scoped storage on Android 10+ (the only path that works
+     * without WRITE_EXTERNAL_STORAGE), and falls back to direct File
+     * copy + a single MediaScanner notify on older releases.
+     *
+     * Returns true on success. Failure is best-effort silent — the caller
+     * shows a toast keyed off the boolean.
+     */
+    fun saveToDownloads(
+        context: android.content.Context,
+        sourcePath: String,
+        displayName: String,
+        mimeType: String,
+        category: SaveCategory
+    ): Boolean {
+        val src = java.io.File(sourcePath)
+        if (!src.exists()) return false
+        val subdir = when (category) {
+            SaveCategory.Media -> "Cheip Gram/media"
+            SaveCategory.File -> "Cheip Gram/file"
+        }
+        return runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val collection = android.provider.MediaStore.Downloads
+                    .getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Downloads.DISPLAY_NAME, displayName)
+                    put(android.provider.MediaStore.Downloads.MIME_TYPE, mimeType)
+                    put(
+                        android.provider.MediaStore.Downloads.RELATIVE_PATH,
+                        android.os.Environment.DIRECTORY_DOWNLOADS + "/" + subdir
+                    )
+                    put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = resolver.insert(collection, values) ?: return@runCatching false
+                resolver.openOutputStream(uri)?.use { out ->
+                    src.inputStream().use { it.copyTo(out) }
+                } ?: return@runCatching false
+                values.clear()
+                values.put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+                true
+            } else {
+                // Legacy path: dump into Downloads/Cheip Gram/<sub>/ directly,
+                // ping MediaScanner so gallery/file managers pick it up.
+                @Suppress("DEPRECATION")
+                val downloads = android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS
+                )
+                val targetDir = java.io.File(downloads, subdir).apply { mkdirs() }
+                val dest = java.io.File(targetDir, displayName)
+                src.inputStream().use { input ->
+                    dest.outputStream().use { out -> input.copyTo(out) }
+                }
+                android.media.MediaScannerConnection.scanFile(
+                    context, arrayOf(dest.absolutePath), arrayOf(mimeType), null
+                )
+                true
+            }
+        }.getOrDefault(false)
+    }
+
+    enum class SaveCategory { Media, File }
+}

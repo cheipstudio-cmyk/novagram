@@ -246,4 +246,11 @@
     <string name="bubble_edited_tag">edited</string>
     <string name="chat_pinned_list_title">Pinned messages</string>
     <string name="chat_pinned_list_empty">No pinned messages</string>
+    <string name="settings_section_media">Media</string>
+    <string name="settings_media_autodownload">Auto-download while scrolling</string>
+    <string name="settings_media_autodownload_desc">When off, photos/videos/files require a tap to download before viewing</string>
+    <string name="media_tap_to_download">Tap to download</string>
+    <string name="action_save">Save</string>
+    <string name="media_save_success">Saved to Cheip Gram</string>
+    <string name="media_save_error">Save failed</string>
 </resources>

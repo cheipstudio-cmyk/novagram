@@ -295,20 +295,19 @@ fun MessageBubble(
                                         .getOrNull() ?: f
                                     val path = latest.local?.path
                                     if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
-                                        // Videos go through the system viewer:
-                                        // MediaViewerScreen is image-only.
-                                        com.secondream.cheipgram.util.FileUtils.openDocument(
-                                            ctx, path, c.video.mimeType, c.video.fileName
-                                        )
+                                        // Open in the embedded ExoPlayer-backed
+                                        // viewer rather than firing an external
+                                        // Intent — keeps the user inside the app.
+                                        com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = true
+                                        onMediaTap(path)
                                     } else {
                                         runCatching { TdClient.downloadFile(latest.id) }
                                             .onSuccess { done ->
                                                 done.local?.path?.takeIf {
                                                     done.local.isDownloadingCompleted && it.isNotBlank()
                                                 }?.let { p ->
-                                                    com.secondream.cheipgram.util.FileUtils.openDocument(
-                                                        ctx, p, c.video.mimeType, c.video.fileName
-                                                    )
+                                                    com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = true
+                                                    onMediaTap(p)
                                                 }
                                             }
                                     }
@@ -319,13 +318,17 @@ fun MessageBubble(
                                         .getOrNull() ?: f
                                     val path = latest.local?.path
                                     if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = true
                                         onMediaTap(path)
                                     } else {
                                         runCatching { TdClient.downloadFile(latest.id) }
                                             .onSuccess { done ->
                                                 done.local?.path?.takeIf {
                                                     done.local.isDownloadingCompleted && it.isNotBlank()
-                                                }?.let(onMediaTap)
+                                                }?.let { p ->
+                                                    com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = true
+                                                    onMediaTap(p)
+                                                }
                                             }
                                     }
                                 }
@@ -533,28 +536,93 @@ private fun MessageContent(
             }
         }
         is TdApi.MessageVideo -> {
-            // Show the thumbnail file (cheap, usually auto-downloaded by TDLib).
-            // Tap-to-play would belong in a dedicated player screen, Round 2+.
+            // We track the main video file's progress on top of the
+            // thumbnail. Three visual states:
+            //  - completed: show the play icon overlay
+            //  - downloading (or auto-download is on): show a circular
+            //    progress with % overlay
+            //  - idle (auto-download off, user hasn't tapped): show a
+            //    download icon overlay — tapping the bubble kicks the
+            //    download via the existing onMediaTap path.
             val thumb = c.video.thumbnail?.file
+            val videoFile = c.video.video
+            var liveFile by remember(videoFile.id) {
+                mutableStateOf(videoFile)
+            }
+            LaunchedEffect(videoFile.id) {
+                runCatching { TdClient.getFile(videoFile.id) }.onSuccess { liveFile = it }
+                TdClient.fileUpdates.collect { upd ->
+                    if (upd.id == videoFile.id) liveFile = upd
+                }
+            }
             Box(contentAlignment = Alignment.Center) {
                 DownloadingImage(
                     initialFile = thumb,
                     placeholderIcon = { Icon(Icons.Outlined.PlayArrow, null, tint = Ink.Cream) },
                     placeholderLabel = stringResource(R.string.media_video)
                 )
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(Ink.Bg.copy(alpha = 0.6f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Outlined.PlayArrow,
-                        null,
-                        tint = Ink.Cream,
-                        modifier = Modifier.size(28.dp)
-                    )
+                // Overlay state-aware progress / play / download icon
+                when {
+                    liveFile.local.isDownloadingCompleted -> {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(28.dp))
+                                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Outlined.PlayArrow,
+                                null,
+                                tint = androidx.compose.ui.graphics.Color.White,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                    }
+                    liveFile.local.isDownloadingActive -> {
+                        val total = liveFile.size.coerceAtLeast(1).toFloat()
+                        val done = liveFile.local.downloadedSize.coerceAtLeast(0).toFloat()
+                        val progress = (done / total).coerceIn(0f, 1f)
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(32.dp))
+                                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                progress = { progress },
+                                strokeWidth = 3.dp,
+                                color = androidx.compose.ui.graphics.Color.White,
+                                trackColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.25f),
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Text(
+                                "${(progress * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.ui.graphics.Color.White
+                            )
+                        }
+                    }
+                    else -> {
+                        // Idle: tap the bubble to start the download (the
+                        // outer onMediaTap branch already calls
+                        // TdClient.downloadFile for non-completed video).
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(28.dp))
+                                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                androidx.compose.material.icons.Icons.Outlined.Download,
+                                null,
+                                tint = androidx.compose.ui.graphics.Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
                 }
             }
             if (c.caption.text.isNotBlank()) {
@@ -699,40 +767,182 @@ private fun DownloadingImage(
         return
     }
     var file by remember(initialFile.id) { mutableStateOf(initialFile) }
+    val appearance by com.secondream.cheipgram.settings.AppSettings.appearance
+        .collectAsState(initial = com.secondream.cheipgram.settings.AppearancePrefs())
+    val autoDownload = appearance.autoDownloadMedia
+    // Tracks whether the user has explicitly asked for this file via the
+    // tap-to-download placeholder. Once requested, we keep downloading
+    // (and don't fall back to placeholder) even if autoDownload is off
+    // — the request is per-file and sticky for this composition.
+    var userRequested by remember(initialFile.id) { mutableStateOf(false) }
 
     LaunchedEffect(initialFile.id) {
-        // Snapshot the latest file state from TDLib first. When a LazyColumn
-        // row scrolls off-screen this LaunchedEffect is cancelled, so any
-        // UpdateFile that fired during the off-screen window was missed.
-        // When the row scrolls back in, `initialFile` is still the stale
-        // reference captured by the parent recomposition; without this
-        // snapshot the bubble would sit on the placeholder forever even
-        // though the download has actually completed.
         runCatching { TdClient.getFile(initialFile.id) }.onSuccess { latest ->
             file = latest
-        }
-        val current = file
-        if (!current.local.isDownloadingCompleted && !current.local.isDownloadingActive) {
-            runCatching { TdClient.downloadFile(current.id) }
         }
         TdClient.fileUpdates.collect { updated ->
             if (updated.id == initialFile.id) file = updated
         }
     }
 
+    // Kick off the download when either (a) auto-download is on and the
+    // file isn't already done/in-flight, or (b) the user explicitly asked
+    // via the placeholder tap. Re-runs when those conditions change so a
+    // tap from the placeholder triggers TDLib immediately.
+    LaunchedEffect(initialFile.id, autoDownload, userRequested) {
+        val current = file
+        if ((autoDownload || userRequested) &&
+            !current.local.isDownloadingCompleted &&
+            !current.local.isDownloadingActive) {
+            runCatching { TdClient.downloadFile(current.id) }
+        }
+    }
+
     val path = file.local?.path
-    if (!path.isNullOrBlank() && file.local.isDownloadingCompleted) {
-        AsyncImage(
-            model = path,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .width(260.dp)
-                .heightIn(min = 120.dp, max = 320.dp)
-                .clip(RoundedCornerShape(12.dp))
-        )
-    } else {
-        ImagePlaceholder(placeholderIcon, placeholderLabel)
+    val completed = file.local.isDownloadingCompleted
+    val downloading = file.local.isDownloadingActive
+    when {
+        !path.isNullOrBlank() && completed -> {
+            AsyncImage(
+                model = path,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .width(260.dp)
+                    .heightIn(min = 120.dp, max = 320.dp)
+                    .clip(RoundedCornerShape(12.dp))
+            )
+        }
+        // Show a progress overlay while bytes flow in (covers both auto
+        // and user-initiated downloads).
+        downloading || (autoDownload && !completed) || userRequested -> {
+            DownloadProgressPlaceholder(
+                file = file,
+                placeholderIcon = placeholderIcon,
+                placeholderLabel = placeholderLabel
+            )
+        }
+        else -> {
+            // Auto-download is off AND the user hasn't requested it yet:
+            // show a tap-to-download placeholder. Tap flips userRequested
+            // which triggers the LaunchedEffect above.
+            TapToDownloadPlaceholder(
+                file = file,
+                onTap = { userRequested = true }
+            )
+        }
+    }
+}
+
+/**
+ * Placeholder shown while a media file is actively downloading. Renders
+ * the supplied icon centred plus a thin progress indicator + percentage
+ * label so the user knows TDLib is working. Reads file.local.downloadedSize
+ * against file.size to derive progress (TDLib mutates these fields in
+ * place as bytes arrive; our caller already collects fileUpdates and
+ * re-passes the latest snapshot via [file]).
+ */
+@Composable
+private fun DownloadProgressPlaceholder(
+    file: TdApi.File,
+    placeholderIcon: @Composable () -> Unit,
+    placeholderLabel: String
+) {
+    val total = file.size.coerceAtLeast(1).toFloat()
+    val downloaded = file.local.downloadedSize.coerceAtLeast(0).toFloat()
+    val progress = (downloaded / total).coerceIn(0f, 1f)
+    Box(
+        modifier = Modifier
+            .width(260.dp)
+            .heightIn(min = 140.dp, max = 200.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            placeholderIcon()
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .width(180.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "${(progress * 100).toInt()}% · ${formatBytes(downloaded.toLong())} / ${formatBytes(total.toLong())}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * Placeholder shown when auto-download is off and the user hasn't yet
+ * requested this file. Tap fires [onTap] which the caller wires to flip
+ * `userRequested = true` and start the download.
+ */
+@Composable
+private fun TapToDownloadPlaceholder(
+    file: TdApi.File,
+    onTap: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .width(260.dp)
+            .heightIn(min = 140.dp, max = 200.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable { onTap() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                androidx.compose.material.icons.Icons.Outlined.Download,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(36.dp)
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                androidx.compose.ui.res.stringResource(
+                    com.secondream.cheipgram.R.string.media_tap_to_download
+                ),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (file.size > 0) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    formatBytes(file.size),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** Pretty-print byte sizes as KB/MB/GB. */
+private fun formatBytes(bytes: Long): String {
+    val kb = 1024.0
+    val mb = kb * 1024
+    val gb = mb * 1024
+    return when {
+        bytes >= gb -> "%.1f GB".format(bytes / gb)
+        bytes >= mb -> "%.1f MB".format(bytes / mb)
+        bytes >= kb -> "%.0f KB".format(bytes / kb)
+        else -> "$bytes B"
     }
 }
 

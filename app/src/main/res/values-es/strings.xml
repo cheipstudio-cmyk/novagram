@@ -246,4 +246,11 @@
     <string name="bubble_edited_tag">editado</string>
     <string name="chat_pinned_list_title">Mensajes fijados</string>
     <string name="chat_pinned_list_empty">Sin mensajes fijados</string>
+    <string name="settings_section_media">Medios</string>
+    <string name="settings_media_autodownload">Descarga automática al desplazar</string>
+    <string name="settings_media_autodownload_desc">Si está desactivado, fotos/vídeos/archivos requieren un toque para descargarse antes de verlos</string>
+    <string name="media_tap_to_download">Tocar para descargar</string>
+    <string name="action_save">Guardar</string>
+    <string name="media_save_success">Guardado en Cheip Gram</string>
+    <string name="media_save_error">No se pudo guardar</string>
 </resources>

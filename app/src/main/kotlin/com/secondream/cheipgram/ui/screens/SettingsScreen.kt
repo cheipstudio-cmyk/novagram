@@ -360,6 +360,24 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(20.dp))
 
+            // MEDIA — controls how aggressively TDLib pulls media files
+            // while the user scrolls a chat. Off = nothing downloads
+            // until the user taps the placeholder; useful on metered
+            // networks and for "just skimming" workflows.
+            SectionHeader(stringResource(R.string.settings_section_media))
+            SectionCard {
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_media_autodownload),
+                    description = stringResource(R.string.settings_media_autodownload_desc),
+                    checked = appearance.autoDownloadMedia,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setAutoDownloadMedia(enabled) }
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+
             // PRIVACY
             SectionHeader(stringResource(R.string.settings_section_privacy))
             SectionCard {

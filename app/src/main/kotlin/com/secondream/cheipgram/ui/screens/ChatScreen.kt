@@ -41,8 +41,13 @@ import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.NotificationsOff
@@ -452,6 +457,33 @@ fun ChatScreen(
                 messages[idx].content = upd.newContent
                 interactionRevisions[upd.messageId] =
                     (interactionRevisions[upd.messageId] ?: 0) + 1
+            }
+        }
+    }
+    // Listen for send-state confirmations from TDLib. When we send a
+    // message TDLib returns a local-only placeholder (negative-id, with
+    // sendingState=Pending so the bubble shows the ⏱ tick). Later it
+    // emits UpdateMessageSendSucceeded carrying the same chatId, the old
+    // (placeholder) id, and the new server-confirmed message. We splice
+    // the new one into the list in the placeholder's position so the
+    // tick flips to ✓ inline, without the user having to back out and
+    // reopen the chat to trigger a full history reload. Failures stay in
+    // place but flip to the "!" sendingState so the user sees the retry.
+    LaunchedEffect(chatId) {
+        TdClient.messageSendUpdates.collect { upd ->
+            if (upd.newMessage.chatId != chatId) return@collect
+            val idx = messages.indexOfFirst { it.id == upd.oldMessageId }
+            if (idx >= 0) {
+                // SnapshotStateList observes element replacement (the new
+                // Message is a different reference), so this triggers a
+                // recomposition of the affected row. We also bump the
+                // revision under BOTH the old and new ids so anything
+                // observing either still recomposes cleanly.
+                messages[idx] = upd.newMessage
+                interactionRevisions[upd.newMessage.id] =
+                    (interactionRevisions[upd.newMessage.id] ?: 0) + 1
+                interactionRevisions[upd.oldMessageId] =
+                    (interactionRevisions[upd.oldMessageId] ?: 0) + 1
             }
         }
     }
@@ -1120,6 +1152,81 @@ fun ChatScreen(
                 deleteTarget = null
             }
         } else null
+        // Compute downloadable media info for the Save action. We only
+        // surface it when the message actually has a downloaded file on
+        // disk — saving an undownloaded photo would mean copying nothing.
+        // Display name folds in a sensible suffix when TDLib doesn't
+        // carry one (photos from camera land without a name).
+        data class SaveSpec(val path: String, val name: String, val mime: String,
+                            val category: com.secondream.cheipgram.util.FileUtils.SaveCategory)
+        val saveSpec: SaveSpec? = run {
+            when (val c = msg.content) {
+                is TdApi.MessagePhoto -> {
+                    val biggest = c.photo.sizes.maxByOrNull { it.photo.size }
+                    val p = biggest?.photo?.local?.path
+                    if (!p.isNullOrBlank() && biggest.photo.local.isDownloadingCompleted)
+                        SaveSpec(p, "photo_${msg.id}.jpg", "image/jpeg",
+                            com.secondream.cheipgram.util.FileUtils.SaveCategory.Media)
+                    else null
+                }
+                is TdApi.MessageVideo -> {
+                    val p = c.video.video.local?.path
+                    if (!p.isNullOrBlank() && c.video.video.local.isDownloadingCompleted)
+                        SaveSpec(p, c.video.fileName.ifBlank { "video_${msg.id}.mp4" },
+                            c.video.mimeType.ifBlank { "video/mp4" },
+                            com.secondream.cheipgram.util.FileUtils.SaveCategory.Media)
+                    else null
+                }
+                is TdApi.MessageAnimation -> {
+                    val p = c.animation.animation.local?.path
+                    if (!p.isNullOrBlank() && c.animation.animation.local.isDownloadingCompleted)
+                        SaveSpec(p, c.animation.fileName.ifBlank { "anim_${msg.id}.mp4" },
+                            c.animation.mimeType.ifBlank { "video/mp4" },
+                            com.secondream.cheipgram.util.FileUtils.SaveCategory.Media)
+                    else null
+                }
+                is TdApi.MessageDocument -> {
+                    val p = c.document.document.local?.path
+                    if (!p.isNullOrBlank() && c.document.document.local.isDownloadingCompleted)
+                        SaveSpec(p, c.document.fileName.ifBlank { "file_${msg.id}" },
+                            c.document.mimeType.ifBlank { "application/octet-stream" },
+                            com.secondream.cheipgram.util.FileUtils.SaveCategory.File)
+                    else null
+                }
+                is TdApi.MessageAudio -> {
+                    val p = c.audio.audio.local?.path
+                    if (!p.isNullOrBlank() && c.audio.audio.local.isDownloadingCompleted)
+                        SaveSpec(p, c.audio.fileName.ifBlank { "audio_${msg.id}.mp3" },
+                            c.audio.mimeType.ifBlank { "audio/mpeg" },
+                            com.secondream.cheipgram.util.FileUtils.SaveCategory.File)
+                    else null
+                }
+                else -> null
+            }
+        }
+        val onSaveToDownloads: (() -> Unit)? = saveSpec?.let { spec ->
+            {
+                scope.launch(Dispatchers.IO) {
+                    val ok = com.secondream.cheipgram.util.FileUtils.saveToDownloads(
+                        context = context,
+                        sourcePath = spec.path,
+                        displayName = spec.name,
+                        mimeType = spec.mime,
+                        category = spec.category
+                    )
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(
+                            context,
+                            context.getString(
+                                if (ok) R.string.media_save_success else R.string.media_save_error
+                            ),
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+                deleteTarget = null
+            }
+        }
         MessageActionsSheet(
             message = msg,
             isAdmin = isAdmin,
@@ -1141,6 +1248,7 @@ fun ChatScreen(
                 deleteTarget = null
             },
             onEdit = onEdit,
+            onSaveToDownloads = onSaveToDownloads,
             onReact = { emoji ->
                 val chosenSame = msg.interactionInfo?.reactions?.reactions?.any {
                     it.isChosen && (it.type as? TdApi.ReactionTypeEmoji)?.emoji == emoji
@@ -1774,6 +1882,9 @@ private fun MessageActionsSheet(
      *  editable (text body or media-with-caption). null hides the option
      *  entirely so we never offer it on someone else's message. */
     onEdit: (() -> Unit)?,
+    /** Save the message's media to Downloads/Cheip Gram. null when the
+     *  message has no downloadable content. */
+    onSaveToDownloads: (() -> Unit)?,
     onReact: (String) -> Unit,
     onDeleteForMe: () -> Unit,
     onDeleteForEveryone: () -> Unit,
@@ -1849,50 +1960,136 @@ private fun MessageActionsSheet(
 
             Spacer(Modifier.height(16.dp))
 
-            DeleteOption(stringResource(R.string.action_reply), onReply, icon = Icons.Outlined.Reply)
-            Spacer(Modifier.height(4.dp))
-            // Modifica appears only when (a) the parent wired the callback
-            // (gated by content-type heuristic on outgoing messages) AND
-            // (b) TDLib confirms the message is still inside the edit
-            // window via MessageProperties.canBeEdited. The latter is
-            // optimistic-shown when the round trip hasn't returned yet so
-            // the option doesn't visibly pop in late on common cases.
-            val editAllowed = canEditFromServer ?: message.isOutgoing
-            if (onEdit != null && editAllowed) {
-                DeleteOption(
-                    stringResource(R.string.action_edit),
-                    onEdit,
-                    icon = Icons.Outlined.Edit
-                )
-                Spacer(Modifier.height(4.dp))
+            // ── Action tile grid (3 columns) ──────────────────────────
+            // Eugenio asked for a tile grid instead of the linear list of
+            // rows — faster to scan, more visual, fewer taps to think
+            // about. Each tile is an icon + label in a soft-coloured
+            // rounded square. Destructive actions go bottom-right with
+            // the error tint so they read as separate from neutral ops.
+            val tiles = buildList<ActionTile> {
+                val editAllowed = canEditFromServer ?: message.isOutgoing
+                add(ActionTile(stringResource(R.string.action_reply), Icons.Outlined.Reply, onReply))
+                if (onEdit != null && editAllowed) {
+                    add(ActionTile(stringResource(R.string.action_edit), Icons.Outlined.Edit, onEdit))
+                }
+                add(ActionTile(stringResource(R.string.action_forward),
+                    Icons.AutoMirrored.Outlined.Forward, onForward))
+                if (onCopy != null) {
+                    add(ActionTile(stringResource(R.string.action_copy),
+                        Icons.Outlined.ContentCopy, onCopy))
+                }
+                if (onSaveToDownloads != null) {
+                    add(ActionTile(stringResource(R.string.action_save),
+                        Icons.Outlined.Download, onSaveToDownloads))
+                }
+                add(ActionTile(stringResource(R.string.delete_for_me),
+                    Icons.Outlined.Delete, onDeleteForMe, destructive = true))
+                if (canRevoke) {
+                    add(ActionTile(stringResource(R.string.delete_for_everyone),
+                        Icons.Outlined.DeleteForever, onDeleteForEveryone, destructive = true))
+                }
+                if (showAdminActions) {
+                    add(ActionTile(stringResource(R.string.action_mute_author),
+                        Icons.Outlined.VolumeOff, onMuteAuthor))
+                    add(ActionTile(stringResource(R.string.action_kick_author),
+                        Icons.Outlined.PersonRemove, onKickAuthor, destructive = true))
+                }
             }
-            DeleteOption(stringResource(R.string.action_forward), onForward,
-                icon = Icons.AutoMirrored.Outlined.Forward)
-            Spacer(Modifier.height(4.dp))
-            if (onCopy != null) {
-                DeleteOption(stringResource(R.string.action_copy), onCopy, icon = Icons.Outlined.ContentCopy)
-                Spacer(Modifier.height(4.dp))
-            }
-            DeleteOption(stringResource(R.string.delete_for_me), onDeleteForMe)
-            if (canRevoke) {
-                Spacer(Modifier.height(4.dp))
-                DeleteOption(stringResource(R.string.delete_for_everyone), onDeleteForEveryone, destructive = true)
-            }
-            if (showAdminActions) {
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    stringResource(R.string.actions_admin_section),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Ink.Muted,
-                    modifier = Modifier.padding(start = 8.dp)
-                )
-                Spacer(Modifier.height(6.dp))
-                DeleteOption(stringResource(R.string.action_mute_author), onMuteAuthor, icon = Icons.Outlined.VolumeOff)
-                Spacer(Modifier.height(4.dp))
-                DeleteOption(stringResource(R.string.action_kick_author), onKickAuthor, icon = Icons.Outlined.PersonRemove, destructive = true)
+            // Grid: 3 columns. We row-chunk manually instead of using
+            // LazyVerticalGrid because the sheet has finite height and
+            // LazyVerticalGrid in a bottom-sheet measures awkwardly with
+            // intrinsic-size parents.
+            tiles.chunked(3).forEachIndexed { rowIndex, row ->
+                if (rowIndex > 0) Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    row.forEach { tile ->
+                        ActionTileButton(
+                            tile = tile,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    // Pad short final rows so the last tiles don't stretch
+                    // to fill all 3 columns — they keep their natural
+                    // square aspect.
+                    repeat(3 - row.size) {
+                        Box(modifier = Modifier.weight(1f))
+                    }
+                }
             }
             Spacer(Modifier.height(8.dp))
         }
+    }
+}
+
+/** Single entry in the action grid. */
+private data class ActionTile(
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val onClick: () -> Unit,
+    val destructive: Boolean = false
+)
+
+/**
+ * One square-ish tile in the MessageActionsSheet grid. Icon top, label
+ * below, soft tinted background. Tapping triggers a tiny scale-down
+ * spring so the press feels responsive even when the parent sheet is
+ * about to dismiss. Animation is the *only* lifecycle on the tile so
+ * scaling adds basically zero overhead, even on low-end devices.
+ */
+@Composable
+private fun ActionTileButton(
+    tile: ActionTile,
+    modifier: Modifier = Modifier
+) {
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (pressed) 0.92f else 1f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessHigh
+        ),
+        label = "tile-press"
+    )
+    val cs = MaterialTheme.colorScheme
+    val bg = if (tile.destructive) cs.errorContainer.copy(alpha = 0.4f)
+             else cs.surfaceVariant
+    val iconTint = if (tile.destructive) cs.error else cs.primary
+    val labelColor = if (tile.destructive) cs.error else cs.onSurface
+    Column(
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(16.dp))
+            .background(bg)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = tile.onClick
+            )
+            .padding(vertical = 14.dp, horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            tile.icon,
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier.size(28.dp)
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            tile.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = labelColor,
+            maxLines = 2,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            fontWeight = FontWeight.Medium
+        )
     }
 }
 

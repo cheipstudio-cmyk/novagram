@@ -149,6 +149,7 @@ fun AppRouter(
                     filePath = path,
                     onClose = {
                         MediaViewerHolder.currentPath = null
+                        MediaViewerHolder.isVideo = false
                         nav.popBackStack()
                     }
                 )
