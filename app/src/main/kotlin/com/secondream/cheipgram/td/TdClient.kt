@@ -473,6 +473,17 @@ object TdClient {
         ))
 
     /**
+     * Sticker sets the user has installed (i.e. the "My Stickers" library
+     * in Telegram). Used by the picker's "Tutti" tab.
+     */
+    suspend fun getInstalledStickerSets(): TdApi.StickerSets =
+        send(TdApi.GetInstalledStickerSets(TdApi.StickerTypeRegular()))
+
+    /** Fetch one sticker set's full sticker list given its id. */
+    suspend fun getStickerSet(setId: Long): TdApi.StickerSet =
+        send(TdApi.GetStickerSet(setId))
+
+    /**
      * Send a sticker the user already has in their stickers list. We pass
      * the sticker's existing file id via InputFileId; width/height/emoji
      * come straight from the TdApi.Sticker we picked.
@@ -693,6 +704,28 @@ object TdClient {
      */
     suspend fun deleteChatHistory(chatId: Long, removeFromChatList: Boolean, revoke: Boolean) {
         send(TdApi.DeleteChatHistory(chatId, removeFromChatList, revoke))
+    }
+
+    /**
+     * Leave a group, supergroup or channel. For private chats this is a
+     * no-op on TDLib's side — those should use deleteChatHistory instead.
+     */
+    suspend fun leaveChat(chatId: Long) {
+        send(TdApi.LeaveChat(chatId))
+    }
+
+    /**
+     * Resolve public chats by username/title query. Returns the cached Chat
+     * objects so callers can read title, type, photo, etc. Used by the
+     * home-page "Join CheipGram" card to detect membership.
+     */
+    suspend fun searchPublicChats(query: String): List<TdApi.Chat> {
+        val ids = runCatching {
+            send(TdApi.SearchPublicChats(query))
+        }.getOrNull()?.chatIds ?: return emptyList()
+        return ids.mapNotNull { id ->
+            chatCache[id] ?: runCatching { send(TdApi.GetChat(id)) }.getOrNull()
+        }
     }
 
     /**

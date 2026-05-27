@@ -78,6 +78,11 @@ fun StickerPickerSheet(
         var selectedTab by remember { mutableStateOf(0) }
         var favorites by remember { mutableStateOf<List<TdApi.Sticker>?>(null) }
         var recents by remember { mutableStateOf<List<TdApi.Sticker>?>(null) }
+        // "Tutti": the entire installed sticker library flattened. We load
+        // the set headers first, then expand each set's stickers in parallel
+        // so the grid populates progressively rather than after one giant
+        // round trip.
+        var allInstalled by remember { mutableStateOf<List<TdApi.Sticker>?>(null) }
 
         // Search state: query is what the TextField shows; debounced is what
         // we actually pass to TdClient. The 300ms debounce keeps us from
@@ -91,6 +96,26 @@ fun StickerPickerSheet(
                 .getOrDefault(emptyList())
             recents = runCatching { TdClient.getRecentStickers().stickers.toList() }
                 .getOrDefault(emptyList())
+        }
+        // Lazy-load the installed library when the user first taps "Tutti".
+        // Avoids paying the round-trip cost up-front for users who never
+        // browse beyond favorites/recents.
+        LaunchedEffect(selectedTab) {
+            if (selectedTab != 2 || allInstalled != null) return@LaunchedEffect
+            val sets = runCatching { TdClient.getInstalledStickerSets() }
+                .getOrNull()
+                ?.sets
+                ?.toList()
+                .orEmpty()
+            val flat = mutableListOf<TdApi.Sticker>()
+            for (info in sets) {
+                val set = runCatching { TdClient.getStickerSet(info.id) }.getOrNull()
+                if (set != null) flat.addAll(set.stickers)
+                // Update progressively so the grid fills in as sets load,
+                // instead of staying empty until everything resolves.
+                allInstalled = flat.toList()
+            }
+            if (allInstalled == null) allInstalled = emptyList()
         }
         LaunchedEffect(query) {
             val q = query.trim()
@@ -156,7 +181,8 @@ fun StickerPickerSheet(
                 StickerTabs(
                     titles = listOf(
                         stringResourceSafe(R.string.sticker_tab_favorites),
-                        stringResourceSafe(R.string.sticker_tab_recents)
+                        stringResourceSafe(R.string.sticker_tab_recents),
+                        stringResourceSafe(R.string.sticker_tab_all)
                     ),
                     selected = selectedTab,
                     onSelect = { selectedTab = it }
@@ -167,7 +193,8 @@ fun StickerPickerSheet(
             val current: List<TdApi.Sticker>? = when {
                 isSearching -> searchResults
                 selectedTab == 0 -> favorites
-                else -> recents
+                selectedTab == 1 -> recents
+                else -> allInstalled
             }
             val isLoading = (isSearching && (searchInFlight || searchResults == null)) ||
                 (!isSearching && current == null)

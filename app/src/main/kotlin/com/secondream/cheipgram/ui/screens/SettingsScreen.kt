@@ -7,6 +7,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,9 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,6 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.os.LocaleListCompat
@@ -72,8 +74,10 @@ fun SettingsScreen(onBack: () -> Unit) {
     val appearance by AppSettings.appearance.collectAsState(
         initial = com.secondream.cheipgram.settings.AppearancePrefs()
     )
+    val savedThemes by AppSettings.savedThemes.collectAsState(initial = emptyList())
     var showReadDate by remember { mutableStateOf(true) }
     var showThemeBuilder by remember { mutableStateOf(false) }
+    var builderTheme by remember { mutableStateOf<com.secondream.cheipgram.settings.SavedTheme?>(null) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         runCatching { showReadDate = TdClient.getReadDatePrivacy() }
     }
@@ -173,27 +177,40 @@ fun SettingsScreen(onBack: () -> Unit) {
             // CUSTOM THEME
             SectionHeader(stringResource(R.string.settings_section_custom_theme))
             SectionCard {
-                CustomThemeRow(
-                    customAccent = appearance.customAccentArgb,
-                    onOpenBuilder = { showThemeBuilder = true },
-                    onClearCustom = {
-                        // Clear ALL custom overrides at once — the user
-                        // expects "reset" to fully return to the preset
-                        // palette, not just the accent.
-                        scope.launch {
-                            AppSettings.setCustomAccentArgb(null)
-                            AppSettings.setCustomMyBubbleArgb(null)
-                            AppSettings.setCustomOthersBubbleArgb(null)
-                            AppSettings.setCustomBgArgb(null)
-                        }
+                SavedThemesSection(
+                    savedThemes = savedThemes,
+                    activeId = appearance.activeSavedThemeId,
+                    onCreate = {
+                        // builderTheme is set later in this function. Read
+                        // setBuilderTheme via the parent state setter — we
+                        // reach it through showThemeBuilder which is in the
+                        // outer SettingsScreen scope.
+                        builderTheme = null
+                        showThemeBuilder = true
                     },
-                    onShare = {
-                        // Build the same JSON as before, base64-url-safe
-                        // encode it, and wrap it in a cheipgram://theme
-                        // deeplink. Tapping the link in any app routes
-                        // back into CheipGram and auto-applies — that's
-                        // why we share a link instead of raw JSON now.
-                        val json = buildThemeShareJson(appearance)
+                    onApply = { theme ->
+                        scope.launch { AppSettings.activateSavedTheme(theme.id) }
+                    },
+                    onEdit = { theme ->
+                        builderTheme = theme
+                        showThemeBuilder = true
+                    },
+                    onDelete = { theme ->
+                        scope.launch { AppSettings.deleteSavedTheme(theme.id) }
+                    },
+                    onShare = { theme ->
+                        // Build a "synthesized" AppearancePrefs from the theme
+                        // (current language + theme mode + saved colors) so
+                        // the share payload imports cleanly on any device.
+                        val payload = appearance.copy(
+                            customAccentArgb = theme.accentArgb,
+                            customMyBubbleArgb = theme.myBubbleArgb,
+                            customOthersBubbleArgb = theme.othersBubbleArgb,
+                            customBgArgb = theme.bgArgb,
+                            customInputBarArgb = theme.inputBarArgb,
+                            activeSavedThemeId = null  // recipient picks a new id
+                        )
+                        val json = buildThemeShareJson(payload)
                         val encoded = android.util.Base64.encodeToString(
                             json.toByteArray(Charsets.UTF_8),
                             android.util.Base64.URL_SAFE or
@@ -205,7 +222,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(android.content.Intent.EXTRA_TEXT, message)
-                            putExtra(android.content.Intent.EXTRA_SUBJECT, "CheipGram theme")
+                            putExtra(android.content.Intent.EXTRA_SUBJECT, theme.name)
                         }
                         runCatching {
                             context.startActivity(
@@ -216,13 +233,10 @@ fun SettingsScreen(onBack: () -> Unit) {
                             )
                         }
                     },
+                    onResetToBase = {
+                        scope.launch { AppSettings.resetCustomOverrides() }
+                    },
                     onPaste = {
-                        // Pull the first text item off the clipboard and try
-                        // to parse our theme JSON. Anything that doesn't
-                        // match (wrong version, wrong keys, malformed JSON)
-                        // shows the "import failed" toast — we never apply
-                        // a partial blob, because that would silently leave
-                        // half-old/half-new state.
                         val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                             as? android.content.ClipboardManager
                         val raw = cm?.primaryClip
@@ -232,7 +246,19 @@ fun SettingsScreen(onBack: () -> Unit) {
                             ?.toString()
                         val parsed = raw?.let { parseThemeJson(it) }
                         if (parsed != null) {
-                            scope.launch { AppSettings.applyAppearance(parsed) }
+                            // Imported themes are saved as a fresh entry in
+                            // the user's library so they can be re-edited
+                            // later, not just blasted into the custom slots.
+                            val imported = com.secondream.cheipgram.settings.SavedTheme(
+                                id = java.util.UUID.randomUUID().toString(),
+                                name = context.getString(R.string.theme_imported_default_name),
+                                accentArgb = parsed.customAccentArgb ?: 0xFFD9A85C.toInt(),
+                                myBubbleArgb = parsed.customMyBubbleArgb ?: 0xFF2A4F7A.toInt(),
+                                othersBubbleArgb = parsed.customOthersBubbleArgb ?: 0xFF374151.toInt(),
+                                bgArgb = parsed.customBgArgb ?: 0xFF0F1115.toInt(),
+                                inputBarArgb = parsed.customInputBarArgb ?: 0xFF1A1D24.toInt()
+                            )
+                            scope.launch { AppSettings.upsertSavedTheme(imported) }
                             android.widget.Toast.makeText(
                                 context,
                                 context.getString(R.string.theme_paste_success),
@@ -294,15 +320,13 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     if (showThemeBuilder) {
         ThemeBuilderDialog(
-            initialAccent = appearance.customAccentArgb,
-            initialMyBubble = appearance.customMyBubbleArgb,
-            initialOthersBubble = appearance.customOthersBubbleArgb,
-            initialBg = appearance.customBgArgb,
-            onDismiss = { showThemeBuilder = false },
-            onSaveAccent = { argb -> scope.launch { AppSettings.setCustomAccentArgb(argb) } },
-            onSaveMyBubble = { argb -> scope.launch { AppSettings.setCustomMyBubbleArgb(argb) } },
-            onSaveOthersBubble = { argb -> scope.launch { AppSettings.setCustomOthersBubbleArgb(argb) } },
-            onSaveBg = { argb -> scope.launch { AppSettings.setCustomBgArgb(argb) } }
+            initialTheme = builderTheme,
+            onDismiss = { showThemeBuilder = false; builderTheme = null },
+            onSave = { theme ->
+                scope.launch { AppSettings.upsertSavedTheme(theme) }
+                showThemeBuilder = false
+                builderTheme = null
+            }
         )
     }
 }
@@ -717,67 +741,72 @@ private fun CreditsBlock() {
  * builder (sliders + preview), clear the override and go back to the
  * preset palette, and share the current theme JSON via Intent.ACTION_SEND.
  */
+/**
+ * The "Temi personalizzati" section. Lists the user's saved themes,
+ * exposes a "+ Crea tema personalizzato" entry, and offers reset + paste
+ * actions. Per-theme overflow menu (Applica/Modifica/Condividi/Elimina)
+ * lives on each row.
+ */
 @Composable
-private fun CustomThemeRow(
-    customAccent: Int?,
-    onOpenBuilder: () -> Unit,
-    onClearCustom: () -> Unit,
-    onShare: () -> Unit,
+private fun SavedThemesSection(
+    savedThemes: List<com.secondream.cheipgram.settings.SavedTheme>,
+    activeId: String?,
+    onCreate: () -> Unit,
+    onApply: (com.secondream.cheipgram.settings.SavedTheme) -> Unit,
+    onEdit: (com.secondream.cheipgram.settings.SavedTheme) -> Unit,
+    onDelete: (com.secondream.cheipgram.settings.SavedTheme) -> Unit,
+    onShare: (com.secondream.cheipgram.settings.SavedTheme) -> Unit,
+    onResetToBase: () -> Unit,
     onPaste: () -> Unit
 ) {
     Column(modifier = Modifier.padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            stringResource(R.string.theme_custom_title),
+            style = MaterialTheme.typography.titleMedium
+        )
+        Text(
+            stringResource(R.string.theme_custom_subtitle),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(14.dp))
+
+        if (savedThemes.isEmpty()) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (customAccent != null) Color(customAccent)
-                        else MaterialTheme.colorScheme.primary
-                    )
-                    .border(
-                        width = if (customAccent == null) 1.dp else 0.dp,
-                        color = MaterialTheme.colorScheme.outline,
-                        shape = CircleShape
-                    )
-            )
-            Spacer(Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(
-                    stringResource(R.string.theme_custom_title),
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Text(
-                    if (customAccent != null) stringResource(R.string.theme_custom_active)
-                    else stringResource(R.string.theme_custom_inactive),
+                    stringResource(R.string.theme_empty),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-        Spacer(Modifier.height(14.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ThemeActionButton(
-                label = stringResource(R.string.theme_open_builder),
-                onClick = onOpenBuilder,
-                modifier = Modifier.weight(1f)
-            )
-            if (customAccent != null) {
-                ThemeActionButton(
-                    label = stringResource(R.string.theme_reset),
-                    onClick = onClearCustom,
-                    modifier = Modifier.weight(1f),
-                    outline = true
-                )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (theme in savedThemes) {
+                    SavedThemeRow(
+                        theme = theme,
+                        isActive = theme.id == activeId,
+                        onApply = { onApply(theme) },
+                        onEdit = { onEdit(theme) },
+                        onShare = { onShare(theme) },
+                        onDelete = { onDelete(theme) }
+                    )
+                }
             }
         }
-        Spacer(Modifier.height(8.dp))
+
+        Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ThemeActionButton(
-                label = stringResource(R.string.theme_share),
-                onClick = onShare,
-                modifier = Modifier.weight(1f),
-                outline = true
+                label = stringResource(R.string.theme_create_new),
+                onClick = onCreate,
+                modifier = Modifier.weight(1f)
             )
             ThemeActionButton(
                 label = stringResource(R.string.theme_paste),
@@ -785,6 +814,111 @@ private fun CustomThemeRow(
                 modifier = Modifier.weight(1f),
                 outline = true
             )
+        }
+        if (activeId != null) {
+            Spacer(Modifier.height(8.dp))
+            ThemeActionButton(
+                label = stringResource(R.string.theme_reset_to_base),
+                onClick = onResetToBase,
+                modifier = Modifier.fillMaxWidth(),
+                outline = true
+            )
+        }
+    }
+}
+
+/**
+ * One row inside SavedThemesSection. Shows a 4-color preview chip strip
+ * (accent / my bubble / others bubble / bg), the theme's name, and a "..."
+ * overflow menu with the four per-theme actions. Tap the row body to
+ * apply the theme directly.
+ */
+@Composable
+private fun SavedThemeRow(
+    theme: com.secondream.cheipgram.settings.SavedTheme,
+    isActive: Boolean,
+    onApply: () -> Unit,
+    onEdit: () -> Unit,
+    onShare: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            )
+            .clickable(onClick = onApply)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Four-color preview strip. Stacked horizontally so the user gets a
+        // sense of how the theme will look in chat at a glance.
+        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            for (argb in listOf(theme.accentArgb, theme.myBubbleArgb, theme.othersBubbleArgb, theme.bgArgb)) {
+                Box(
+                    modifier = Modifier
+                        .size(width = 10.dp, height = 24.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(Color(argb))
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            theme.name,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (isActive) {
+            Icon(
+                Icons.Outlined.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+        }
+        Box {
+            androidx.compose.material3.IconButton(onClick = { menuOpen = true }) {
+                Icon(
+                    Icons.Outlined.MoreVert,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            androidx.compose.material3.DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false }
+            ) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(stringResource(R.string.theme_action_apply)) },
+                    onClick = { menuOpen = false; onApply() }
+                )
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(stringResource(R.string.theme_action_edit)) },
+                    onClick = { menuOpen = false; onEdit() }
+                )
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(stringResource(R.string.theme_share)) },
+                    onClick = { menuOpen = false; onShare() }
+                )
+                androidx.compose.material3.DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(R.string.theme_action_delete),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    },
+                    onClick = { menuOpen = false; onDelete() }
+                )
+            }
         }
     }
 }
@@ -816,197 +950,6 @@ private fun ThemeActionButton(
             color = if (outline) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onPrimary,
             fontWeight = FontWeight.SemiBold
-        )
-    }
-}
-
-/**
- * Dialog with three sliders (R, G, B) and a live preview swatch.
- *
- * Why RGB sliders instead of an HSV color wheel: a color wheel needs a 2D
- * gesture handler and is hard to make accessible at small sizes; three
- * sliders are 60 lines of Compose, work for everyone, and give the user
- * precise control. Initial slider positions come from initialArgb (or
- * a neutral amber if there is no custom override yet).
- */
-@Composable
-private fun ThemeBuilderDialog(
-    initialAccent: Int?,
-    initialMyBubble: Int?,
-    initialOthersBubble: Int?,
-    initialBg: Int?,
-    onDismiss: () -> Unit,
-    onSaveAccent: (Int?) -> Unit,
-    onSaveMyBubble: (Int?) -> Unit,
-    onSaveOthersBubble: (Int?) -> Unit,
-    onSaveBg: (Int?) -> Unit
-) {
-    // Section index → which custom color we're editing. We keep one set of
-    // R/G/B state per section so flipping back and forth doesn't lose your
-    // tweaks. `remember(section)` would reset everything; an explicit
-    // 4-entry array keeps continuity.
-    var section by remember { mutableStateOf(0) }
-
-    val initials = listOf(
-        initialAccent ?: 0xFFD9A85C.toInt(),       // amber default
-        initialMyBubble ?: 0xFF2A4F7A.toInt(),     // dark blue default
-        initialOthersBubble ?: 0xFF374151.toInt(), // slate default
-        initialBg ?: 0xFF0F1115.toInt()            // near-black default
-    )
-    val reds = remember {
-        mutableStateListOf<Float>().apply {
-            initials.forEach { add(android.graphics.Color.red(it).toFloat()) }
-        }
-    }
-    val greens = remember {
-        mutableStateListOf<Float>().apply {
-            initials.forEach { add(android.graphics.Color.green(it).toFloat()) }
-        }
-    }
-    val blues = remember {
-        mutableStateListOf<Float>().apply {
-            initials.forEach { add(android.graphics.Color.blue(it).toFloat()) }
-        }
-    }
-
-    val previewArgb = android.graphics.Color.argb(
-        255, reds[section].toInt(), greens[section].toInt(), blues[section].toInt()
-    )
-
-    val sectionTitles = listOf(
-        stringResource(R.string.theme_section_accent),
-        stringResource(R.string.theme_section_my_bubble),
-        stringResource(R.string.theme_section_others_bubble),
-        stringResource(R.string.theme_section_bg)
-    )
-
-    fun saveCurrent() {
-        when (section) {
-            0 -> onSaveAccent(previewArgb)
-            1 -> onSaveMyBubble(previewArgb)
-            2 -> onSaveOthersBubble(previewArgb)
-            3 -> onSaveBg(previewArgb)
-        }
-    }
-
-    fun resetCurrent() {
-        when (section) {
-            0 -> onSaveAccent(null)
-            1 -> onSaveMyBubble(null)
-            2 -> onSaveOthersBubble(null)
-            3 -> onSaveBg(null)
-        }
-        // Snap the sliders back to the default for that section so the
-        // dialog reflects the cleared state.
-        val def = initials[section]
-        reds[section] = android.graphics.Color.red(def).toFloat()
-        greens[section] = android.graphics.Color.green(def).toFloat()
-        blues[section] = android.graphics.Color.blue(def).toFloat()
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.theme_builder_title)) },
-        text = {
-            Column {
-                // Pill tabs for the four sections. Same visual language as
-                // the chat list / new chat tabs so the user immediately
-                // recognises it as "pick one".
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(4.dp)
-                ) {
-                    sectionTitles.forEachIndexed { i, title ->
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(
-                                    if (section == i) MaterialTheme.colorScheme.primary
-                                    else Color.Transparent
-                                )
-                                .clickable { section = i }
-                                .padding(vertical = 6.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                title,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (section == i)
-                                    MaterialTheme.colorScheme.onPrimary
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = if (section == i) FontWeight.SemiBold else FontWeight.Medium,
-                                maxLines = 1
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
-
-                // Preview tile. For the bg section we paint a chat-like
-                // arrangement (background + a tiny bubble) so the user
-                // can gauge contrast between the two; for the others a
-                // simple chip is enough.
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color(previewArgb)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        stringResource(R.string.theme_preview),
-                        color = if (Color(previewArgb).luminance() > 0.5f) Color.Black else Color.White,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                Spacer(Modifier.height(14.dp))
-                ColorSlider("R", reds[section], Color.Red) { reds[section] = it }
-                ColorSlider("G", greens[section], Color.Green) { greens[section] = it }
-                ColorSlider("B", blues[section], Color.Blue) { blues[section] = it }
-            }
-        },
-        confirmButton = {
-            androidx.compose.material3.TextButton(onClick = { saveCurrent() }) {
-                Text(stringResource(R.string.theme_save))
-            }
-        },
-        dismissButton = {
-            Row {
-                androidx.compose.material3.TextButton(onClick = { resetCurrent() }) {
-                    Text(stringResource(R.string.theme_reset))
-                }
-                androidx.compose.material3.TextButton(onClick = onDismiss) {
-                    Text(stringResource(R.string.delete_chat_cancel))
-                }
-            }
-        }
-    )
-}
-
-@Composable
-private fun ColorSlider(label: String, value: Float, tint: Color, onChange: (Float) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.labelLarge, color = tint,
-             modifier = Modifier.width(24.dp))
-        androidx.compose.material3.Slider(
-            value = value,
-            onValueChange = onChange,
-            valueRange = 0f..255f,
-            colors = androidx.compose.material3.SliderDefaults.colors(
-                thumbColor = tint, activeTrackColor = tint
-            ),
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            value.toInt().toString(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(36.dp).padding(start = 6.dp)
         )
     }
 }

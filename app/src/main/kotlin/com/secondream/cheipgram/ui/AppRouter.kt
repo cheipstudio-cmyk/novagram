@@ -83,33 +83,38 @@ fun AppRouter(
     // Push-style transitions: new screen slides in from the right while the
     // outgoing screen shrinks slightly, giving a sense of depth (like iOS
     // navigation). On pop, the back transition mirrors the entry.
-    val durationMs = 300
+    val durationMs = 280
     NavHost(
         navController = nav,
         startDestination = Routes.LOGIN,
+        // Centered scale+fade: each new screen grows in place from 92% to
+        // 100% while fading in, the outgoing one shrinks slightly and
+        // fades out. Feels closer to a modal reveal than to a directional
+        // slide, which matches the "opens at center" feel the user asked
+        // for. Pop reverses the curve symmetrically.
         enterTransition = {
-            slideIntoContainer(
-                AnimatedContentTransitionScope.SlideDirection.Start,
-                animationSpec = tween(durationMs)
-            ) + androidx.compose.animation.fadeIn(tween(220))
-        },
-        exitTransition = {
-            androidx.compose.animation.scaleOut(
-                targetScale = 0.92f,
-                animationSpec = tween(durationMs)
-            ) + androidx.compose.animation.fadeOut(tween(220))
-        },
-        popEnterTransition = {
             androidx.compose.animation.scaleIn(
                 initialScale = 0.92f,
                 animationSpec = tween(durationMs)
             ) + androidx.compose.animation.fadeIn(tween(220))
         },
-        popExitTransition = {
-            slideOutOfContainer(
-                AnimatedContentTransitionScope.SlideDirection.End,
+        exitTransition = {
+            androidx.compose.animation.scaleOut(
+                targetScale = 1.04f,
                 animationSpec = tween(durationMs)
-            ) + androidx.compose.animation.fadeOut(tween(220))
+            ) + androidx.compose.animation.fadeOut(tween(180))
+        },
+        popEnterTransition = {
+            androidx.compose.animation.scaleIn(
+                initialScale = 1.04f,
+                animationSpec = tween(durationMs)
+            ) + androidx.compose.animation.fadeIn(tween(220))
+        },
+        popExitTransition = {
+            androidx.compose.animation.scaleOut(
+                targetScale = 0.92f,
+                animationSpec = tween(durationMs)
+            ) + androidx.compose.animation.fadeOut(tween(180))
         }
     ) {
         composable(Routes.CONFIG) { ApiConfigScreen() }

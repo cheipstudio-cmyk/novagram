@@ -40,6 +40,9 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.AlternateEmail
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.Mood
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Reply
@@ -67,6 +70,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -344,20 +349,89 @@ fun ChatScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
+    var leaveOpen by remember { mutableStateOf(false) }
     val cachedChatLive = TdClient.getCachedChat(chatId)
     val isMuted = (cachedChatLive?.notificationSettings?.muteFor ?: 0) > 0
+
+    // Swipe-from-left-to-right closes the chat. Mirrors the Telegram /
+    // iOS pattern of "swipe right to pop". We hook a horizontal drag
+    // detector on the Scaffold container and fire onBack once the total
+    // horizontal drag passes a screen-fraction threshold. Vertical drag
+    // is ignored, and the inner message-list scroll is on a separate
+    // pointerInput inside the LazyColumn so this doesn't capture it.
+    var backDragAmount by remember { mutableFloatStateOf(0f) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val backTriggerPx = with(density) { 120.dp.toPx() }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput("back-swipe-$chatId") {
+                detectHorizontalDragGestures(
+                    onDragStart = { backDragAmount = 0f },
+                    onDragEnd = {
+                        if (backDragAmount > backTriggerPx) onBack()
+                        backDragAmount = 0f
+                    },
+                    onDragCancel = { backDragAmount = 0f },
+                    onHorizontalDrag = { change, delta ->
+                        // Only accumulate positive (left→right) horizontal
+                        // motion that *starts* near the left edge — same
+                        // gesture grammar as Android's edge-back gesture, so
+                        // we don't fight the message-list horizontal swipe
+                        // on individual bubbles.
+                        if (change.position.x < 80.dp.toPx() || backDragAmount > 0f) {
+                            if (delta > 0f) backDragAmount += delta
+                            else if (backDragAmount > 0f) {
+                                backDragAmount = (backDragAmount + delta).coerceAtLeast(0f)
+                            }
+                        }
+                    }
+                )
+            }
+    ) {
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        chatTitle,
-                        style = MaterialTheme.typography.headlineSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.clickable { infoOpen = true }
-                    )
+                    ) {
+                        // Chat avatar on the left of the title — matches
+                        // Telegram's native client. Uses the chat photo
+                        // from TDLib's cached chat object; falls back to a
+                        // colored circle with the first letter via Avatar
+                        // when no photo is present.
+                        com.secondream.cheipgram.ui.components.Avatar(
+                            file = cachedChatLive?.photo?.small,
+                            fallbackText = chatTitle,
+                            bgColor = com.secondream.cheipgram.ui.screens.avatarBackgroundFor(chatId),
+                            size = 36.dp
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f, fill = false)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    chatTitle,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (isMuted) {
+                                    Icon(
+                                        Icons.Outlined.NotificationsOff,
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .size(14.dp)
+                                            .padding(start = 6.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -386,18 +460,42 @@ fun ChatScreen(
                                 }
                             }
                         )
-                        androidx.compose.material3.DropdownMenuItem(
-                            text = {
-                                Text(
-                                    stringResource(R.string.action_delete_chat),
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            },
-                            onClick = {
-                                menuOpen = false
-                                deleteOpen = true
-                            }
-                        )
+                        // For groups/channels show "Leave" instead — you
+                        // can't delete a chat you don't own. Private chats
+                        // keep "Delete chat" which wipes history + removes
+                        // from the list.
+                        val isChannel = cachedChatLive?.type is TdApi.ChatTypeSupergroup &&
+                            (cachedChatLive.type as TdApi.ChatTypeSupergroup).isChannel
+                        if (isGroupChat) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        stringResource(
+                                            if (isChannel) R.string.action_leave_channel
+                                            else R.string.action_leave_group
+                                        ),
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    leaveOpen = true
+                                }
+                            )
+                        } else {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        stringResource(R.string.action_delete_chat),
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    deleteOpen = true
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -734,6 +832,38 @@ fun ChatScreen(
             }
         )
     }
+    if (leaveOpen) {
+        val cachedNow = TdClient.getCachedChat(chatId)
+        val isChan = cachedNow?.type is TdApi.ChatTypeSupergroup &&
+            (cachedNow.type as TdApi.ChatTypeSupergroup).isChannel
+        AlertDialog(
+            onDismissRequest = { leaveOpen = false },
+            title = { Text(stringResource(R.string.leave_group_confirm, chatTitle)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    leaveOpen = false
+                    scope.launch {
+                        runCatching { TdClient.leaveChat(chatId) }
+                        onBack()
+                    }
+                }) {
+                    Text(
+                        stringResource(
+                            if (isChan) R.string.action_leave_channel
+                            else R.string.action_leave_group
+                        ),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { leaveOpen = false }) {
+                    Text(stringResource(R.string.delete_chat_cancel))
+                }
+            }
+        )
+    }
+    } // close back-swipe Box
 }
 
 /**
@@ -748,6 +878,7 @@ fun ChatScreen(
  * peek, not a profile screen, which we'll add as its own route in a later
  * round.
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatInfoDialog(chatId: Long, onDismiss: () -> Unit) {
     val chat = remember(chatId) { TdClient.getCachedChat(chatId) }
@@ -755,6 +886,8 @@ private fun ChatInfoDialog(chatId: Long, onDismiss: () -> Unit) {
 
     var subtitle by remember(chatId) { mutableStateOf<String?>(null) }
     var description by remember(chatId) { mutableStateOf<String?>(null) }
+    var phone by remember(chatId) { mutableStateOf<String?>(null) }
+    var username by remember(chatId) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(chatId) {
         val c = chat ?: return@LaunchedEffect
@@ -762,7 +895,9 @@ private fun ChatInfoDialog(chatId: Long, onDismiss: () -> Unit) {
             is TdApi.ChatTypePrivate -> {
                 val user = TdClient.getCachedUser(t.userId)
                     ?: runCatching { TdClient.getUser(t.userId) }.getOrNull()
-                subtitle = user?.usernames?.editableUsername?.let { "@$it" }
+                username = user?.usernames?.editableUsername
+                phone = user?.phoneNumber?.takeIf { it.isNotBlank() }?.let { "+$it" }
+                subtitle = username?.let { "@$it" }
                 description = runCatching { TdClient.getUserFullInfo(t.userId).bio?.text }
                     .getOrNull()?.takeIf { it.isNotBlank() }
             }
@@ -775,37 +910,121 @@ private fun ChatInfoDialog(chatId: Long, onDismiss: () -> Unit) {
                 val info = runCatching { TdClient.getSupergroupFullInfo(t.supergroupId) }.getOrNull()
                 subtitle = info?.memberCount?.let { "$it ${labelMembers(it, channel = t.isChannel)}" }
                 description = info?.description?.takeIf { it.isNotBlank() }
+                username = TdClient.getCachedChat(chatId)?.let {
+                    (it.type as? TdApi.ChatTypeSupergroup)?.let { _ -> null } // username not on Chat; fetch via supergroup
+                }
             }
             else -> {}
         }
     }
 
-    AlertDialog(
+    // Full-bleed modal sheet — replaces the tiny AlertDialog with something
+    // that feels like a profile screen: big circular avatar, name, subtitle,
+    // detail rows (bio/description, username, phone). Dismissed by swiping
+    // down or tapping outside.
+    androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text(title, style = MaterialTheme.typography.titleLarge) },
-        text = {
-            Column {
-                subtitle?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(8.dp))
-                }
-                description?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium)
-                }
-                if (subtitle == null && description == null) {
-                    Text(
-                        stringResource(R.string.chat_info_no_details),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(
+            skipPartiallyExpanded = true
+        ),
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = { androidx.compose.material3.BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp)
+                .navigationBarsPadding(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Big circular avatar — 120dp, centered.
+            com.secondream.cheipgram.ui.components.Avatar(
+                file = chat?.photo?.small,
+                fallbackText = title,
+                bgColor = com.secondream.cheipgram.ui.screens.avatarBackgroundFor(chatId),
+                size = 120.dp
+            )
+            Spacer(Modifier.height(16.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            subtitle?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_ok)) }
+            Spacer(Modifier.height(24.dp))
+
+            description?.let {
+                ProfileDetailRow(
+                    icon = Icons.Outlined.Info,
+                    label = stringResource(R.string.chat_info_bio_label),
+                    value = it
+                )
+            }
+            username?.let {
+                ProfileDetailRow(
+                    icon = Icons.Outlined.AlternateEmail,
+                    label = stringResource(R.string.chat_info_username_label),
+                    value = "@$it"
+                )
+            }
+            phone?.let {
+                ProfileDetailRow(
+                    icon = Icons.Outlined.Phone,
+                    label = stringResource(R.string.chat_info_phone_label),
+                    value = it
+                )
+            }
+            if (description == null && username == null && phone == null && subtitle == null) {
+                Text(
+                    stringResource(R.string.chat_info_no_details),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                )
+            }
         }
-    )
+    }
+}
+
+@Composable
+private fun ProfileDetailRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(Modifier.width(14.dp))
+        Column {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(value, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
 }
 
 private fun labelMembers(count: Int, channel: Boolean = false): String =
@@ -822,10 +1041,18 @@ private fun InputBar(
     onMicUp: (sendIt: Boolean) -> Unit,
     recording: Boolean
 ) {
+    // Pull the custom input-bar color if the user has set one in the
+    // theme builder. Falls back to MaterialTheme.colorScheme.background
+    // so the bar tracks whatever surface the chat is on.
+    val appearance by com.secondream.cheipgram.settings.AppSettings.appearance.collectAsState(
+        initial = com.secondream.cheipgram.settings.AppearancePrefs()
+    )
+    val inputBg = appearance.customInputBarArgb?.let { androidx.compose.ui.graphics.Color(it) }
+        ?: MaterialTheme.colorScheme.background
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
+            .background(inputBg)
             .navigationBarsPadding()
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {

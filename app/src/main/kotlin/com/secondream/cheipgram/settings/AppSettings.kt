@@ -37,16 +37,41 @@ data class AppearancePrefs(
     val myBubbleColor: BubbleColor = BubbleColor.Default,
     val othersBubbleColor: BubbleColor = BubbleColor.Default,
     /**
-     * Optional ARGB override that wins over `accentColor`. Set via the theme
-     * builder; null means use the preset chosen in `accentColor`.
+     * Optional ARGB override that wins over `accentColor`. Set when a saved
+     * theme is active or while the user is tweaking the builder; null means
+     * use the preset chosen in `accentColor`.
      */
     val customAccentArgb: Int? = null,
-    /** Optional ARGB override for the user's own bubbles. Wins over BubbleColor preset. */
     val customMyBubbleArgb: Int? = null,
-    /** Optional ARGB override for other people's bubbles. Wins over BubbleColor preset. */
     val customOthersBubbleArgb: Int? = null,
-    /** Optional ARGB override for the chat background. Wins over the active theme. */
-    val customBgArgb: Int? = null
+    val customBgArgb: Int? = null,
+    /** Optional ARGB override for the message-input bar background. */
+    val customInputBarArgb: Int? = null,
+    /**
+     * Id of the saved theme currently applied (so the row gets a checkmark in
+     * Settings). null = no saved theme active, the user is on a base theme
+     * mode (System/Light/Dark/Amoled) or freely tweaked customs.
+     */
+    val activeSavedThemeId: String? = null
+)
+
+/**
+ * A named bundle of color overrides the user has saved. Shows up in
+ * Settings under "Temi personalizzati" as a row separate from the
+ * System/Light/Dark/Amoled base modes. Applying one sets every custom*Argb
+ * field on AppearancePrefs at once and also stores `activeSavedThemeId`.
+ *
+ * Persisted as a JSON array in a single DataStore string key — simpler than
+ * a separate keyed schema and roundtrips cleanly with the share/import flow.
+ */
+data class SavedTheme(
+    val id: String,
+    val name: String,
+    val accentArgb: Int,
+    val myBubbleArgb: Int,
+    val othersBubbleArgb: Int,
+    val bgArgb: Int,
+    val inputBarArgb: Int
 )
 
 object AppSettings {
@@ -63,6 +88,9 @@ object AppSettings {
     private val CUSTOM_MY_BUBBLE = intPreferencesKey("custom_my_bubble_argb")
     private val CUSTOM_OTHERS_BUBBLE = intPreferencesKey("custom_others_bubble_argb")
     private val CUSTOM_BG = intPreferencesKey("custom_bg_argb")
+    private val CUSTOM_INPUT_BAR = intPreferencesKey("custom_input_bar_argb")
+    private val ACTIVE_SAVED_THEME_ID = stringPreferencesKey("active_saved_theme_id")
+    private val SAVED_THEMES_JSON = stringPreferencesKey("saved_themes_json")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -98,9 +126,132 @@ object AppSettings {
                 customAccentArgb = prefs[CUSTOM_ACCENT],
                 customMyBubbleArgb = prefs[CUSTOM_MY_BUBBLE],
                 customOthersBubbleArgb = prefs[CUSTOM_OTHERS_BUBBLE],
-                customBgArgb = prefs[CUSTOM_BG]
+                customBgArgb = prefs[CUSTOM_BG],
+                customInputBarArgb = prefs[CUSTOM_INPUT_BAR],
+                activeSavedThemeId = prefs[ACTIVE_SAVED_THEME_ID]
             )
         }
+
+    /**
+     * The list of user-defined saved themes. Persisted as a JSON array under
+     * a single key so the schema can evolve without DataStore migrations.
+     */
+    val savedThemes: Flow<List<SavedTheme>>
+        get() = appContext.dataStore.data.map { prefs ->
+            parseSavedThemes(prefs[SAVED_THEMES_JSON])
+        }
+
+    private fun parseSavedThemes(raw: String?): List<SavedTheme> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val arr = org.json.JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    add(SavedTheme(
+                        id = o.getString("id"),
+                        name = o.getString("name"),
+                        accentArgb = o.getInt("accent"),
+                        myBubbleArgb = o.getInt("myBubble"),
+                        othersBubbleArgb = o.getInt("othersBubble"),
+                        bgArgb = o.getInt("bg"),
+                        inputBarArgb = o.optInt("inputBar", o.getInt("bg"))
+                    ))
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun encodeSavedThemes(list: List<SavedTheme>): String {
+        val arr = org.json.JSONArray()
+        for (t in list) {
+            val o = org.json.JSONObject()
+            o.put("id", t.id)
+            o.put("name", t.name)
+            o.put("accent", t.accentArgb)
+            o.put("myBubble", t.myBubbleArgb)
+            o.put("othersBubble", t.othersBubbleArgb)
+            o.put("bg", t.bgArgb)
+            o.put("inputBar", t.inputBarArgb)
+            arr.put(o)
+        }
+        return arr.toString()
+    }
+
+    /**
+     * Insert or update a saved theme. If the id already exists in the list
+     * it's replaced in-place (preserves ordering); otherwise it's appended.
+     * Also makes that theme the active one and writes its colors into the
+     * custom* slots so it takes effect immediately.
+     */
+    suspend fun upsertSavedTheme(theme: SavedTheme) {
+        appContext.dataStore.edit { e ->
+            val current = parseSavedThemes(e[SAVED_THEMES_JSON])
+            val idx = current.indexOfFirst { it.id == theme.id }
+            val updated = if (idx >= 0) current.toMutableList().also { it[idx] = theme }
+                          else current + theme
+            e[SAVED_THEMES_JSON] = encodeSavedThemes(updated)
+            e[ACTIVE_SAVED_THEME_ID] = theme.id
+            e[CUSTOM_ACCENT] = theme.accentArgb
+            e[CUSTOM_MY_BUBBLE] = theme.myBubbleArgb
+            e[CUSTOM_OTHERS_BUBBLE] = theme.othersBubbleArgb
+            e[CUSTOM_BG] = theme.bgArgb
+            e[CUSTOM_INPUT_BAR] = theme.inputBarArgb
+        }
+    }
+
+    /** Drop the saved theme by id, also clearing custom* if it was active. */
+    suspend fun deleteSavedTheme(id: String) {
+        appContext.dataStore.edit { e ->
+            val current = parseSavedThemes(e[SAVED_THEMES_JSON])
+            val updated = current.filterNot { it.id == id }
+            e[SAVED_THEMES_JSON] = encodeSavedThemes(updated)
+            if (e[ACTIVE_SAVED_THEME_ID] == id) {
+                e.remove(ACTIVE_SAVED_THEME_ID)
+                e.remove(CUSTOM_ACCENT)
+                e.remove(CUSTOM_MY_BUBBLE)
+                e.remove(CUSTOM_OTHERS_BUBBLE)
+                e.remove(CUSTOM_BG)
+                e.remove(CUSTOM_INPUT_BAR)
+            }
+        }
+    }
+
+    /** Mark a saved theme as the active one and load its colors. */
+    suspend fun activateSavedTheme(id: String) {
+        appContext.dataStore.edit { e ->
+            val theme = parseSavedThemes(e[SAVED_THEMES_JSON]).firstOrNull { it.id == id }
+                ?: return@edit
+            e[ACTIVE_SAVED_THEME_ID] = theme.id
+            e[CUSTOM_ACCENT] = theme.accentArgb
+            e[CUSTOM_MY_BUBBLE] = theme.myBubbleArgb
+            e[CUSTOM_OTHERS_BUBBLE] = theme.othersBubbleArgb
+            e[CUSTOM_BG] = theme.bgArgb
+            e[CUSTOM_INPUT_BAR] = theme.inputBarArgb
+        }
+    }
+
+    /**
+     * Reset to the active base theme (Sistema / Chiaro / Scuro / AMOLED):
+     * drop every custom* override and the active saved theme marker. The
+     * base mode + preset accent + preset bubble stays as it was.
+     */
+    suspend fun resetCustomOverrides() {
+        appContext.dataStore.edit { e ->
+            e.remove(CUSTOM_ACCENT)
+            e.remove(CUSTOM_MY_BUBBLE)
+            e.remove(CUSTOM_OTHERS_BUBBLE)
+            e.remove(CUSTOM_BG)
+            e.remove(CUSTOM_INPUT_BAR)
+            e.remove(ACTIVE_SAVED_THEME_ID)
+        }
+    }
+
+    suspend fun setCustomInputBarArgb(argb: Int?) {
+        appContext.dataStore.edit {
+            if (argb == null) it.remove(CUSTOM_INPUT_BAR) else it[CUSTOM_INPUT_BAR] = argb
+        }
+    }
 
     suspend fun setThemeMode(mode: ThemeMode) {
         appContext.dataStore.edit { it[THEME_MODE] = mode.name }
@@ -166,6 +317,8 @@ object AppSettings {
             if (prefs.customMyBubbleArgb == null) e.remove(CUSTOM_MY_BUBBLE) else e[CUSTOM_MY_BUBBLE] = prefs.customMyBubbleArgb
             if (prefs.customOthersBubbleArgb == null) e.remove(CUSTOM_OTHERS_BUBBLE) else e[CUSTOM_OTHERS_BUBBLE] = prefs.customOthersBubbleArgb
             if (prefs.customBgArgb == null) e.remove(CUSTOM_BG) else e[CUSTOM_BG] = prefs.customBgArgb
+            if (prefs.customInputBarArgb == null) e.remove(CUSTOM_INPUT_BAR) else e[CUSTOM_INPUT_BAR] = prefs.customInputBarArgb
+            if (prefs.activeSavedThemeId == null) e.remove(ACTIVE_SAVED_THEME_ID) else e[ACTIVE_SAVED_THEME_ID] = prefs.activeSavedThemeId
         }
     }
 

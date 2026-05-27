@@ -5,6 +5,7 @@
 
 package com.secondream.cheipgram.ui.components
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -115,7 +116,7 @@ fun MessageBubble(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .pointerInput(message.id) {
+            .pointerInput("swipe-${message.id}") {
                 detectHorizontalDragGestures(
                     onDragEnd = {
                         if (kotlin.math.abs(swipeOffset) >= triggerPx) {
@@ -130,12 +131,11 @@ fun MessageBubble(
                     },
                     onHorizontalDrag = { _, delta ->
                         // Allow drag in only one direction depending on side.
+                        // v0.5.6+: reply swipes from RIGHT to LEFT (negative
+                        // direction) for BOTH outgoing and incoming messages,
+                        // matching the user-requested inverted gesture.
                         val proposed = swipeOffset + delta
-                        swipeOffset = if (mine) {
-                            proposed.coerceIn(-maxPx, 0f)
-                        } else {
-                            proposed.coerceIn(0f, maxPx)
-                        }
+                        swipeOffset = proposed.coerceIn(-maxPx, 0f)
                         if (!hapticFired && kotlin.math.abs(swipeOffset) >= triggerPx) {
                             haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                             hapticFired = true
@@ -143,16 +143,26 @@ fun MessageBubble(
                     }
                 )
             }
+            // Separate pointerInput for long-press. Putting it on the same
+            // modifier chain as the swipe detector lets both run; the swipe
+            // engages on horizontal motion, the long-press engages on
+            // dwell-without-motion, so they never fight for the gesture.
+            .pointerInput("longpress-${message.id}") {
+                detectTapGestures(
+                    onLongPress = { onLongPress(message) }
+                )
+            }
     ) {
         // Reply arrow indicator behind the bubble — fades in as the user
-        // approaches the trigger threshold. Positioned on the side opposite
-        // to the swipe direction so it appears "revealed" by the gesture.
+        // approaches the trigger threshold. Now always rendered on the RIGHT
+        // side (regardless of mine/incoming) because the swipe is always
+        // right-to-left after v0.5.6.
         val revealAlpha = (kotlin.math.abs(animatedOffset) / triggerPx).coerceIn(0f, 1f)
         Box(
             modifier = Modifier
                 .matchParentSize()
                 .padding(horizontal = 20.dp),
-            contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart
+            contentAlignment = Alignment.CenterEnd
         ) {
             Icon(
                 Icons.AutoMirrored.Outlined.Reply,
