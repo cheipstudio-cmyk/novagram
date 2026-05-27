@@ -50,6 +50,27 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="cheipgram" android:host="theme" />
             </intent-filter>
+            <!--
+                t.me / telegram.me / telegram.dog links. Tapping a t.me
+                URL in any app should route into CheipGram, where MainActivity
+                resolves the username/joinhash via TDLib and navigates to
+                the matching chat. autoVerify stays false because we
+                deliberately want the user to be prompted with a chooser the
+                first time — Telegram's own client and ours are both valid
+                handlers.
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="t.me" />
+                <data android:scheme="http" android:host="t.me" />
+                <data android:scheme="https" android:host="telegram.me" />
+                <data android:scheme="http" android:host="telegram.me" />
+                <data android:scheme="https" android:host="telegram.dog" />
+                <data android:scheme="http" android:host="telegram.dog" />
+                <data android:scheme="tg" />
+            </intent-filter>
         </activity>
 
         <service

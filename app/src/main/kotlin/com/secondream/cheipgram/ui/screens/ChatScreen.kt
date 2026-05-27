@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.NotificationsOff
+import androidx.compose.material.icons.automirrored.outlined.Forward
 import androidx.compose.material.icons.outlined.AlternateEmail
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Phone
@@ -125,6 +126,10 @@ fun ChatScreen(
     // Message the user has swiped on (or null if not replying). Cleared on
     // send and on tap of the "x" in the ReplyPreview.
     var replyTarget by remember { mutableStateOf<TdApi.Message?>(null) }
+    // Forward picker target: the message the user wants to share elsewhere.
+    // When non-null we render the picker sheet; tapping a destination chat
+    // fires forwardMessages and clears this back to null.
+    var forwardTarget by remember { mutableStateOf<TdApi.Message?>(null) }
     // Cached list of chat members for the @-mention picker. Loaded lazily
     // the first time the user types "@" in a non-private chat.
     var mentionMembers by remember(chatId) { mutableStateOf<List<TdApi.User>>(emptyList()) }
@@ -297,19 +302,25 @@ fun ChatScreen(
         }
     }
 
-    // React to reactions / view-count / forward-count changes. We rebuild
-    // the matching Message with the new interactionInfo so MessageBubble
-    // sees it on the next recomposition. Mutating the field on the existing
-    // instance wouldn't trigger SnapshotStateList recomposition.
+    // Per-message revision counter. We bump this each time TDLib pushes
+    // a new InteractionInfo (reactions / views / forwards) so the
+    // MessageBubble for that id recomposes — mutating the Java Message
+    // in place doesn't trigger SnapshotStateList because it's still the
+    // same reference. Keyed by message id.
+    val interactionRevisions = remember(chatId) {
+        androidx.compose.runtime.mutableStateMapOf<Long, Int>()
+    }
     LaunchedEffect(chatId) {
         TdClient.interactionInfoUpdates.collect { upd ->
             if (upd.chatId != chatId) return@collect
             val idx = messages.indexOfFirst { it.id == upd.messageId }
             if (idx >= 0) {
-                val old = messages[idx]
-                old.interactionInfo = upd.info
-                // Replace at index so SnapshotStateList notices the change.
-                messages[idx] = old
+                // Mutate in place (TDLib Message is a plain Java class) so
+                // any non-keyed read sees the new info immediately,
+                // then bump the revision so Compose recomposes the bubble.
+                messages[idx].interactionInfo = upd.info
+                interactionRevisions[upd.messageId] =
+                    (interactionRevisions[upd.messageId] ?: 0) + 1
             }
         }
     }
@@ -381,7 +392,11 @@ fun ChatScreen(
                         // gesture grammar as Android's edge-back gesture, so
                         // we don't fight the message-list horizontal swipe
                         // on individual bubbles.
-                        if (change.position.x < 80.dp.toPx() || backDragAmount > 0f) {
+                        // Restricted to the leftmost 24dp so it doesn't
+                        // race with the reply-swipe gesture on incoming
+                        // bubbles (which sit close to the left edge).
+                        // Same grammar as iOS's edge-back gesture.
+                        if (change.position.x < 24.dp.toPx() || backDragAmount > 0f) {
                             if (delta > 0f) backDragAmount += delta
                             else if (backDragAmount > 0f) {
                                 backDragAmount = (backDragAmount + delta).coerceAtLeast(0f)
@@ -529,7 +544,8 @@ fun ChatScreen(
                                 com.secondream.cheipgram.ui.screens.MediaViewerHolder.currentPath = path
                                 onOpenMediaViewer()
                             },
-                            onSwipeReply = { replyTarget = it }
+                            onSwipeReply = { replyTarget = it },
+                            interactionRevision = interactionRevisions[msg.id] ?: 0
                         )
                     }
                 }
@@ -693,6 +709,24 @@ fun ChatScreen(
         )
     }
 
+    // Forward picker: appears when the user taps "Forward" in the message
+    // actions sheet. Picks the destination chat then fires forwardMessages
+    // and resets forwardTarget. We capture the source msg into a local
+    // val so the closure doesn't observe the cleared state.
+    forwardTarget?.let { msg ->
+        com.secondream.cheipgram.ui.components.ForwardChatPickerSheet(
+            onDismiss = { forwardTarget = null },
+            onPick = { destChatId ->
+                forwardTarget = null
+                scope.launch {
+                    runCatching {
+                        TdClient.forwardMessages(destChatId, msg.chatId, longArrayOf(msg.id))
+                    }
+                }
+            }
+        )
+    }
+
     deleteTarget?.let { msg ->
         val copyableText: String? = when (val c = msg.content) {
             is TdApi.MessageText -> c.text.text
@@ -717,6 +751,10 @@ fun ChatScreen(
             } else null,
             onReply = {
                 replyTarget = msg
+                deleteTarget = null
+            },
+            onForward = {
+                forwardTarget = msg
                 deleteTarget = null
             },
             onReact = { emoji ->
@@ -1247,6 +1285,7 @@ private fun MessageActionsSheet(
     onDismiss: () -> Unit,
     onCopy: (() -> Unit)?,
     onReply: () -> Unit,
+    onForward: () -> Unit,
     onReact: (String) -> Unit,
     onDeleteForMe: () -> Unit,
     onDeleteForEveryone: () -> Unit,
@@ -1319,6 +1358,9 @@ private fun MessageActionsSheet(
             Spacer(Modifier.height(16.dp))
 
             DeleteOption(stringResource(R.string.action_reply), onReply, icon = Icons.Outlined.Reply)
+            Spacer(Modifier.height(4.dp))
+            DeleteOption(stringResource(R.string.action_forward), onForward,
+                icon = Icons.AutoMirrored.Outlined.Forward)
             Spacer(Modifier.height(4.dp))
             if (onCopy != null) {
                 DeleteOption(stringResource(R.string.action_copy), onCopy, icon = Icons.Outlined.ContentCopy)

@@ -223,4 +223,10 @@
     <string name="chat_info_phone_label">Telefon</string>
     <string name="home_storage_title">Dein Speicher</string>
     <string name="home_storage_subtitle">An dich selbst gesendete Nachrichten.</string>
+    <string name="action_forward">Weiterleiten</string>
+    <string name="forward_picker_title">Weiterleiten an</string>
+    <string name="forward_picker_search_hint">Chats suchen</string>
+    <string name="reactions_who_title">Reaktionen</string>
+    <string name="home_shortcut_search">Suchen</string>
+    <string name="home_shortcut_new_chat">Neuer Chat</string>
 </resources>

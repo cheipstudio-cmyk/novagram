@@ -724,6 +724,31 @@ object TdClient {
         send(TdApi.GetMessageProperties(chatId, messageId))
 
     /**
+     * Forward messages from one chat to another. message_ids must be sorted
+     * ascending. send_copy=false preserves the original "Forwarded from"
+     * header; remove_caption=false keeps any captions intact.
+     */
+    suspend fun forwardMessages(toChatId: Long, fromChatId: Long, messageIds: LongArray) {
+        send(TdApi.ForwardMessages(
+            toChatId,
+            null,           // topic_id
+            fromChatId,
+            messageIds,
+            null,           // options
+            false,          // send_copy
+            false           // remove_caption
+        ))
+    }
+
+    /**
+     * List everyone who reacted to a message. Passing null reactionType
+     * returns reactions of all kinds; we use this for the "who reacted"
+     * sheet and group by emoji on the client side.
+     */
+    suspend fun getMessageAddedReactions(chatId: Long, messageId: Long): TdApi.AddedReactions =
+        send(TdApi.GetMessageAddedReactions(chatId, messageId, null, "", 100))
+
+    /**
      * Resolve public chats by username/title query. Returns the cached Chat
      * objects so callers can read title, type, photo, etc. Used by the
      * home-page "Join CheipGram" card to detect membership.
@@ -736,6 +761,21 @@ object TdClient {
             chatCache[id] ?: runCatching { send(TdApi.GetChat(id)) }.getOrNull()
         }
     }
+
+    /**
+     * Resolve a single @username to a Chat, opening it on TDLib's side so
+     * subsequent message reads work. Used by the t.me deep-link handler.
+     */
+    suspend fun searchPublicChat(username: String): TdApi.Chat =
+        send(TdApi.SearchPublicChat(username))
+
+    /**
+     * Join a private chat / group by its invite link or invite hash. The
+     * link must be the full https://t.me/+HASH or https://t.me/joinchat/HASH
+     * form. Returns the resulting Chat so the caller can open it.
+     */
+    suspend fun joinChatByInviteLink(link: String): TdApi.Chat =
+        send(TdApi.JoinChatByInviteLink(link))
 
     /**
      * Mute or unmute a chat. Mute is implemented as Int.MAX_VALUE seconds —

@@ -238,4 +238,10 @@
     <string name="chat_info_phone_label">Telefono</string>
     <string name="home_storage_title">Il tuo storage</string>
     <string name="home_storage_subtitle">Messaggi salvati per te stesso.</string>
+    <string name="action_forward">Inoltra</string>
+    <string name="forward_picker_title">Inoltra a</string>
+    <string name="forward_picker_search_hint">Cerca chat</string>
+    <string name="reactions_who_title">Reazioni</string>
+    <string name="home_shortcut_search">Cerca</string>
+    <string name="home_shortcut_new_chat">Nuova chat</string>
 </resources>

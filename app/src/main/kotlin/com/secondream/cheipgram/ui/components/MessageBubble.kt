@@ -72,8 +72,19 @@ fun MessageBubble(
     showSender: Boolean = false,
     onLongPress: (TdApi.Message) -> Unit = {},
     onMediaTap: (String) -> Unit = {},
-    onSwipeReply: (TdApi.Message) -> Unit = {}
+    onSwipeReply: (TdApi.Message) -> Unit = {},
+    /**
+     * Bumped by the parent each time TDLib pushes a new InteractionInfo
+     * for this message. Reading it here pulls this composable into the
+     * snapshot graph so the bubble recomposes when reactions / views /
+     * forwards change, even though the underlying Java Message is
+     * mutated in place rather than re-emitted.
+     */
+    interactionRevision: Int = 0
 ) {
+    // Read the param so the composable observes it; the value itself isn't
+    // used directly anywhere — it's purely a recompose trigger.
+    @Suppress("UNUSED_EXPRESSION") interactionRevision
     val mine = message.isOutgoing
     val appearance by AppSettings.appearance.collectAsState(
         initial = com.secondream.cheipgram.settings.AppearancePrefs()
@@ -130,12 +141,13 @@ fun MessageBubble(
                         hapticFired = false
                     },
                     onHorizontalDrag = { _, delta ->
-                        // Allow drag in only one direction depending on side.
-                        // v0.5.6+: reply swipes from RIGHT to LEFT (negative
-                        // direction) for BOTH outgoing and incoming messages,
-                        // matching the user-requested inverted gesture.
+                        // Reverted to left-to-right (positive offset).
+                        // For both mine and incoming bubbles the gesture
+                        // is the same direction now — feels more like
+                        // Telegram's native behavior than the right-to-left
+                        // version we briefly had.
                         val proposed = swipeOffset + delta
-                        swipeOffset = proposed.coerceIn(-maxPx, 0f)
+                        swipeOffset = proposed.coerceIn(0f, maxPx)
                         if (!hapticFired && kotlin.math.abs(swipeOffset) >= triggerPx) {
                             haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                             hapticFired = true
@@ -154,15 +166,15 @@ fun MessageBubble(
             }
     ) {
         // Reply arrow indicator behind the bubble — fades in as the user
-        // approaches the trigger threshold. Now always rendered on the RIGHT
-        // side (regardless of mine/incoming) because the swipe is always
-        // right-to-left after v0.5.6.
+        // approaches the trigger threshold. Now rendered on the LEFT
+        // side (gesture is left-to-right, so the arrow appears to be
+        // "pulled out" from the start of the row).
         val revealAlpha = (kotlin.math.abs(animatedOffset) / triggerPx).coerceIn(0f, 1f)
         Box(
             modifier = Modifier
                 .matchParentSize()
                 .padding(horizontal = 20.dp),
-            contentAlignment = Alignment.CenterEnd
+            contentAlignment = Alignment.CenterStart
         ) {
             Icon(
                 Icons.AutoMirrored.Outlined.Reply,
@@ -801,6 +813,7 @@ private fun ReactionStrip(
     accent: androidx.compose.ui.graphics.Color
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var showViewers by remember { mutableStateOf(false) }
     androidx.compose.foundation.layout.FlowRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -816,17 +829,33 @@ private fun ReactionStrip(
                         if (chosen) accent.copy(alpha = 0.25f)
                         else onBackground.copy(alpha = 0.08f)
                     )
-                    .clickable(enabled = emoji != null) {
-                        if (emoji == null) return@clickable
-                        scope.launch {
-                            runCatching {
-                                if (chosen) com.secondream.cheipgram.td.TdClient
-                                    .removeEmojiReaction(chatId, messageId, emoji)
-                                else com.secondream.cheipgram.td.TdClient
-                                    .addEmojiReaction(chatId, messageId, emoji)
+                    .combinedClickable(
+                        enabled = emoji != null,
+                        onClick = {
+                            // Single tap toggles your own reaction: if you
+                            // already reacted with this emoji it's removed,
+                            // otherwise added. Matches the in-app Telegram
+                            // behavior on the message-bubble chips.
+                            if (emoji != null) {
+                                scope.launch {
+                                    runCatching {
+                                        if (chosen) com.secondream.cheipgram.td.TdClient
+                                            .removeEmojiReaction(chatId, messageId, emoji)
+                                        else com.secondream.cheipgram.td.TdClient
+                                            .addEmojiReaction(chatId, messageId, emoji)
+                                    }
+                                }
                             }
+                        },
+                        onLongClick = {
+                            // Long-press: show the "who reacted" sheet so
+                            // the user can see who added each emoji. We
+                            // route a single sheet at the strip level
+                            // rather than per-chip because the sheet covers
+                            // every reaction on the message anyway.
+                            showViewers = true
                         }
-                    }
+                    )
                     .padding(horizontal = 8.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -842,5 +871,12 @@ private fun ReactionStrip(
                 }
             }
         }
+    }
+    if (showViewers) {
+        com.secondream.cheipgram.ui.components.ReactionViewersSheet(
+            chatId = chatId,
+            messageId = messageId,
+            onDismiss = { showViewers = false }
+        )
     }
 }

@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
         startTdServiceIfPossible()
         pendingChatId.value = intent?.getLongExtra("chatId", 0L)?.takeIf { it != 0L }
         handleThemeDeeplink(intent)
+        handleTmeDeeplink(intent)
 
         setContent {
             val appearance by AppSettings.appearance.collectAsState(
@@ -93,6 +94,82 @@ class MainActivity : ComponentActivity() {
         val cid = intent.getLongExtra("chatId", 0L)
         if (cid != 0L) pendingChatId.value = cid
         handleThemeDeeplink(intent)
+        handleTmeDeeplink(intent)
+    }
+
+    /**
+     * Handle t.me / telegram.me / telegram.dog / tg: URLs that route into
+     * this app via the manifest intent-filter. Parses the URL into either
+     * a public @username or a join-hash, then resolves through TDLib and
+     * pushes the resulting chatId onto pendingChatId so AppRouter navigates
+     * there.
+     *
+     * Supported forms:
+     *  - t.me/USERNAME                 → public chat
+     *  - t.me/USERNAME/123             → public chat (msg id ignored for now)
+     *  - t.me/joinchat/HASH            → join private group/channel
+     *  - t.me/+HASH                    → idem (newer Telegram format)
+     *  - tg://resolve?domain=USERNAME  → public chat
+     *  - tg://join?invite=HASH         → join private
+     *
+     * Anything else (sticker sets, settings deeplinks, etc.) is silently
+     * ignored — we don't want to throw at the user, just no-op.
+     */
+    private fun handleTmeDeeplink(intent: Intent?) {
+        val data = intent?.data ?: return
+        val scheme = data.scheme ?: return
+        val host = data.host ?: ""
+        // Reject anything that isn't a Telegram-flavored URL or our own
+        // theme scheme (which has its own handler).
+        val isWeb = scheme in listOf("http", "https") &&
+            host in listOf("t.me", "telegram.me", "telegram.dog")
+        val isTg = scheme == "tg"
+        if (!isWeb && !isTg) return
+
+        // Pull username / joinHash out of the URL.
+        var username: String? = null
+        var inviteLink: String? = null
+        if (isWeb) {
+            // path looks like "/USERNAME" or "/joinchat/HASH" or "/+HASH"
+            val segments = data.pathSegments.orEmpty()
+            val first = segments.firstOrNull()
+            when {
+                first.isNullOrBlank() -> return
+                first == "joinchat" && segments.size >= 2 ->
+                    inviteLink = "https://t.me/joinchat/${segments[1]}"
+                first.startsWith("+") ->
+                    inviteLink = "https://t.me/$first"
+                else -> username = first
+            }
+        } else {
+            when (data.host) {
+                "resolve" -> username = data.getQueryParameter("domain")
+                "join" -> {
+                    val invite = data.getQueryParameter("invite")
+                    if (invite != null) inviteLink = "https://t.me/+$invite"
+                }
+                else -> return
+            }
+        }
+
+        lifecycleScope.launch {
+            val chatId = runCatching {
+                when {
+                    inviteLink != null -> {
+                        com.secondream.cheipgram.td.TdClient
+                            .joinChatByInviteLink(inviteLink).id
+                    }
+                    username != null -> {
+                        com.secondream.cheipgram.td.TdClient
+                            .searchPublicChat(username).id
+                    }
+                    else -> null
+                }
+            }.getOrNull()
+            if (chatId != null && chatId != 0L) {
+                pendingChatId.value = chatId
+            }
+        }
     }
 
     /**

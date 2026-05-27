@@ -237,7 +237,9 @@ fun ChatListScreen(
             if (spec.isHome) {
                 HomePage(
                     allChats = allChats,
-                    onChatClick = onChatClick
+                    onChatClick = onChatClick,
+                    onOpenSearch = { searchOpen = true },
+                    onNewChat = onNewChat
                 )
                 return@HorizontalPager
             }
@@ -715,7 +717,9 @@ private fun formatTime(ts: Long): String {
 @Composable
 private fun HomePage(
     allChats: List<ChatSummary>,
-    onChatClick: (Long) -> Unit
+    onChatClick: (Long) -> Unit,
+    onOpenSearch: () -> Unit = {},
+    onNewChat: () -> Unit = {}
 ) {
     val unread = allChats.filter { it.unread > 0 }
     val totalUnread = unread.sumOf { it.unread }
@@ -938,6 +942,29 @@ private fun HomePage(
                 }
             }
         }
+        // Two small shortcut tiles side by side: global search + new chat.
+        // Visually distinct from the bigger "Storage" / "CheipGram" cards
+        // above so the home page doesn't feel like one flat list of
+        // identical-looking rows.
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                HomeShortcutTile(
+                    icon = Icons.Outlined.Search,
+                    label = stringResource(R.string.home_shortcut_search),
+                    onClick = onOpenSearch,
+                    modifier = Modifier.weight(1f)
+                )
+                HomeShortcutTile(
+                    icon = Icons.Outlined.Edit,
+                    label = stringResource(R.string.home_shortcut_new_chat),
+                    onClick = onNewChat,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
         item {
             Text(
                 stringResource(R.string.home_recent_unread).uppercase(),
@@ -1062,5 +1089,47 @@ private fun HomeChatItem(summary: ChatSummary, onClick: () -> Unit) {
                 fontWeight = FontWeight.SemiBold
             )
         }
+    }
+}
+
+@Composable
+private fun HomeShortcutTile(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(
+                width = 0.5.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                shape = RoundedCornerShape(18.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Text(
+            label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
