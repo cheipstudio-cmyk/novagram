@@ -1052,6 +1052,7 @@ private inline fun <reified E : Enum<E>> enumValueOfOrNull(name: String?): E? {
  * HSV ColorWheelPicker. Name field is required — saved themes can't be
  * unnamed. On save we hand back a SavedTheme to the parent.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun ThemeBuilderDialog(
     initialTheme: com.secondream.cheipgram.settings.SavedTheme?,

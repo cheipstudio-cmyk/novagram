@@ -3,7 +3,6 @@ package com.secondream.cheipgram.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,7 +27,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SweepGradient
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
@@ -92,6 +90,12 @@ fun ColorWheelPicker(
                     .fillMaxWidth()
                     .aspectRatio(1f)
                     .pointerInput(Unit) {
+                        // detectDragGestures with onDragStart handles both
+                        // single-tap (touch down + immediate up = no drag
+                        // events, but onDragStart still fires) and drag.
+                        // Avoids detectTapGestures.onPress whose receiver
+                        // is PressGestureScope and can't take a plain
+                        // (Offset) -> Unit lambda.
                         fun update(pos: Offset) {
                             val cx = size.width / 2f
                             val cy = size.height / 2f
@@ -99,42 +103,30 @@ fun ColorWheelPicker(
                             val dy = pos.y - cy
                             val r = sqrt(dx * dx + dy * dy)
                             val radius = min(cx, cy)
-                            // Atan2 returns [-PI, PI]; we want [0, 360].
                             var angle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
                             if (angle < 0f) angle += 360f
                             hue = angle
                             sat = (r / radius).coerceIn(0f, 1f)
                             emit()
                         }
-                        detectTapGestures(onTap = ::update, onPress = ::update)
-                    }
-                    .pointerInput(Unit) {
-                        detectDragGestures { change, _ ->
-                            val cx = size.width / 2f
-                            val cy = size.height / 2f
-                            val dx = change.position.x - cx
-                            val dy = change.position.y - cy
-                            val r = sqrt(dx * dx + dy * dy)
-                            val radius = min(cx, cy)
-                            var angle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
-                            if (angle < 0f) angle += 360f
-                            hue = angle
-                            sat = (r / radius).coerceIn(0f, 1f)
-                            emit()
-                        }
+                        detectDragGestures(
+                            onDragStart = { update(it) },
+                            onDrag = { change, _ -> update(change.position) }
+                        )
                     }
             ) {
                 val w = size.width
                 val h = size.height
                 val radius = min(w, h) / 2f
                 val center = Offset(w / 2f, h / 2f)
-                // Hue ring via sweep gradient.
-                val sweep = SweepGradient(
-                    center = center,
+                // Hue ring via sweep gradient. SweepGradient's constructor
+                // is internal in Compose so we go through Brush.sweepGradient.
+                val sweep = Brush.sweepGradient(
                     colors = listOf(
                         Color.Red, Color.Yellow, Color.Green, Color.Cyan,
                         Color.Blue, Color.Magenta, Color.Red
-                    )
+                    ),
+                    center = center
                 )
                 drawCircle(brush = sweep, radius = radius, center = center)
                 // White-to-transparent radial overlay creates the saturation

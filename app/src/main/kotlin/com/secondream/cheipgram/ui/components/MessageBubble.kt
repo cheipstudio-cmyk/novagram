@@ -791,6 +791,7 @@ private fun ThemeShareCard(prefs: com.secondream.cheipgram.settings.AppearancePr
  * still rendered as their fallback string but tapping them is a no-op for
  * now (the API requires custom_emoji_id which we don't expose yet).
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun ReactionStrip(
     chatId: Long,
