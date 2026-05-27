@@ -253,4 +253,10 @@
     <string name="action_save">Enregistrer</string>
     <string name="media_save_success">Enregistré dans Cheip Gram</string>
     <string name="media_save_error">Échec de l'enregistrement</string>
+    <string name="settings_section_ai">IA</string>
+    <string name="settings_ai_apikey_label">Clé API Anthropic</string>
+    <string name="settings_ai_apikey_desc">Collez votre clé depuis console.anthropic.com pour activer les actions IA sur les messages. Stockée uniquement sur cet appareil.</string>
+    <string name="settings_ai_apikey_save">Enregistrer</string>
+    <string name="settings_ai_apikey_clear">Supprimer</string>
+    <string name="action_ai">IA</string>
 </resources>

@@ -253,4 +253,10 @@
     <string name="action_save">Save</string>
     <string name="media_save_success">Saved to Cheip Gram</string>
     <string name="media_save_error">Save failed</string>
+    <string name="settings_section_ai">AI</string>
+    <string name="settings_ai_apikey_label">Anthropic API key</string>
+    <string name="settings_ai_apikey_desc">Paste your key from console.anthropic.com to enable AI actions on messages. Stored only on this device.</string>
+    <string name="settings_ai_apikey_save">Save</string>
+    <string name="settings_ai_apikey_clear">Remove</string>
+    <string name="action_ai">AI</string>
 </resources>

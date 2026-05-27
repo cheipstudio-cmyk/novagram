@@ -253,4 +253,10 @@
     <string name="action_save">Speichern</string>
     <string name="media_save_success">In Cheip Gram gespeichert</string>
     <string name="media_save_error">Speichern fehlgeschlagen</string>
+    <string name="settings_section_ai">KI</string>
+    <string name="settings_ai_apikey_label">Anthropic-API-Schlüssel</string>
+    <string name="settings_ai_apikey_desc">Fügen Sie Ihren Schlüssel von console.anthropic.com ein, um KI-Aktionen für Nachrichten zu aktivieren. Wird nur auf diesem Gerät gespeichert.</string>
+    <string name="settings_ai_apikey_save">Speichern</string>
+    <string name="settings_ai_apikey_clear">Entfernen</string>
+    <string name="action_ai">KI</string>
 </resources>

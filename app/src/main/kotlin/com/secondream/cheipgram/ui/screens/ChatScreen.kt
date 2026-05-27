@@ -169,6 +169,12 @@ fun ChatScreen(
     // pinned banner; the sheet itself fetches the full list of pinned
     // messages via searchPinnedMessages and lets the user jump to any.
     var pinnedSheetOpen by remember(chatId) { mutableStateOf(false) }
+    // AI sheet target: the message the user picked the AI tile on. The
+    // sheet itself takes the message body + context and routes preset
+    // prompts through Anthropic. Cleared on dismiss.
+    var aiTarget by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
+    val appearance by com.secondream.cheipgram.settings.AppSettings.appearance
+        .collectAsState(initial = com.secondream.cheipgram.settings.AppearancePrefs())
     // Cached list of chat members for the @-mention picker. Loaded lazily
     // the first time the user types "@" in a non-private chat.
     var mentionMembers by remember(chatId) { mutableStateOf<List<TdApi.User>>(emptyList()) }
@@ -1120,6 +1126,72 @@ fun ChatScreen(
         )
     }
 
+    // AI actions sheet — opens when the user picks the AI tile in the
+    // message actions grid. Builds context from the surrounding ~12
+    // messages (newest first since reverseLayout) so prompts like
+    // "Riassumi il thread" have something to chew on. The "Usa come
+    // risposta" action populates the input bar (preserving the user's
+    // ability to edit before sending); "Invia" fires sendText directly.
+    aiTarget?.let { target ->
+        val text = when (val c = target.content) {
+            is TdApi.MessageText -> c.text.text
+            is TdApi.MessagePhoto -> c.caption.text.ifBlank { "[foto]" }
+            is TdApi.MessageVideo -> c.caption.text.ifBlank { "[video]" }
+            is TdApi.MessageDocument -> c.caption.text.ifBlank { c.document.fileName.ifBlank { "[file]" } }
+            else -> "[messaggio]"
+        }
+        val senderName = when (val s = target.senderId) {
+            is TdApi.MessageSenderUser -> {
+                val u = TdClient.getCachedUser(s.userId)
+                "${u?.firstName.orEmpty()} ${u?.lastName.orEmpty()}".trim().ifBlank { null }
+            }
+            is TdApi.MessageSenderChat -> TdClient.getCachedChat(s.chatId)?.title
+            else -> null
+        }
+        // Last ~12 messages around the target as plain "Sender: text" lines.
+        val targetIdx = messages.indexOfFirst { it.id == target.id }
+        val contextLines = if (targetIdx >= 0) {
+            val from = (targetIdx - 6).coerceAtLeast(0)
+            val to = (targetIdx + 6).coerceAtMost(messages.lastIndex)
+            messages.subList(from, to + 1).asReversed().mapNotNull { m ->
+                val mText = when (val c = m.content) {
+                    is TdApi.MessageText -> c.text.text
+                    is TdApi.MessagePhoto -> "[foto] ${c.caption.text}".trim()
+                    is TdApi.MessageVideo -> "[video] ${c.caption.text}".trim()
+                    is TdApi.MessageVoiceNote -> "[vocale]"
+                    is TdApi.MessageSticker -> "[sticker] ${c.sticker.emoji}".trim()
+                    else -> null
+                } ?: return@mapNotNull null
+                val sName = when (val s = m.senderId) {
+                    is TdApi.MessageSenderUser -> {
+                        val u = TdClient.getCachedUser(s.userId)
+                        "${u?.firstName.orEmpty()}".trim().ifBlank { "Utente" }
+                    }
+                    is TdApi.MessageSenderChat -> TdClient.getCachedChat(s.chatId)?.title ?: "Chat"
+                    else -> "Utente"
+                }
+                "$sName: $mText"
+            }
+        } else emptyList()
+        com.secondream.cheipgram.ai.AiActionsSheet(
+            messageText = text,
+            senderName = senderName,
+            context = contextLines,
+            onDismiss = { aiTarget = null },
+            onUseAsReply = { aiReply ->
+                aiTarget = null
+                input = aiReply
+                replyTarget = target
+            },
+            onSendDirect = { aiReply ->
+                aiTarget = null
+                scope.launch {
+                    runCatching { TdClient.sendText(chatId, aiReply, target.id) }
+                }
+            }
+        )
+    }
+
     deleteTarget?.let { msg ->
         val copyableText: String? = when (val c = msg.content) {
             is TdApi.MessageText -> c.text.text
@@ -1249,6 +1321,12 @@ fun ChatScreen(
             },
             onEdit = onEdit,
             onSaveToDownloads = onSaveToDownloads,
+            onAi = if (!appearance.anthropicApiKey.isNullOrBlank()) {
+                {
+                    aiTarget = msg
+                    deleteTarget = null
+                }
+            } else null,
             onReact = { emoji ->
                 val chosenSame = msg.interactionInfo?.reactions?.reactions?.any {
                     it.isChosen && (it.type as? TdApi.ReactionTypeEmoji)?.emoji == emoji
@@ -1882,9 +1960,10 @@ private fun MessageActionsSheet(
      *  editable (text body or media-with-caption). null hides the option
      *  entirely so we never offer it on someone else's message. */
     onEdit: (() -> Unit)?,
-    /** Save the message's media to Downloads/Cheip Gram. null when the
-     *  message has no downloadable content. */
     onSaveToDownloads: (() -> Unit)?,
+    /** Open the AI actions sheet for this message. null hides the AI tile
+     *  (e.g. user hasn't configured an Anthropic API key in settings). */
+    onAi: (() -> Unit)?,
     onReact: (String) -> Unit,
     onDeleteForMe: () -> Unit,
     onDeleteForEveryone: () -> Unit,
@@ -1968,6 +2047,15 @@ private fun MessageActionsSheet(
             // the error tint so they read as separate from neutral ops.
             val tiles = buildList<ActionTile> {
                 val editAllowed = canEditFromServer ?: message.isOutgoing
+                // AI sits first so it's the most prominent tile when
+                // configured — the feature we want users to discover.
+                if (onAi != null) {
+                    add(ActionTile(
+                        stringResource(R.string.action_ai),
+                        androidx.compose.material.icons.Icons.Outlined.AutoAwesome,
+                        onAi
+                    ))
+                }
                 add(ActionTile(stringResource(R.string.action_reply), Icons.Outlined.Reply, onReply))
                 if (onEdit != null && editAllowed) {
                     add(ActionTile(stringResource(R.string.action_edit), Icons.Outlined.Edit, onEdit))

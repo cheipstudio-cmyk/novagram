@@ -68,7 +68,16 @@ data class AppearancePrefs(
      * dozens of background transfers. Voice notes are still tappable to
      * download on-demand, same flow.
      */
-    val autoDownloadMedia: Boolean = true
+    val autoDownloadMedia: Boolean = true,
+    /**
+     * Optional Anthropic API key the user provides for the in-chat AI
+     * features (summarise/translate/draft-reply on selected messages).
+     * Null/blank disables the AI tile in the message actions sheet so
+     * the feature is opt-in — users without a key see no AI surface at
+     * all. Stored locally only, never leaves the device except as the
+     * Authorization header to api.anthropic.com.
+     */
+    val anthropicApiKey: String? = null
 )
 
 /**
@@ -109,6 +118,7 @@ object AppSettings {
     private val SAVED_THEMES_JSON = stringPreferencesKey("saved_themes_json")
     private val TEXT_SCALE = androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
     private val AUTO_DOWNLOAD_MEDIA = androidx.datastore.preferences.core.booleanPreferencesKey("auto_download_media")
+    private val ANTHROPIC_API_KEY = androidx.datastore.preferences.core.stringPreferencesKey("anthropic_api_key")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -148,18 +158,25 @@ object AppSettings {
                 customInputBarArgb = prefs[CUSTOM_INPUT_BAR],
                 activeSavedThemeId = prefs[ACTIVE_SAVED_THEME_ID],
                 textScale = (prefs[TEXT_SCALE] ?: 1.0f).coerceIn(0.85f, 1.35f),
-                autoDownloadMedia = prefs[AUTO_DOWNLOAD_MEDIA] ?: true
+                autoDownloadMedia = prefs[AUTO_DOWNLOAD_MEDIA] ?: true,
+                anthropicApiKey = prefs[ANTHROPIC_API_KEY]?.takeIf { it.isNotBlank() }
             )
         }
 
-    /**
-     * Toggle the "auto-download media while scrolling" preference. Off
-     * means photos/videos/files render as tap-to-download placeholders;
-     * on means TDLib starts the download as soon as the bubble enters
-     * composition (the default behavior we had before this toggle).
-     */
     suspend fun setAutoDownloadMedia(enabled: Boolean) {
         appContext.dataStore.edit { it[AUTO_DOWNLOAD_MEDIA] = enabled }
+    }
+
+    /**
+     * Store (or clear) the user's Anthropic API key. Passing a blank
+     * string deletes the entry so the AI tile disappears from the
+     * actions sheet — easier than a separate "disable" toggle.
+     */
+    suspend fun setAnthropicApiKey(key: String) {
+        appContext.dataStore.edit { e ->
+            if (key.isBlank()) e.remove(ANTHROPIC_API_KEY)
+            else e[ANTHROPIC_API_KEY] = key.trim()
+        }
     }
 
     /**

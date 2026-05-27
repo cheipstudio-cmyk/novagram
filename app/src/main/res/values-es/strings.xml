@@ -253,4 +253,10 @@
     <string name="action_save">Guardar</string>
     <string name="media_save_success">Guardado en Cheip Gram</string>
     <string name="media_save_error">No se pudo guardar</string>
+    <string name="settings_section_ai">IA</string>
+    <string name="settings_ai_apikey_label">Clave API Anthropic</string>
+    <string name="settings_ai_apikey_desc">Pega tu clave de console.anthropic.com para habilitar las acciones de IA en los mensajes. Guardada solo en este dispositivo.</string>
+    <string name="settings_ai_apikey_save">Guardar</string>
+    <string name="settings_ai_apikey_clear">Quitar</string>
+    <string name="action_ai">IA</string>
 </resources>

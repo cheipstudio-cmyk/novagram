@@ -378,6 +378,78 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(20.dp))
 
+            // AI — the user pastes their Anthropic API key here. Without
+            // one the AI tile in the message actions sheet stays hidden.
+            // Key is stored locally and only ever sent to api.anthropic.com.
+            SectionHeader(stringResource(R.string.settings_section_ai))
+            SectionCard {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        stringResource(R.string.settings_ai_apikey_label),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        stringResource(R.string.settings_ai_apikey_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    var apiKeyDraft by remember(appearance.anthropicApiKey) {
+                        mutableStateOf(appearance.anthropicApiKey.orEmpty())
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        if (apiKeyDraft.isEmpty()) {
+                            Text(
+                                "sk-ant-...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = apiKeyDraft,
+                            onValueChange = { apiKeyDraft = it },
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                color = MaterialTheme.colorScheme.onSurface
+                            ),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(
+                                MaterialTheme.colorScheme.primary
+                            ),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                scope.launch { AppSettings.setAnthropicApiKey(apiKeyDraft) }
+                            }
+                        ) {
+                            Text(stringResource(R.string.settings_ai_apikey_save))
+                        }
+                        if (appearance.anthropicApiKey != null) {
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    scope.launch { AppSettings.setAnthropicApiKey("") }
+                                    apiKeyDraft = ""
+                                }
+                            ) {
+                                Text(stringResource(R.string.settings_ai_apikey_clear))
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
             // PRIVACY
             SectionHeader(stringResource(R.string.settings_section_privacy))
             SectionCard {
