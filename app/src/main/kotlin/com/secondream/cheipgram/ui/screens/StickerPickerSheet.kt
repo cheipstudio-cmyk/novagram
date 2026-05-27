@@ -21,6 +21,9 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -76,11 +79,33 @@ fun StickerPickerSheet(
         var favorites by remember { mutableStateOf<List<TdApi.Sticker>?>(null) }
         var recents by remember { mutableStateOf<List<TdApi.Sticker>?>(null) }
 
+        // Search state: query is what the TextField shows; debounced is what
+        // we actually pass to TdClient. The 300ms debounce keeps us from
+        // hammering TDLib while the user is still typing.
+        var query by remember { mutableStateOf("") }
+        var searchResults by remember { mutableStateOf<List<TdApi.Sticker>?>(null) }
+        var searchInFlight by remember { mutableStateOf(false) }
+
         LaunchedEffect(Unit) {
             favorites = runCatching { TdClient.getFavoriteStickers().stickers.toList() }
                 .getOrDefault(emptyList())
             recents = runCatching { TdClient.getRecentStickers().stickers.toList() }
                 .getOrDefault(emptyList())
+        }
+        LaunchedEffect(query) {
+            val q = query.trim()
+            if (q.isEmpty()) {
+                searchResults = null
+                searchInFlight = false
+                return@LaunchedEffect
+            }
+            // Debounce. If the user keeps typing, this LaunchedEffect is
+            // restarted and the delay is cancelled before the request fires.
+            kotlinx.coroutines.delay(300)
+            searchInFlight = true
+            searchResults = runCatching { TdClient.searchStickers(q).stickers.toList() }
+                .getOrDefault(emptyList())
+            searchInFlight = false
         }
 
         Column(
@@ -94,28 +119,66 @@ fun StickerPickerSheet(
                 style = MaterialTheme.typography.titleLarge,
                 fontStyle = FontStyle.Italic
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
 
-            // Pill tabs matching the rest of the app (chat list + new chat).
-            StickerTabs(
-                titles = listOf(
-                    stringResourceSafe(R.string.sticker_tab_favorites),
-                    stringResourceSafe(R.string.sticker_tab_recents)
-                ),
-                selected = selectedTab,
-                onSelect = { selectedTab = it }
+            // Search field. We use the OutlinedTextField for a recognisable
+            // pill shape that matches the rest of CheipGram, with a search
+            // icon on the leading edge and a clear button on the trailing.
+            androidx.compose.material3.OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text(stringResourceSafe(R.string.sticker_search_placeholder)) },
+                singleLine = true,
+                shape = RoundedCornerShape(20.dp),
+                leadingIcon = {
+                    androidx.compose.material3.Icon(
+                        androidx.compose.material.icons.Icons.Outlined.Search,
+                        contentDescription = null
+                    )
+                },
+                trailingIcon = if (query.isNotEmpty()) {
+                    {
+                        androidx.compose.material3.IconButton(onClick = { query = "" }) {
+                            androidx.compose.material3.Icon(
+                                androidx.compose.material.icons.Icons.Outlined.Close,
+                                contentDescription = null
+                            )
+                        }
+                    }
+                } else null
             )
+            Spacer(Modifier.height(10.dp))
 
-            Spacer(Modifier.height(12.dp))
+            val isSearching = query.isNotBlank()
+            if (!isSearching) {
+                // Pill tabs matching the rest of the app (chat list + new chat).
+                StickerTabs(
+                    titles = listOf(
+                        stringResourceSafe(R.string.sticker_tab_favorites),
+                        stringResourceSafe(R.string.sticker_tab_recents)
+                    ),
+                    selected = selectedTab,
+                    onSelect = { selectedTab = it }
+                )
+                Spacer(Modifier.height(12.dp))
+            }
 
-            val current: List<TdApi.Sticker>? = if (selectedTab == 0) favorites else recents
+            val current: List<TdApi.Sticker>? = when {
+                isSearching -> searchResults
+                selectedTab == 0 -> favorites
+                else -> recents
+            }
+            val isLoading = (isSearching && (searchInFlight || searchResults == null)) ||
+                (!isSearching && current == null)
+
             when {
-                current == null -> Box(
+                isLoading -> Box(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp),
                     contentAlignment = Alignment.Center
                 ) { CircularProgressIndicator() }
 
-                current.isEmpty() -> Box(
+                current == null || current.isEmpty() -> Box(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp),
                     contentAlignment = Alignment.Center
                 ) {

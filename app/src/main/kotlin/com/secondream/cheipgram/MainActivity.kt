@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.secondream.cheipgram.notifications.TdService
+import com.secondream.cheipgram.R
 import com.secondream.cheipgram.settings.AppSettings
 import com.secondream.cheipgram.td.TdClient
 import com.secondream.cheipgram.ui.AppRouter
@@ -55,6 +56,7 @@ class MainActivity : ComponentActivity() {
         requestNotifPermissionIfNeeded()
         startTdServiceIfPossible()
         pendingChatId.value = intent?.getLongExtra("chatId", 0L)?.takeIf { it != 0L }
+        handleThemeDeeplink(intent)
 
         setContent {
             val appearance by AppSettings.appearance.collectAsState(
@@ -64,7 +66,8 @@ class MainActivity : ComponentActivity() {
             CheipGramTheme(
                 themeMode = appearance.themeMode,
                 accentColor = appearance.accentColor,
-                customAccentArgb = appearance.customAccentArgb
+                customAccentArgb = appearance.customAccentArgb,
+                customBgArgb = appearance.customBgArgb
             ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -89,6 +92,46 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         val cid = intent.getLongExtra("chatId", 0L)
         if (cid != 0L) pendingChatId.value = cid
+        handleThemeDeeplink(intent)
+    }
+
+    /**
+     * Handle cheipgram://theme?data=<base64-url-safe-json> intents. The data
+     * payload is the same JSON we produce in SettingsScreen.buildThemeShareJson,
+     * base64-encoded with URL_SAFE | NO_WRAP so it survives plain-text channels
+     * like Telegram and email line wrapping.
+     *
+     * Anything that fails to decode or parse is treated as a no-op with a
+     * Toast — we never half-apply a theme.
+     */
+    private fun handleThemeDeeplink(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "cheipgram" || data.host != "theme") return
+        val encoded = data.getQueryParameter("data") ?: return
+        lifecycleScope.launch {
+            val applied = runCatching {
+                val bytes = android.util.Base64.decode(
+                    encoded,
+                    android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP
+                )
+                val json = String(bytes, Charsets.UTF_8)
+                com.secondream.cheipgram.ui.screens.parseThemeJson(json)
+            }.getOrNull()
+            if (applied != null) {
+                AppSettings.applyAppearance(applied)
+                android.widget.Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.theme_paste_success),
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                android.widget.Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.theme_paste_error),
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
     }
 
     private fun requestNotifPermissionIfNeeded() {

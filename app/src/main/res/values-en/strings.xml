@@ -175,4 +175,22 @@
     <string name="theme_builder_title">Accent color</string>
     <string name="theme_preview">Preview</string>
     <string name="theme_save">Save</string>
+    <string name="theme_section_accent">Accent</string>
+    <string name="theme_section_my_bubble">My bubble</string>
+    <string name="theme_section_others_bubble">Their bubble</string>
+    <string name="theme_section_bg">Background</string>
+    <string name="theme_paste">Paste theme</string>
+    <string name="theme_paste_success">Theme imported</string>
+    <string name="theme_paste_error">Invalid theme in clipboard</string>
+    <string name="theme_share_body">Open this link to apply the CheipGram theme:
+
+%1$s</string>
+    <string name="theme_card_title">CheipGram theme</string>
+    <string name="theme_card_subtitle">Tap to apply</string>
+    <string name="theme_card_apply">Apply theme</string>
+    <string name="sticker_search_placeholder">Search stickers...</string>
+    <string name="action_reply">Reply</string>
+    <string name="actions_admin_section">Admin actions</string>
+    <string name="action_mute_author">Mute author</string>
+    <string name="action_kick_author">Kick author</string>
 </resources>

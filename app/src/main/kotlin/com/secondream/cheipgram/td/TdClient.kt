@@ -64,6 +64,16 @@ object TdClient {
     private val _messageContentUpdates = MutableSharedFlow<MessageContentUpdate>(extraBufferCapacity = 32)
     val messageContentUpdates = _messageContentUpdates.asSharedFlow()
 
+    /**
+     * Emitted when a message's interaction info (reactions, view count,
+     * forward count) changes. ChatScreen listens to this to swap in the
+     * fresh `interactionInfo` on the matching cached message so reactions
+     * appear without re-fetching the history.
+     */
+    data class InteractionInfoUpdate(val chatId: Long, val messageId: Long, val info: TdApi.MessageInteractionInfo?)
+    private val _interactionInfoUpdates = MutableSharedFlow<InteractionInfoUpdate>(extraBufferCapacity = 32)
+    val interactionInfoUpdates = _interactionInfoUpdates.asSharedFlow()
+
     private val chatCache = mutableMapOf<Long, TdApi.Chat>()
     private val userCache = mutableMapOf<Long, TdApi.User>()
 
@@ -162,6 +172,15 @@ object TdClient {
                 scope.launch {
                     _messageContentUpdates.emit(MessageContentUpdate(obj.chatId, obj.messageId, obj.newContent))
                     _chatUpdates.emit(obj.chatId)
+                }
+            }
+            is TdApi.UpdateMessageInteractionInfo -> {
+                // Reactions/views/forwards changed. Propagate so the chat
+                // screen can rebuild the affected MessageBubble.
+                scope.launch {
+                    _interactionInfoUpdates.emit(
+                        InteractionInfoUpdate(obj.chatId, obj.messageId, obj.interactionInfo)
+                    )
                 }
             }
             is TdApi.UpdateDeleteMessages -> {
@@ -439,6 +458,21 @@ object TdClient {
         send(TdApi.GetFavoriteStickers())
 
     /**
+     * Search the global sticker corpus by free-text query. Returns up to
+     * `limit` Stickers, sorted by TDLib relevance. `emojis` lets the caller
+     * narrow to a specific emoji ("😂"); we pass empty for an open search.
+     */
+    suspend fun searchStickers(query: String, limit: Int = 40): TdApi.Stickers =
+        send(TdApi.SearchStickers(
+            TdApi.StickerTypeRegular(),
+            "",          // emojis filter
+            query,
+            emptyArray(), // input_language_codes
+            0,           // offset
+            limit
+        ))
+
+    /**
      * Send a sticker the user already has in their stickers list. We pass
      * the sticker's existing file id via InputFileId; width/height/emoji
      * come straight from the TdApi.Sticker we picked.
@@ -480,6 +514,87 @@ object TdClient {
      */
     suspend fun getUserFullInfo(userId: Long): TdApi.UserFullInfo =
         send(TdApi.GetUserFullInfo(userId))
+
+    // ===== Reactions =====
+
+    /**
+     * Add an emoji reaction to a message. `isBig=false` posts the normal-size
+     * floating animation; `updateRecentReactions=true` adds the emoji to
+     * the user's recent reactions list so it surfaces first next time.
+     */
+    suspend fun addEmojiReaction(chatId: Long, messageId: Long, emoji: String) {
+        send(TdApi.AddMessageReaction(
+            chatId, messageId,
+            TdApi.ReactionTypeEmoji(emoji),
+            /* isBig = */ false,
+            /* updateRecentReactions = */ true
+        ))
+    }
+
+    /** Remove a previously-added emoji reaction. No-op if it wasn't there. */
+    suspend fun removeEmojiReaction(chatId: Long, messageId: Long, emoji: String) {
+        send(TdApi.RemoveMessageReaction(
+            chatId, messageId, TdApi.ReactionTypeEmoji(emoji)
+        ))
+    }
+
+    // ===== Group / channel admin actions =====
+
+    /**
+     * Returns the caller's status in a chat — used to decide whether to
+     * show admin actions like "delete for everyone" or "kick" in the UI.
+     * For private chats the result is meaningless; only call for groups
+     * and supergroups.
+     */
+    suspend fun getMyChatMember(chatId: Long, myUserId: Long): TdApi.ChatMember =
+        send(TdApi.GetChatMember(chatId, TdApi.MessageSenderUser(myUserId)))
+
+    /**
+     * Kick a user from a group: ban with bannedUntilDate=0 means permanent.
+     * In groups (vs supergroups/channels) "ban" is the only way to remove
+     * a member — there's no separate "kick" operation in TDLib.
+     */
+    suspend fun kickGroupUser(chatId: Long, userId: Long) {
+        send(TdApi.SetChatMemberStatus(
+            chatId, TdApi.MessageSenderUser(userId),
+            TdApi.ChatMemberStatusBanned(0)
+        ))
+    }
+
+    /**
+     * Mute a user in a group: restrict them from sending messages of any
+     * kind, but leave them as a member so they can still read. Forever
+     * (restrictedUntilDate=0). Reading-only permissions are derived from
+     * "all false" on the chatPermissions object.
+     */
+    suspend fun muteGroupUser(chatId: Long, userId: Long) {
+        val noWrite = TdApi.ChatPermissions(
+            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false
+        )
+        send(TdApi.SetChatMemberStatus(
+            chatId, TdApi.MessageSenderUser(userId),
+            TdApi.ChatMemberStatusRestricted(true, 0, noWrite)
+        ))
+    }
+
+    // ===== Bot commands =====
+
+    /**
+     * Return the list of /commands a bot exposes in a chat. For private
+     * chats the bot's commands come from its UserFullInfo.botInfo.commands.
+     * For groups we ask TDLib with a chat-scoped query so we get the
+     * commands the bot is actually offering in *that* group (which can
+     * differ from its private-chat command set).
+     */
+    suspend fun getBotCommandsForChat(chatId: Long): List<TdApi.BotCommand> {
+        // The "any bot" form: pass scope=BotCommandScopeChat and TDLib
+        // returns the merged command list across every bot in the chat.
+        val res = runCatching {
+            send(TdApi.GetCommands(TdApi.BotCommandScopeChat(chatId), ""))
+        }.getOrNull()
+        return res?.commands?.toList() ?: emptyList()
+    }
 
     /** Full info about a basic group, including its description and members. */
     suspend fun getBasicGroupFullInfo(basicGroupId: Long): TdApi.BasicGroupFullInfo =

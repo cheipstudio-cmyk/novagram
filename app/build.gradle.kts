@@ -23,8 +23,8 @@ android {
         applicationId = "com.secondream.cheipgram"
         minSdk = 26
         targetSdk = 35
-        versionCode = 20
-        versionName = "0.5.0"
+        versionCode = 24
+        versionName = "0.5.4"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

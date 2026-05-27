@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -37,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -175,13 +177,34 @@ fun SettingsScreen(onBack: () -> Unit) {
                     customAccent = appearance.customAccentArgb,
                     onOpenBuilder = { showThemeBuilder = true },
                     onClearCustom = {
-                        scope.launch { AppSettings.setCustomAccentArgb(null) }
+                        // Clear ALL custom overrides at once — the user
+                        // expects "reset" to fully return to the preset
+                        // palette, not just the accent.
+                        scope.launch {
+                            AppSettings.setCustomAccentArgb(null)
+                            AppSettings.setCustomMyBubbleArgb(null)
+                            AppSettings.setCustomOthersBubbleArgb(null)
+                            AppSettings.setCustomBgArgb(null)
+                        }
                     },
                     onShare = {
+                        // Build the same JSON as before, base64-url-safe
+                        // encode it, and wrap it in a cheipgram://theme
+                        // deeplink. Tapping the link in any app routes
+                        // back into CheipGram and auto-applies — that's
+                        // why we share a link instead of raw JSON now.
                         val json = buildThemeShareJson(appearance)
+                        val encoded = android.util.Base64.encodeToString(
+                            json.toByteArray(Charsets.UTF_8),
+                            android.util.Base64.URL_SAFE or
+                                android.util.Base64.NO_WRAP or
+                                android.util.Base64.NO_PADDING
+                        )
+                        val deeplink = "cheipgram://theme?data=$encoded"
+                        val message = context.getString(R.string.theme_share_body, deeplink)
                         val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(android.content.Intent.EXTRA_TEXT, json)
+                            putExtra(android.content.Intent.EXTRA_TEXT, message)
                             putExtra(android.content.Intent.EXTRA_SUBJECT, "CheipGram theme")
                         }
                         runCatching {
@@ -191,6 +214,36 @@ fun SettingsScreen(onBack: () -> Unit) {
                                     context.getString(R.string.theme_share_chooser)
                                 )
                             )
+                        }
+                    },
+                    onPaste = {
+                        // Pull the first text item off the clipboard and try
+                        // to parse our theme JSON. Anything that doesn't
+                        // match (wrong version, wrong keys, malformed JSON)
+                        // shows the "import failed" toast — we never apply
+                        // a partial blob, because that would silently leave
+                        // half-old/half-new state.
+                        val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            as? android.content.ClipboardManager
+                        val raw = cm?.primaryClip
+                            ?.takeIf { it.itemCount > 0 }
+                            ?.getItemAt(0)
+                            ?.coerceToText(context)
+                            ?.toString()
+                        val parsed = raw?.let { parseThemeJson(it) }
+                        if (parsed != null) {
+                            scope.launch { AppSettings.applyAppearance(parsed) }
+                            android.widget.Toast.makeText(
+                                context,
+                                context.getString(R.string.theme_paste_success),
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            android.widget.Toast.makeText(
+                                context,
+                                context.getString(R.string.theme_paste_error),
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
                         }
                     }
                 )
@@ -241,16 +294,15 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     if (showThemeBuilder) {
         ThemeBuilderDialog(
-            initialArgb = appearance.customAccentArgb,
+            initialAccent = appearance.customAccentArgb,
+            initialMyBubble = appearance.customMyBubbleArgb,
+            initialOthersBubble = appearance.customOthersBubbleArgb,
+            initialBg = appearance.customBgArgb,
             onDismiss = { showThemeBuilder = false },
-            onSave = { argb ->
-                scope.launch { AppSettings.setCustomAccentArgb(argb) }
-                showThemeBuilder = false
-            },
-            onReset = {
-                scope.launch { AppSettings.setCustomAccentArgb(null) }
-                showThemeBuilder = false
-            }
+            onSaveAccent = { argb -> scope.launch { AppSettings.setCustomAccentArgb(argb) } },
+            onSaveMyBubble = { argb -> scope.launch { AppSettings.setCustomMyBubbleArgb(argb) } },
+            onSaveOthersBubble = { argb -> scope.launch { AppSettings.setCustomOthersBubbleArgb(argb) } },
+            onSaveBg = { argb -> scope.launch { AppSettings.setCustomBgArgb(argb) } }
         )
     }
 }
@@ -670,7 +722,8 @@ private fun CustomThemeRow(
     customAccent: Int?,
     onOpenBuilder: () -> Unit,
     onClearCustom: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onPaste: () -> Unit
 ) {
     Column(modifier = Modifier.padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -719,12 +772,20 @@ private fun CustomThemeRow(
             }
         }
         Spacer(Modifier.height(8.dp))
-        ThemeActionButton(
-            label = stringResource(R.string.theme_share),
-            onClick = onShare,
-            modifier = Modifier.fillMaxWidth(),
-            outline = true
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ThemeActionButton(
+                label = stringResource(R.string.theme_share),
+                onClick = onShare,
+                modifier = Modifier.weight(1f),
+                outline = true
+            )
+            ThemeActionButton(
+                label = stringResource(R.string.theme_paste),
+                onClick = onPaste,
+                modifier = Modifier.weight(1f),
+                outline = true
+            )
+        }
     }
 }
 
@@ -770,29 +831,129 @@ private fun ThemeActionButton(
  */
 @Composable
 private fun ThemeBuilderDialog(
-    initialArgb: Int?,
+    initialAccent: Int?,
+    initialMyBubble: Int?,
+    initialOthersBubble: Int?,
+    initialBg: Int?,
     onDismiss: () -> Unit,
-    onSave: (Int) -> Unit,
-    onReset: () -> Unit
+    onSaveAccent: (Int?) -> Unit,
+    onSaveMyBubble: (Int?) -> Unit,
+    onSaveOthersBubble: (Int?) -> Unit,
+    onSaveBg: (Int?) -> Unit
 ) {
-    val start = initialArgb ?: 0xFFD9A85C.toInt()
-    var red by remember { mutableStateOf(android.graphics.Color.red(start).toFloat()) }
-    var green by remember { mutableStateOf(android.graphics.Color.green(start).toFloat()) }
-    var blue by remember { mutableStateOf(android.graphics.Color.blue(start).toFloat()) }
+    // Section index → which custom color we're editing. We keep one set of
+    // R/G/B state per section so flipping back and forth doesn't lose your
+    // tweaks. `remember(section)` would reset everything; an explicit
+    // 4-entry array keeps continuity.
+    var section by remember { mutableStateOf(0) }
 
-    val previewArgb = android.graphics.Color.argb(255, red.toInt(), green.toInt(), blue.toInt())
+    val initials = listOf(
+        initialAccent ?: 0xFFD9A85C.toInt(),       // amber default
+        initialMyBubble ?: 0xFF2A4F7A.toInt(),     // dark blue default
+        initialOthersBubble ?: 0xFF374151.toInt(), // slate default
+        initialBg ?: 0xFF0F1115.toInt()            // near-black default
+    )
+    val reds = remember {
+        mutableStateListOf<Float>().apply {
+            initials.forEach { add(android.graphics.Color.red(it).toFloat()) }
+        }
+    }
+    val greens = remember {
+        mutableStateListOf<Float>().apply {
+            initials.forEach { add(android.graphics.Color.green(it).toFloat()) }
+        }
+    }
+    val blues = remember {
+        mutableStateListOf<Float>().apply {
+            initials.forEach { add(android.graphics.Color.blue(it).toFloat()) }
+        }
+    }
+
+    val previewArgb = android.graphics.Color.argb(
+        255, reds[section].toInt(), greens[section].toInt(), blues[section].toInt()
+    )
+
+    val sectionTitles = listOf(
+        stringResource(R.string.theme_section_accent),
+        stringResource(R.string.theme_section_my_bubble),
+        stringResource(R.string.theme_section_others_bubble),
+        stringResource(R.string.theme_section_bg)
+    )
+
+    fun saveCurrent() {
+        when (section) {
+            0 -> onSaveAccent(previewArgb)
+            1 -> onSaveMyBubble(previewArgb)
+            2 -> onSaveOthersBubble(previewArgb)
+            3 -> onSaveBg(previewArgb)
+        }
+    }
+
+    fun resetCurrent() {
+        when (section) {
+            0 -> onSaveAccent(null)
+            1 -> onSaveMyBubble(null)
+            2 -> onSaveOthersBubble(null)
+            3 -> onSaveBg(null)
+        }
+        // Snap the sliders back to the default for that section so the
+        // dialog reflects the cleared state.
+        val def = initials[section]
+        reds[section] = android.graphics.Color.red(def).toFloat()
+        greens[section] = android.graphics.Color.green(def).toFloat()
+        blues[section] = android.graphics.Color.blue(def).toFloat()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.theme_builder_title)) },
         text = {
             Column {
-                // Preview chip — mimics a primary button at the chosen color
-                // so the user sees the effect immediately.
+                // Pill tabs for the four sections. Same visual language as
+                // the chat list / new chat tabs so the user immediately
+                // recognises it as "pick one".
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(4.dp)
+                ) {
+                    sectionTitles.forEachIndexed { i, title ->
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    if (section == i) MaterialTheme.colorScheme.primary
+                                    else Color.Transparent
+                                )
+                                .clickable { section = i }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (section == i)
+                                    MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (section == i) FontWeight.SemiBold else FontWeight.Medium,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+
+                // Preview tile. For the bg section we paint a chat-like
+                // arrangement (background + a tiny bubble) so the user
+                // can gauge contrast between the two; for the others a
+                // simple chip is enough.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .height(56.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color(previewArgb)),
                     contentAlignment = Alignment.Center
@@ -803,20 +964,20 @@ private fun ThemeBuilderDialog(
                         fontWeight = FontWeight.SemiBold
                     )
                 }
-                Spacer(Modifier.height(16.dp))
-                ColorSlider("R", red, Color.Red) { red = it }
-                ColorSlider("G", green, Color.Green) { green = it }
-                ColorSlider("B", blue, Color.Blue) { blue = it }
+                Spacer(Modifier.height(14.dp))
+                ColorSlider("R", reds[section], Color.Red) { reds[section] = it }
+                ColorSlider("G", greens[section], Color.Green) { greens[section] = it }
+                ColorSlider("B", blues[section], Color.Blue) { blues[section] = it }
             }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton(onClick = { onSave(previewArgb) }) {
+            androidx.compose.material3.TextButton(onClick = { saveCurrent() }) {
                 Text(stringResource(R.string.theme_save))
             }
         },
         dismissButton = {
             Row {
-                androidx.compose.material3.TextButton(onClick = onReset) {
+                androidx.compose.material3.TextButton(onClick = { resetCurrent() }) {
                     Text(stringResource(R.string.theme_reset))
                 }
                 androidx.compose.material3.TextButton(onClick = onDismiss) {
@@ -869,5 +1030,74 @@ internal fun buildThemeShareJson(prefs: com.secondream.cheipgram.settings.Appear
     obj.put("othersBubbleColor", prefs.othersBubbleColor.name)
     obj.put("languageTag", prefs.languageTag)
     prefs.customAccentArgb?.let { obj.put("customAccentArgb", it) }
+    prefs.customMyBubbleArgb?.let { obj.put("customMyBubbleArgb", it) }
+    prefs.customOthersBubbleArgb?.let { obj.put("customOthersBubbleArgb", it) }
+    prefs.customBgArgb?.let { obj.put("customBgArgb", it) }
     return obj.toString(2)
+}
+
+/**
+ * Parse a theme JSON blob produced by buildThemeShareJson.
+ *
+ * Accepts three input shapes for convenience:
+ *   1. Raw JSON: starts with `{`. Used to be the share format in 0.5.0/0.5.1.
+ *   2. A bare cheipgram://theme?data=<base64> deeplink, exactly as the
+ *      share button produces it now.
+ *   3. Any text that *contains* the deeplink anywhere (e.g. the localised
+ *      share body "Apri questo link per applicare il tema:\n<link>"). The
+ *      regex below extracts the first deeplink it finds and decodes from
+ *      there.
+ *
+ * Returns null if nothing matches — we explicitly check the version marker
+ * before doing anything else, so a random copy-pasted JSON object doesn't
+ * accidentally rewrite the user's appearance. Unknown enum names fall back
+ * to current defaults rather than crashing.
+ */
+internal fun parseThemeJson(raw: String): com.secondream.cheipgram.settings.AppearancePrefs? {
+    val trimmed = raw.trim()
+    // Try the deeplink path first — a substring match works regardless of
+    // surrounding "Apri questo link" wrapper text.
+    val deeplinkRegex = Regex("cheipgram://theme\\?data=([A-Za-z0-9_\\-]+)")
+    val match = deeplinkRegex.find(trimmed)
+    val jsonString = if (match != null) {
+        runCatching {
+            val encoded = match.groupValues[1]
+            val bytes = android.util.Base64.decode(
+                encoded,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP
+            )
+            String(bytes, Charsets.UTF_8)
+        }.getOrNull() ?: return null
+    } else {
+        // Not a deeplink — assume raw JSON.
+        trimmed
+    }
+    val obj = runCatching { org.json.JSONObject(jsonString) }.getOrNull() ?: return null
+    if (obj.optInt("cheipgram_theme_version", -1) != 1) return null
+    return runCatching {
+        com.secondream.cheipgram.settings.AppearancePrefs(
+            themeMode = enumValueOfOrNull<com.secondream.cheipgram.settings.ThemeMode>(
+                obj.optString("themeMode")
+            ) ?: com.secondream.cheipgram.settings.ThemeMode.Dark,
+            accentColor = enumValueOfOrNull<com.secondream.cheipgram.settings.AccentColor>(
+                obj.optString("accentColor")
+            ) ?: com.secondream.cheipgram.settings.AccentColor.Amber,
+            languageTag = if (obj.has("languageTag")) obj.getString("languageTag") else "system",
+            myBubbleColor = enumValueOfOrNull<com.secondream.cheipgram.settings.BubbleColor>(
+                obj.optString("myBubbleColor")
+            ) ?: com.secondream.cheipgram.settings.BubbleColor.Default,
+            othersBubbleColor = enumValueOfOrNull<com.secondream.cheipgram.settings.BubbleColor>(
+                obj.optString("othersBubbleColor")
+            ) ?: com.secondream.cheipgram.settings.BubbleColor.Default,
+            customAccentArgb = if (obj.has("customAccentArgb")) obj.getInt("customAccentArgb") else null,
+            customMyBubbleArgb = if (obj.has("customMyBubbleArgb")) obj.getInt("customMyBubbleArgb") else null,
+            customOthersBubbleArgb = if (obj.has("customOthersBubbleArgb")) obj.getInt("customOthersBubbleArgb") else null,
+            customBgArgb = if (obj.has("customBgArgb")) obj.getInt("customBgArgb") else null
+        )
+    }.getOrNull()
+}
+
+private inline fun <reified E : Enum<E>> enumValueOfOrNull(name: String?): E? {
+    if (name.isNullOrBlank()) return null
+    return runCatching { enumValueOf<E>(name) }.getOrNull()
 }

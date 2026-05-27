@@ -1,10 +1,16 @@
-@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class
+)
 
 package com.secondream.cheipgram.ui.components
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +26,7 @@ import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AudioFile
@@ -69,7 +76,8 @@ fun MessageBubble(
         initial = com.secondream.cheipgram.settings.AppearancePrefs()
     )
     val bubbleColorPref = if (mine) appearance.myBubbleColor else appearance.othersBubbleColor
-    val fill = bubbleFillFor(bubbleColorPref, mine)
+    val customBubbleArgb = if (mine) appearance.customMyBubbleArgb else appearance.customOthersBubbleArgb
+    val fill = bubbleFillFor(bubbleColorPref, mine, customBubbleArgb)
     val align = if (mine) Alignment.End else Alignment.Start
     val shape = if (mine) {
         RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp)
@@ -204,6 +212,22 @@ fun MessageBubble(
                 }
             }
             MessageContent(message, fill.onBackground)
+            // Existing reactions strip. We surface every reaction the
+            // message currently carries; tapping toggles your own reaction
+            // (add if missing, remove if you've already used it). Updates
+            // come through via TdClient.interactionInfoUpdates so the chip
+            // counts stay live without a list refresh.
+            val reactions = message.interactionInfo?.reactions?.reactions
+            if (!reactions.isNullOrEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                ReactionStrip(
+                    chatId = message.chatId,
+                    messageId = message.id,
+                    reactions = reactions.toList(),
+                    onBackground = fill.onBackground,
+                    accent = MaterialTheme.colorScheme.primary
+                )
+            }
             Spacer(Modifier.height(2.dp))
             // Outgoing messages in private chats show a tick marker next to
             // the timestamp: a clock when still sending, an exclamation on
@@ -250,11 +274,26 @@ fun MessageBubble(
 private fun MessageContent(message: TdApi.Message, onBackground: androidx.compose.ui.graphics.Color) {
     when (val c = message.content) {
         is TdApi.MessageText -> {
-            FormattedTextRendering(
-                formatted = c.text,
-                onBackground = onBackground,
-                linkColor = MaterialTheme.colorScheme.primary
-            )
+            val rawText = c.text.text
+            // Theme-share detection: if the body contains a cheipgram://theme
+            // deeplink, parse it and render a card with an "Applica tema"
+            // button instead of plain text. Falls back to the normal
+            // FormattedTextRendering when parsing fails or the message is
+            // a regular link.
+            val themePrefs = remember(rawText) {
+                if (rawText.contains("cheipgram://theme?data=")) {
+                    com.secondream.cheipgram.ui.screens.parseThemeJson(rawText)
+                } else null
+            }
+            if (themePrefs != null) {
+                ThemeShareCard(prefs = themePrefs)
+            } else {
+                FormattedTextRendering(
+                    formatted = c.text,
+                    onBackground = onBackground,
+                    linkColor = MaterialTheme.colorScheme.primary
+                )
+            }
         }
         is TdApi.MessagePhoto -> {
             val photo = c.photo.sizes.lastOrNull()?.photo
@@ -626,4 +665,169 @@ private fun FormattedTextRendering(
             }
         }
     )
+}
+
+/**
+ * Render a "Tema CheipGram" card inside a message bubble whenever the
+ * message text contains a cheipgram://theme deeplink. Shows four colored
+ * dots previewing the shared accent + background + bubble colors, the
+ * label "Tema CheipGram", and an "Applica tema" button that writes the
+ * full AppearancePrefs to DataStore.
+ *
+ * Apply is fire-and-forget on a local coroutine scope; AppSettings handles
+ * its own thread context. We Toast the result so the user sees that the
+ * tap did something even though the UI redraw is asynchronous.
+ */
+@Composable
+private fun ThemeShareCard(prefs: com.secondream.cheipgram.settings.AppearancePrefs) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val accent = prefs.customAccentArgb?.let { androidx.compose.ui.graphics.Color(it) }
+        ?: MaterialTheme.colorScheme.primary
+    val bg = prefs.customBgArgb?.let { androidx.compose.ui.graphics.Color(it) }
+        ?: MaterialTheme.colorScheme.background
+    val myBubble = prefs.customMyBubbleArgb?.let { androidx.compose.ui.graphics.Color(it) }
+        ?: accent
+    val othersBubble = prefs.customOthersBubbleArgb?.let { androidx.compose.ui.graphics.Color(it) }
+        ?: MaterialTheme.colorScheme.surfaceVariant
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        // Mini-preview: a chat-like row with the four colors stacked.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(bg),
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(othersBubble)
+                )
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(myBubble)
+                )
+                Spacer(Modifier.weight(1f))
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(accent)
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            stringResource(R.string.theme_card_title),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            stringResource(R.string.theme_card_subtitle),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(10.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.primary)
+                .clickable {
+                    scope.launch {
+                        com.secondream.cheipgram.settings.AppSettings.applyAppearance(prefs)
+                        android.widget.Toast.makeText(
+                            ctx,
+                            ctx.getString(R.string.theme_paste_success),
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+                .padding(vertical = 10.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                stringResource(R.string.theme_card_apply),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimary,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+/**
+ * Strip of reaction chips below a message. One chip per emoji used on the
+ * message; each shows the emoji + total count. The chip you've added
+ * yourself is filled with the accent color and counts you. Tap to toggle.
+ *
+ * We only handle ReactionTypeEmoji — custom emoji and paid reactions are
+ * still rendered as their fallback string but tapping them is a no-op for
+ * now (the API requires custom_emoji_id which we don't expose yet).
+ */
+@Composable
+private fun ReactionStrip(
+    chatId: Long,
+    messageId: Long,
+    reactions: List<org.drinkless.tdlib.TdApi.MessageReaction>,
+    onBackground: androidx.compose.ui.graphics.Color,
+    accent: androidx.compose.ui.graphics.Color
+) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        for (r in reactions) {
+            val emoji = (r.type as? org.drinkless.tdlib.TdApi.ReactionTypeEmoji)?.emoji
+            val label = emoji ?: "★"
+            val chosen = r.isChosen
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        if (chosen) accent.copy(alpha = 0.25f)
+                        else onBackground.copy(alpha = 0.08f)
+                    )
+                    .clickable(enabled = emoji != null) {
+                        if (emoji == null) return@clickable
+                        scope.launch {
+                            runCatching {
+                                if (chosen) com.secondream.cheipgram.td.TdClient
+                                    .removeEmojiReaction(chatId, messageId, emoji)
+                                else com.secondream.cheipgram.td.TdClient
+                                    .addEmojiReaction(chatId, messageId, emoji)
+                            }
+                        }
+                    }
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(label, style = MaterialTheme.typography.labelMedium)
+                if (r.totalCount > 1) {
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        r.totalCount.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (chosen) accent else onBackground.copy(alpha = 0.7f),
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
 }

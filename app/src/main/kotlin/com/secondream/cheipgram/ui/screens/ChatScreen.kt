@@ -12,6 +12,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -41,6 +42,10 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Mood
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Reply
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.VolumeOff
+import androidx.compose.material.icons.outlined.PersonRemove
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material3.AlertDialog
@@ -62,6 +67,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -74,6 +80,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -132,6 +139,50 @@ fun ChatScreen(
     // chat list ever renders, so we read it synchronously.
     val isGroupChat = remember(chatId) {
         TdClient.getCachedChat(chatId)?.type !is TdApi.ChatTypePrivate
+    }
+
+    // Am I an admin/creator of this group? Drives whether admin actions
+    // (kick / mute / "delete for everyone of someone else's message") show
+    // up in the message sheet. For private chats this stays false and the
+    // admin block never renders.
+    var isAdmin by remember(chatId) { mutableStateOf(false) }
+    // Cached own user id, used to gate admin actions (you can't kick
+    // yourself) and to filter the slash-commands picker for self-replies.
+    var myUserId by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(chatId) {
+        val me = runCatching { TdClient.getMe() }.getOrNull() ?: return@LaunchedEffect
+        myUserId = me.id
+        if (!isGroupChat) return@LaunchedEffect
+        val member = runCatching { TdClient.getMyChatMember(chatId, me.id) }.getOrNull()
+        isAdmin = when (member?.status) {
+            is TdApi.ChatMemberStatusCreator,
+            is TdApi.ChatMemberStatusAdministrator -> true
+            else -> false
+        }
+    }
+
+    // Bot command suggestions for the slash menu. Loaded once per chat
+    // entry; in private chats with a bot we pull from UserFullInfo.botInfo
+    // because that's the authoritative source for that bot's command list.
+    var botCommands by remember(chatId) { mutableStateOf<List<TdApi.BotCommand>>(emptyList()) }
+    LaunchedEffect(chatId) {
+        val cmds = runCatching {
+            val cached = TdClient.getCachedChat(chatId)
+            val privateType = cached?.type as? TdApi.ChatTypePrivate
+            val botUserId = privateType?.userId
+            val privateBot = botUserId?.let { runCatching { TdClient.getUser(it) }.getOrNull() }
+            if (privateBot?.type is TdApi.UserTypeBot) {
+                runCatching { TdClient.getUserFullInfo(privateBot.id) }
+                    .getOrNull()
+                    ?.botInfo
+                    ?.commands
+                    ?.toList()
+                    ?: emptyList()
+            } else if (isGroupChat) {
+                TdClient.getBotCommandsForChat(chatId)
+            } else emptyList()
+        }.getOrDefault(emptyList())
+        botCommands = cmds
     }
 
     val micLauncher = rememberLauncherForActivityResult(
@@ -236,6 +287,23 @@ fun ChatScreen(
             if (event.chatId == chatId) {
                 val toDrop = event.messageIds.toHashSet()
                 messages.removeAll { it.id in toDrop }
+            }
+        }
+    }
+
+    // React to reactions / view-count / forward-count changes. We rebuild
+    // the matching Message with the new interactionInfo so MessageBubble
+    // sees it on the next recomposition. Mutating the field on the existing
+    // instance wouldn't trigger SnapshotStateList recomposition.
+    LaunchedEffect(chatId) {
+        TdClient.interactionInfoUpdates.collect { upd ->
+            if (upd.chatId != chatId) return@collect
+            val idx = messages.indexOfFirst { it.id == upd.messageId }
+            if (idx >= 0) {
+                val old = messages[idx]
+                old.interactionInfo = upd.info
+                // Replace at index so SnapshotStateList notices the change.
+                messages[idx] = old
             }
         }
     }
@@ -389,6 +457,24 @@ fun ChatScreen(
                 )
             }
 
+            // Slash-command picker. Surfaces /commands the bot in this
+            // chat (private or group) exposes, filtered live by what the
+            // user is typing. Hidden when the input doesn't start with /.
+            val slashQuery = remember(input) { detectSlashQuery(input) }
+            if (slashQuery != null && botCommands.isNotEmpty()) {
+                val filtered = botCommands.filter {
+                    it.command.startsWith(slashQuery, ignoreCase = true)
+                }
+                if (filtered.isNotEmpty()) {
+                    BotCommandPicker(
+                        commands = filtered,
+                        onPick = { cmd ->
+                            input = "/${cmd.command} "
+                        }
+                    )
+                }
+            }
+
             if (replyTarget != null) {
                 ReplyPreview(
                     message = replyTarget!!,
@@ -517,8 +603,12 @@ fun ChatScreen(
             is TdApi.MessageAnimation -> c.caption.text.ifBlank { null }
             else -> null
         }
-        DeleteSheet(
+        val senderUserId = (msg.senderId as? TdApi.MessageSenderUser)?.userId
+        MessageActionsSheet(
             message = msg,
+            isAdmin = isAdmin,
+            senderUserId = senderUserId,
+            myUserId = myUserId,
             onDismiss = { deleteTarget = null },
             onCopy = if (!copyableText.isNullOrBlank()) {
                 {
@@ -526,6 +616,25 @@ fun ChatScreen(
                     deleteTarget = null
                 }
             } else null,
+            onReply = {
+                replyTarget = msg
+                deleteTarget = null
+            },
+            onReact = { emoji ->
+                val chosenSame = msg.interactionInfo?.reactions?.reactions?.any {
+                    it.isChosen && (it.type as? TdApi.ReactionTypeEmoji)?.emoji == emoji
+                } == true
+                scope.launch {
+                    runCatching {
+                        if (chosenSame) {
+                            TdClient.removeEmojiReaction(chatId, msg.id, emoji)
+                        } else {
+                            TdClient.addEmojiReaction(chatId, msg.id, emoji)
+                        }
+                    }
+                }
+                deleteTarget = null
+            },
             onDeleteForMe = {
                 scope.launch {
                     runCatching {
@@ -538,6 +647,22 @@ fun ChatScreen(
                 scope.launch {
                     runCatching {
                         TdClient.deleteMessages(chatId, longArrayOf(msg.id), revoke = true)
+                    }
+                }
+                deleteTarget = null
+            },
+            onMuteAuthor = {
+                if (senderUserId != null) {
+                    scope.launch {
+                        runCatching { TdClient.muteGroupUser(chatId, senderUserId) }
+                    }
+                }
+                deleteTarget = null
+            },
+            onKickAuthor = {
+                if (senderUserId != null) {
+                    scope.launch {
+                        runCatching { TdClient.kickGroupUser(chatId, senderUserId) }
                     }
                 }
                 deleteTarget = null
@@ -886,33 +1011,78 @@ private fun AttachOption(label: String, icon: androidx.compose.ui.graphics.vecto
 }
 
 @Composable
-private fun DeleteSheet(
+private fun MessageActionsSheet(
     message: TdApi.Message,
+    isAdmin: Boolean,
+    senderUserId: Long?,
+    myUserId: Long?,
     onDismiss: () -> Unit,
     onCopy: (() -> Unit)?,
+    onReply: () -> Unit,
+    onReact: (String) -> Unit,
     onDeleteForMe: () -> Unit,
-    onDeleteForEveryone: () -> Unit
+    onDeleteForEveryone: () -> Unit,
+    onMuteAuthor: () -> Unit,
+    onKickAuthor: () -> Unit
 ) {
     val state = rememberModalBottomSheetState()
-    // TDLib master moved per-message permission flags off of Message and onto
-    // a separate MessageProperties object fetched via getMessageProperties().
-    // Doing that round-trip just to render a sheet is overkill, so we use a
-    // conservative client-side guess: outgoing messages can almost always be
-    // revoked (Telegram still enforces the 48h limit server-side, runCatching
-    // swallows the rejection if it fires); incoming messages can be revoked
-    // only in 1:1 private chats.
     val cachedChat = TdClient.getCachedChat(message.chatId)
-    val canRevoke = message.isOutgoing || (cachedChat?.type is TdApi.ChatTypePrivate)
+    // "Delete for everyone" is allowed for: outgoing messages (any chat),
+    // any message in a 1:1 private chat, or any message authored by
+    // someone else when the caller is an admin in a group. Telegram still
+    // enforces server-side window limits and revoke rights — runCatching
+    // wrapping in the handler swallows the rejection if it fires.
+    val canRevoke = message.isOutgoing ||
+        cachedChat?.type is TdApi.ChatTypePrivate ||
+        isAdmin
+    // Admin actions are only meaningful in groups, only against someone
+    // who isn't you and isn't yourself the sender. We hide the entire
+    // block otherwise to keep the sheet uncluttered.
+    val showAdminActions = isAdmin &&
+        cachedChat?.type !is TdApi.ChatTypePrivate &&
+        senderUserId != null &&
+        senderUserId != myUserId
+
+    val quickReactions = listOf("👍", "❤️", "😂", "😮", "😢", "🔥")
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = state,
         containerColor = Ink.Surface
     ) {
         Column(modifier = Modifier.padding(20.dp).navigationBarsPadding()) {
-            Text(stringResource(R.string.delete_title), style = MaterialTheme.typography.titleLarge, fontStyle = FontStyle.Italic)
+            // Quick reactions bar at the top. The 6 most universally used
+            // emojis on Telegram. Tapping fires onReact and dismisses the
+            // sheet; the chip already appears on the message because of
+            // the interaction-info flow.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Ink.SurfaceHi)
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                for (emoji in quickReactions) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .clickable { onReact(emoji) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(emoji, style = MaterialTheme.typography.headlineSmall)
+                    }
+                }
+            }
+
             Spacer(Modifier.height(16.dp))
+
+            DeleteOption(stringResource(R.string.action_reply), onReply, icon = Icons.Outlined.Reply)
+            Spacer(Modifier.height(4.dp))
             if (onCopy != null) {
-                DeleteOption(stringResource(R.string.action_copy), onCopy)
+                DeleteOption(stringResource(R.string.action_copy), onCopy, icon = Icons.Outlined.ContentCopy)
                 Spacer(Modifier.height(4.dp))
             }
             DeleteOption(stringResource(R.string.delete_for_me), onDeleteForMe)
@@ -920,13 +1090,31 @@ private fun DeleteSheet(
                 Spacer(Modifier.height(4.dp))
                 DeleteOption(stringResource(R.string.delete_for_everyone), onDeleteForEveryone, destructive = true)
             }
+            if (showAdminActions) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.actions_admin_section),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Ink.Muted,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+                Spacer(Modifier.height(6.dp))
+                DeleteOption(stringResource(R.string.action_mute_author), onMuteAuthor, icon = Icons.Outlined.VolumeOff)
+                Spacer(Modifier.height(4.dp))
+                DeleteOption(stringResource(R.string.action_kick_author), onKickAuthor, icon = Icons.Outlined.PersonRemove, destructive = true)
+            }
             Spacer(Modifier.height(8.dp))
         }
     }
 }
 
 @Composable
-private fun DeleteOption(label: String, onClick: () -> Unit, destructive: Boolean = false) {
+private fun DeleteOption(
+    label: String,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+    icon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Outlined.Delete
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -941,7 +1129,7 @@ private fun DeleteOption(label: String, onClick: () -> Unit, destructive: Boolea
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                Icons.Outlined.Delete, null,
+                icon, null,
                 tint = if (destructive) Ink.Error else Ink.Amber,
                 modifier = Modifier.size(22.dp)
             )
@@ -1074,6 +1262,72 @@ private fun applyMentionPick(text: String, user: TdApi.User): String {
     val username = user.usernames?.editableUsername
     val token = if (!username.isNullOrBlank()) "@$username" else "@${user.firstName.trim()}"
     return "$before$token "
+}
+
+/**
+ * Return the partial /command being typed, or null if the input isn't a
+ * slash-command at all.
+ *
+ * Telegram convention: a /command picker triggers only when the first
+ * character of the message is `/` and the user hasn't yet inserted a
+ * space (after the space, the user is typing arguments, not the command
+ * name). So "/star" → "star", "/start hello" → null, "hello /world" →
+ * null.
+ */
+private fun detectSlashQuery(text: String): String? {
+    if (!text.startsWith("/")) return null
+    val rest = text.substring(1)
+    if (rest.any { it.isWhitespace() }) return null
+    return rest
+}
+
+/**
+ * Compact dropdown rendered above the InputBar listing matching /commands
+ * (up to 8). Tapping picks the command, replacing the input with
+ * "/command " ready for arguments.
+ */
+@Composable
+private fun BotCommandPicker(
+    commands: List<TdApi.BotCommand>,
+    onPick: (TdApi.BotCommand) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 240.dp)
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(vertical = 6.dp)
+    ) {
+        commands.take(8).forEach { cmd ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPick(cmd) }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "/${cmd.command}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (cmd.description.isNotBlank()) {
+                        Text(
+                            cmd.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**

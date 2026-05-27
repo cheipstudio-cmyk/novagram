@@ -175,4 +175,22 @@
     <string name="theme_builder_title">Akzentfarbe</string>
     <string name="theme_preview">Vorschau</string>
     <string name="theme_save">Speichern</string>
+    <string name="theme_section_accent">Akzent</string>
+    <string name="theme_section_my_bubble">Eigene Blase</string>
+    <string name="theme_section_others_bubble">Andere Blase</string>
+    <string name="theme_section_bg">Hintergrund</string>
+    <string name="theme_paste">Theme einfügen</string>
+    <string name="theme_paste_success">Theme importiert</string>
+    <string name="theme_paste_error">Ungültiges Theme in der Zwischenablage</string>
+    <string name="theme_share_body">Öffne diesen Link, um das CheipGram-Theme anzuwenden:
+
+%1$s</string>
+    <string name="theme_card_title">CheipGram-Theme</string>
+    <string name="theme_card_subtitle">Tippe zum Anwenden</string>
+    <string name="theme_card_apply">Theme anwenden</string>
+    <string name="sticker_search_placeholder">Sticker suchen...</string>
+    <string name="action_reply">Antworten</string>
+    <string name="actions_admin_section">Admin-Aktionen</string>
+    <string name="action_mute_author">Autor stummschalten</string>
+    <string name="action_kick_author">Autor entfernen</string>
 </resources>

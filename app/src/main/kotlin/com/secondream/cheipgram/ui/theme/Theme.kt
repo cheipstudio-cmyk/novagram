@@ -22,6 +22,7 @@ fun CheipGramTheme(
     themeMode: ThemeMode = ThemeMode.Dark,
     accentColor: AccentColor = AccentColor.Amber,
     customAccentArgb: Int? = null,
+    customBgArgb: Int? = null,
     content: @Composable () -> Unit
 ) {
     val isDark = when (themeMode) {
@@ -55,11 +56,25 @@ fun CheipGramTheme(
             onPrimary = if (luminance > 0.5f) Color.Black else Color.White
         )
     } else baseAccent
-    val colorScheme = when {
+    val baseScheme = when {
         themeMode == ThemeMode.Amoled -> buildAmoledScheme(accent)
         isDark -> buildDarkScheme(accent)
         else -> buildLightScheme(accent)
     }
+    // Custom background overrides the chat surface. We recompute onBackground
+    // from luminance so text stays readable; surface is left at the theme's
+    // default so cards/menus retain their look — only the "behind chat" color
+    // changes. This is what most theme-import flows in other clients do.
+    val colorScheme = if (customBgArgb != null) {
+        val bg = Color(customBgArgb)
+        baseScheme.copy(
+            background = bg,
+            onBackground = if (bg.luminance() > 0.5f) Color.Black else Color.White
+        )
+    } else baseScheme
+    // Tracks the *effective* background so the system bars match what's
+    // actually painted underneath them, custom or not.
+    val effectiveIsLight = colorScheme.background.luminance() > 0.5f
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
@@ -67,8 +82,8 @@ fun CheipGramTheme(
             window.statusBarColor = colorScheme.background.toArgb()
             window.navigationBarColor = colorScheme.background.toArgb()
             val controller = WindowCompat.getInsetsController(window, view)
-            controller.isAppearanceLightStatusBars = !isDark
-            controller.isAppearanceLightNavigationBars = !isDark
+            controller.isAppearanceLightStatusBars = effectiveIsLight
+            controller.isAppearanceLightNavigationBars = effectiveIsLight
         }
     }
     MaterialTheme(
@@ -148,7 +163,17 @@ private fun buildLightScheme(accent: Accent): ColorScheme = lightColorScheme(
  * Settings keep the readable look in either mode.
  */
 @Composable
-fun bubbleFillFor(color: BubbleColor, isOutgoing: Boolean): BubbleFill {
+fun bubbleFillFor(color: BubbleColor, isOutgoing: Boolean, customArgb: Int? = null): BubbleFill {
+    // Custom ARGB override beats every preset: derive a readable onBackground
+    // from the perceived luminance of the chosen color. This keeps the
+    // bubble legible whether the user picked a dark navy or a pastel mint.
+    if (customArgb != null) {
+        val bg = Color(customArgb)
+        return BubbleFill(
+            background = bg,
+            onBackground = if (bg.luminance() > 0.5f) Color.Black else Color.White
+        )
+    }
     // Detect light mode by looking at the colorScheme's background luminance.
     // We deliberately don't read isSystemInDarkTheme() because the user could
     // have forced Light/Dark/AMOLED via Settings.

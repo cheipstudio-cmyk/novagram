@@ -38,6 +38,18 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!--
+                Theme deeplink. Tapping a cheipgram://theme?data=<base64-json>
+                URL in any app (Telegram, browser, mail, Slack...) routes
+                here. MainActivity handles the intent in onCreate/onNewIntent,
+                decodes the payload, and applies it via AppSettings.
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="cheipgram" android:host="theme" />
+            </intent-filter>
         </activity>
 
         <service

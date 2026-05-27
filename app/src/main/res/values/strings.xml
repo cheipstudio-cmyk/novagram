@@ -190,4 +190,22 @@
     <string name="theme_builder_title">Colore accento</string>
     <string name="theme_preview">Anteprima</string>
     <string name="theme_save">Salva</string>
+    <string name="theme_section_accent">Accento</string>
+    <string name="theme_section_my_bubble">Bolla mia</string>
+    <string name="theme_section_others_bubble">Bolla altri</string>
+    <string name="theme_section_bg">Sfondo</string>
+    <string name="theme_paste">Incolla tema</string>
+    <string name="theme_paste_success">Tema importato</string>
+    <string name="theme_paste_error">Tema non valido negli appunti</string>
+    <string name="theme_share_body">Apri questo link per applicare il tema CheipGram:
+
+%1$s</string>
+    <string name="theme_card_title">Tema CheipGram</string>
+    <string name="theme_card_subtitle">Tocca per applicare</string>
+    <string name="theme_card_apply">Applica tema</string>
+    <string name="sticker_search_placeholder">Cerca sticker...</string>
+    <string name="action_reply">Rispondi</string>
+    <string name="actions_admin_section">Azioni admin</string>
+    <string name="action_mute_author">Silenzia autore</string>
+    <string name="action_kick_author">Espelli autore</string>
 </resources>
