@@ -114,11 +114,21 @@ fun ChatListScreen(
     // once when the screen lands and let TdClient.fileUpdates refresh it.
     var myAvatarFile by remember { mutableStateOf<org.drinkless.tdlib.TdApi.File?>(null) }
     var myInitial by remember { mutableStateOf("?") }
+    // myUserId is also used to filter Saved Messages out of the Chats tab
+    // (Saved Messages is a private chat where chatId == userId; Eugenio
+    // wants it accessible only via the Storage card on the home page).
+    var myUserId by remember { mutableStateOf(0L) }
+    // First name fuels the top-bar greeting on the Home tab ("Ciao, X").
+    // Lives at screen scope (rather than inside HomePage) so the Scaffold
+    // can read it without re-fetching every time the tab swaps.
+    var myFirstName by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         runCatching {
             val me = TdClient.getMe()
             myInitial = me.firstName.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
             myAvatarFile = me.profilePhoto?.small
+            myUserId = me.id
+            myFirstName = me.firstName.trim().ifBlank { null }
         }
     }
 
@@ -145,20 +155,32 @@ fun ChatListScreen(
                                 onValueChange = { searchQuery = it }
                             )
                         } else {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                androidx.compose.foundation.Image(
-                                    painter = androidx.compose.ui.res.painterResource(
-                                        R.drawable.ic_cheipgram_logo
-                                    ),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(28.dp)
-                                )
-                                Spacer(Modifier.width(8.dp))
+                            // Title swaps per tab. On Home we surface the
+                            // personalised greeting where the brand name used
+                            // to be — same italic SemiBold treatment so it
+                            // still reads like a heading, not body copy. On
+                            // the other tabs we just show the tab name
+                            // ("Chat" / "Gruppi" / "Canali") so the user
+                            // always knows where they are without scrolling.
+                            val spec = TAB_SPECS[selectedTab]
+                            if (spec.isHome) {
                                 Text(
-                                    stringResource(R.string.app_name),
+                                    text = myFirstName?.let {
+                                        stringResource(R.string.home_greeting, it)
+                                    } ?: stringResource(R.string.home_greeting_anon),
                                     style = MaterialTheme.typography.headlineSmall,
                                     fontStyle = FontStyle.Italic,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            } else {
+                                Text(
+                                    stringResource(spec.labelRes),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -238,16 +260,21 @@ fun ChatListScreen(
                 HomePage(
                     allChats = allChats,
                     onChatClick = onChatClick,
-                    onOpenSearch = { searchOpen = true },
                     onNewChat = onNewChat
                 )
                 return@HorizontalPager
             }
             val pageKind = spec.kind!!
-            val pageChats = remember(allChats, page, searchQuery) {
+            val pageChats = remember(allChats, page, searchQuery, myUserId) {
                 val q = searchQuery.trim()
                 allChats
                     .filter { it.kind == pageKind }
+                    // Saved Messages is the user's chat with themself — TDLib
+                    // exposes it like any other private chat. We hide it from
+                    // the Chats tab because it lives on the home page already
+                    // (the Storage shortcut). Comparing against 0L is a no-op
+                    // while myUserId is still being fetched on first launch.
+                    .filter { myUserId == 0L || it.id != myUserId }
                     .let { list ->
                         if (q.isBlank()) list
                         else list.filter { it.title.contains(q, ignoreCase = true) }
@@ -718,26 +745,20 @@ private fun formatTime(ts: Long): String {
 private fun HomePage(
     allChats: List<ChatSummary>,
     onChatClick: (Long) -> Unit,
-    onOpenSearch: () -> Unit = {},
     onNewChat: () -> Unit = {}
 ) {
     val unread = allChats.filter { it.unread > 0 }
     val totalUnread = unread.sumOf { it.unread }
     val recentUnread = unread.take(5)
 
-    // Fetch the user's first name once for the greeting. Falls back to
-    // the locale-neutral "Ciao" if TDLib hasn't synced or networking
-    // failed — never shows an empty placeholder.
-    var firstName by remember { mutableStateOf<String?>(null) }
-    // We grab our own userId at the same time we look up firstName. Saved
-    // Messages in Telegram is a private chat where chatId == userId, so
-    // tapping the storage card just opens that chat by passing the userId
-    // as a Long chatId. No separate "create" step needed — TDLib already
-    // has it in its chat list.
+    // We grab our own userId here for the Storage shortcut tile below
+    // (Saved Messages is a private chat where chatId == userId, so tapping
+    // the card just opens that chat). The greeting/firstName previously
+    // rendered at the top of this page now lives in the screen-level
+    // TopAppBar instead — replacing the old "CheipGram" brand title.
     var myUserId by remember { mutableStateOf(0L) }
     LaunchedEffect(Unit) {
         val me = runCatching { TdClient.getMe() }.getOrNull()
-        firstName = me?.firstName?.trim()?.ifBlank { null }
         myUserId = me?.id ?: 0L
     }
 
@@ -747,38 +768,8 @@ private fun HomePage(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            // Time-of-day aware greeting. The italic title carries the
-            // user's first name; the smaller line below switches between
-            // Buongiorno / Buon pomeriggio / Buonasera so the home page
-            // feels alive instead of static.
-            val hour = remember {
-                java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-            }
-            val sub = stringResource(
-                when (hour) {
-                    in 5..11 -> R.string.home_period_morning
-                    in 12..17 -> R.string.home_period_afternoon
-                    else -> R.string.home_period_evening
-                }
-            )
-            Column {
-                Text(
-                    text = firstName?.let { stringResource(R.string.home_greeting, it) }
-                        ?: stringResource(R.string.home_greeting_anon),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    sub,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        item {
-            // Summary card with two stat tiles side-by-side.
+            // Summary card with two stat tiles side-by-side. Sits at the top
+            // of the page now that the greeting moved to the TopAppBar.
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -815,70 +806,11 @@ private fun HomePage(
                 }
             }
         }
-        // Quick actions grid. Four uniform tiles in a 2x2 layout — Storage,
-        // Cerca, Nuova chat, and either "Unisciti a CheipGram" (if the
-        // user isn't a member yet) or "Inoltrati" (Saved-Messages alias)
-        // as a fallback fourth slot. Replacing the old mix of full-width
-        // cards + ad-hoc 2-tile rows gives the home page a clean rhythm.
-        item {
-            val ctx = LocalContext.current
-            var cheipgramJoined by remember { mutableStateOf<Boolean?>(null) }
-            LaunchedEffect(allChats.size) {
-                if (cheipgramJoined == true) return@LaunchedEffect
-                cheipgramJoined = runCatching {
-                    val res = TdClient.searchPublicChats("cheipgram")
-                    val match = res.firstOrNull { c ->
-                        c.title.equals("CheipGram", ignoreCase = true)
-                    } ?: return@runCatching false
-                    allChats.any { it.id == match.id }
-                }.getOrDefault(false)
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    HomeShortcutTile(
-                        icon = Icons.Outlined.BookmarkBorder,
-                        label = stringResource(R.string.home_storage_title),
-                        onClick = { if (myUserId != 0L) onChatClick(myUserId) },
-                        modifier = Modifier.weight(1f)
-                    )
-                    HomeShortcutTile(
-                        icon = Icons.Outlined.Search,
-                        label = stringResource(R.string.home_shortcut_search),
-                        onClick = onOpenSearch,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    HomeShortcutTile(
-                        icon = Icons.Outlined.Edit,
-                        label = stringResource(R.string.home_shortcut_new_chat),
-                        onClick = onNewChat,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (cheipgramJoined == false) {
-                        HomeShortcutTile(
-                            icon = Icons.Outlined.Campaign,
-                            label = stringResource(R.string.home_card_join_title),
-                            onClick = {
-                                val intent = android.content.Intent(
-                                    android.content.Intent.ACTION_VIEW,
-                                    android.net.Uri.parse("https://t.me/cheipgram")
-                                )
-                                runCatching { ctx.startActivity(intent) }
-                            },
-                            modifier = Modifier.weight(1f),
-                            accentBackground = true
-                        )
-                    } else {
-                        // User is already in the CheipGram group — fill the
-                        // 4th slot with an invisible Spacer so the grid
-                        // stays a clean 2x2 instead of becoming a lonely
-                        // single-tile row.
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
-                }
-            }
-        }
+        // ── Recent unread, lifted up directly under the summary ──
+        // Eugenio asked for the "Nuovi messaggi" block to sit right under
+        // the Riepilogo card instead of being the LAST section on the home
+        // page — it's the most actionable content so it deserves the
+        // prominent position.
         item {
             Text(
                 stringResource(R.string.home_recent_unread).uppercase(),
@@ -924,6 +856,61 @@ private fun HomePage(
                             onClick = { onChatClick(summary.id) }
                         )
                     }
+                }
+            }
+        }
+        // Quick actions. The Search shortcut used to live here but Eugenio
+        // removed it — search is already available via the top-bar icon on
+        // every tab, so showing it twice on the home was redundant. What
+        // remains: Storage (Saved Messages alias) and Nuova chat as the
+        // primary pair, plus an optional Unisciti a CheipGram card when the
+        // user hasn't joined the community channel yet.
+        item {
+            val ctx = LocalContext.current
+            var cheipgramJoined by remember { mutableStateOf<Boolean?>(null) }
+            LaunchedEffect(allChats.size) {
+                if (cheipgramJoined == true) return@LaunchedEffect
+                cheipgramJoined = runCatching {
+                    val res = TdClient.searchPublicChats("cheipgram")
+                    val match = res.firstOrNull { c ->
+                        c.title.equals("CheipGram", ignoreCase = true)
+                    } ?: return@runCatching false
+                    allChats.any { it.id == match.id }
+                }.getOrDefault(false)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HomeShortcutTile(
+                        icon = Icons.Outlined.BookmarkBorder,
+                        label = stringResource(R.string.home_storage_title),
+                        onClick = { if (myUserId != 0L) onChatClick(myUserId) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    HomeShortcutTile(
+                        icon = Icons.Outlined.Edit,
+                        label = stringResource(R.string.home_shortcut_new_chat),
+                        onClick = onNewChat,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                if (cheipgramJoined == false) {
+                    // Full-width call to action only when the user isn't a
+                    // CheipGram member yet. Once they join (or while we're
+                    // still checking) we skip the row entirely so the home
+                    // stays compact instead of leaving an empty placeholder.
+                    HomeShortcutTile(
+                        icon = Icons.Outlined.Campaign,
+                        label = stringResource(R.string.home_card_join_title),
+                        onClick = {
+                            val intent = android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://t.me/cheipgram")
+                            )
+                            runCatching { ctx.startActivity(intent) }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        accentBackground = true
+                    )
                 }
             }
         }

@@ -226,6 +226,11 @@
     <string name="action_forward">Transférer</string>
     <string name="forward_picker_title">Transférer à</string>
     <string name="forward_picker_search_hint">Rechercher</string>
+    <string name="forward_compose_target_prefix">Transférer à</string>
+    <string name="forward_compose_from_prefix">De %1$s</string>
+    <string name="forward_compose_caption_hint">Ajouter une légende (facultatif)</string>
+    <string name="forward_compose_send">Transférer</string>
+    <string name="forward_compose_send_with_caption">Transférer avec légende</string>
     <string name="reactions_who_title">Réactions</string>
     <string name="home_shortcut_search">Rechercher</string>
     <string name="home_shortcut_new_chat">Nouvelle discussion</string>
@@ -235,4 +240,5 @@
     <string name="home_period_morning">Bonjour</string>
     <string name="home_period_afternoon">Bon après-midi</string>
     <string name="home_period_evening">Bonsoir</string>
+    <string name="chat_jump_to_bottom">Aller en bas</string>
 </resources>

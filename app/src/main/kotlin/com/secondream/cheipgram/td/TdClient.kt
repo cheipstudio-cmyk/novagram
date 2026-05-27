@@ -165,6 +165,14 @@ object TdClient {
                 chatCache[obj.chatId]?.notificationSettings = obj.notificationSettings
                 refreshChats()
             }
+            is TdApi.UpdateChatDraftMessage -> {
+                // Drafts sync across devices: editing on Desktop pushes one of
+                // these to us. Mirror into the cache so the next chat-list
+                // rebuild shows the right preview and so ChatScreen reads
+                // the latest draft when it opens.
+                chatCache[obj.chatId]?.draftMessage = obj.draftMessage
+                refreshChats()
+            }
             is TdApi.UpdateUser -> {
                 userCache[obj.user.id] = obj.user
             }
@@ -403,6 +411,63 @@ object TdClient {
         send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
+    // ===== Drafts =====
+
+    /**
+     * Read the current draft for a chat. We pull it from our cache rather
+     * than asking TDLib each time — UpdateChatDraftMessage events keep
+     * chatCache in sync, and on chat open the cache is already populated
+     * by GetChats during init.
+     *
+     * Returns the plain draft text or null if there is no draft. We don't
+     * surface replyTo here yet; the input bar in ChatScreen has its own
+     * reply preview state driven by user gestures.
+     */
+    fun getChatDraftText(chatId: Long): String? {
+        val draft = chatCache[chatId]?.draftMessage ?: return null
+        val content = draft.inputMessageText as? TdApi.InputMessageText ?: return null
+        return content.text?.text?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Persist (or clear) the draft for a chat. Passing a blank `text`
+     * clears the draft entirely so the chat list stops showing the
+     * "Bozza:" prefix. TDLib syncs drafts across devices, so what we
+     * save here also shows up on Telegram Desktop/Web.
+     *
+     * `replyToMessageId` is optional and mirrors the reply target that
+     * was active in the input bar when the user left the chat — TDLib
+     * preserves it so the reply preview is still there when they come back.
+     */
+    suspend fun setChatDraft(
+        chatId: Long,
+        text: String,
+        replyToMessageId: Long? = null
+    ) {
+        val draft = if (text.isBlank()) {
+            null
+        } else {
+            // Field assignment over all-args constructor: TDLib occasionally
+            // appends new fields (e.g. effectId) between versions and this
+            // style stays compatible without having to track the schema.
+            TdApi.DraftMessage().apply {
+                replyTo = buildReplyTo(replyToMessageId)
+                date = (System.currentTimeMillis() / 1000L).toInt()
+                inputMessageText = TdApi.InputMessageText(
+                    TdApi.FormattedText(text, emptyArray()),
+                    null,
+                    /* clearDraft = */ false
+                )
+            }
+        }
+        // Mirror the change into our cache immediately so chat-list rows
+        // refresh without waiting for the round-trip UpdateChatDraftMessage.
+        chatCache[chatId]?.draftMessage = draft
+        runCatching {
+            send(TdApi.SetChatDraftMessage(chatId, /* messageThreadId = */ 0L, draft))
+        }
+    }
+
     suspend fun sendPhoto(chatId: Long, filePath: String, caption: String? = null, replyToMessageId: Long? = null) {
         val content = TdApi.InputMessagePhoto(
             TdApi.InputFileLocal(filePath),
@@ -510,6 +575,16 @@ object TdClient {
     suspend fun downloadFile(fileId: Int): TdApi.File {
         return send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
     }
+
+    /**
+     * Quick lookup of a file's current state — no download triggered.
+     * TDLib mutates the [TdApi.File] objects we hand out (the same Java
+     * reference) but Compose doesn't observe field mutation, so any reader
+     * that wants the latest local.path / isDownloadingCompleted has to ask
+     * TDLib again. Used by DownloadingImage on (re-)compose and by the
+     * MessageBubble tap handler before opening media / documents.
+     */
+    suspend fun getFile(fileId: Int): TdApi.File = send(TdApi.GetFile(fileId))
 
     // ----- Profile -----
 
@@ -722,6 +797,17 @@ object TdClient {
      */
     suspend fun getMessageProperties(chatId: Long, messageId: Long): TdApi.MessageProperties =
         send(TdApi.GetMessageProperties(chatId, messageId))
+
+    /**
+     * Fetch a single message by chat + id. Used by the reply-quote bar
+     * in MessageBubble when the inline preview carried by
+     * [TdApi.MessageReplyToMessage] isn't enough (or isn't present in
+     * older message records). Returns null if the message has been
+     * deleted on the server or TDLib can't find it.
+     */
+    suspend fun getMessage(chatId: Long, messageId: Long): TdApi.Message? =
+        runCatching { send(TdApi.GetMessage(chatId, messageId)) as? TdApi.Message }
+            .getOrNull()
 
     /**
      * Forward messages from one chat to another. message_ids must be sorted

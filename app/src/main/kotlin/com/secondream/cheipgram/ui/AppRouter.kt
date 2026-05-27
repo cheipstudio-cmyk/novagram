@@ -165,7 +165,16 @@ fun AppRouter(
             ChatScreen(
                 chatId = id,
                 onBack = { nav.popBackStack() },
-                onOpenMediaViewer = { nav.navigate(Routes.MEDIA_VIEWER) }
+                onOpenMediaViewer = { nav.navigate(Routes.MEDIA_VIEWER) },
+                onOpenChat = { other ->
+                    // Used by the avatar profile sheet's "Inizia chat"
+                    // button: replace ourselves on the back stack so back
+                    // returns to the chat list, not to the previous group
+                    // we came from.
+                    nav.navigate("${Routes.CHAT.substringBefore("/{")}/$other") {
+                        popUpTo(Routes.CHATS)
+                    }
+                }
             )
         }
     }

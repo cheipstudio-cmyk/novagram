@@ -29,15 +29,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.NotificationsOff
@@ -94,6 +98,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
@@ -110,7 +115,11 @@ import org.drinkless.tdlib.TdApi
 fun ChatScreen(
     chatId: Long,
     onBack: () -> Unit,
-    onOpenMediaViewer: () -> Unit = {}
+    onOpenMediaViewer: () -> Unit = {},
+    /** Navigate to another chat by id. Used by the avatar profile sheet's
+     *  "Inizia chat" button so tapping a sender's avatar in a group can
+     *  spin up (or open) the corresponding private chat. */
+    onOpenChat: (Long) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -119,7 +128,16 @@ fun ChatScreen(
     var loading by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
     var noMore by remember { mutableStateOf(false) }
-    var input by remember { mutableStateOf("") }
+    // The input is keyed on chatId so switching between chats wipes the
+    // text field instead of letting the previous chat's typing bleed into
+    // the new one. The draft loader below repopulates it from TDLib.
+    var input by remember(chatId) { mutableStateOf("") }
+    // Track whether we've already loaded the draft for this chat. Without
+    // this guard the draft loader could fight the user: imagine you type
+    // "ciao", we save it to TDLib, TDLib emits UpdateChatDraftMessage,
+    // then on the next composition we'd re-read it and overwrite whatever
+    // you typed in between.
+    var draftLoaded by remember(chatId) { mutableStateOf(false) }
     var showAttach by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     var needMicPermission by remember { mutableStateOf(false) }
@@ -131,6 +149,10 @@ fun ChatScreen(
     // When non-null we render the picker sheet; tapping a destination chat
     // fires forwardMessages and clears this back to null.
     var forwardTarget by remember { mutableStateOf<TdApi.Message?>(null) }
+    // Profile sheet target: userId of a sender whose avatar was tapped in
+    // a group chat. When non-null we render UserProfileSheet on top of the
+    // chat; the sheet handles its own create-private-chat flow.
+    var profileSheetUserId by remember(chatId) { mutableStateOf<Long?>(null) }
     // Cached list of chat members for the @-mention picker. Loaded lazily
     // the first time the user types "@" in a non-private chat.
     var mentionMembers by remember(chatId) { mutableStateOf<List<TdApi.User>>(emptyList()) }
@@ -243,9 +265,59 @@ fun ChatScreen(
 
     DisposableEffect(chatId) {
         scope.launch { runCatching { TdClient.openChat(chatId) } }
+        // Tell the global notification gate which chat is on screen so
+        // NotificationHelper can skip heads-up only for THIS chat. Other
+        // incoming chats still fire normally.
+        com.secondream.cheipgram.AppForegroundState.currentChatId = chatId
         onDispose {
             scope.launch { runCatching { TdClient.closeChat(chatId) } }
+            // Only clear if still pointing to us — if the user nav'd to
+            // another chat the new ChatScreen has already overwritten this.
+            if (com.secondream.cheipgram.AppForegroundState.currentChatId == chatId) {
+                com.secondream.cheipgram.AppForegroundState.currentChatId = 0L
+            }
+            // Flush the final draft. We use a fire-and-forget launch on the
+            // process-wide application scope because the screen-scoped
+            // coroutine is about to be cancelled and a launch here would die
+            // before reaching TDLib. Capturing input/replyTarget by value
+            // means even if the user typed a frame before backing out we
+            // still persist the last state.
+            val finalText = input
+            val finalReply = replyTarget?.id
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
+                runCatching { TdClient.setChatDraft(chatId, finalText, finalReply) }
+            }
         }
+    }
+
+    // ── Draft persistence ────────────────────────────────────────────
+    // Load any saved draft when this chat opens. We only do this once per
+    // chatId; the guard protects against subsequent recompositions
+    // overwriting the user's live typing. If the user has nothing yet in
+    // the input (which is the normal case on first open), we transplant
+    // the draft into it.
+    LaunchedEffect(chatId) {
+        if (draftLoaded) return@LaunchedEffect
+        val saved = TdClient.getChatDraftText(chatId)
+        if (!saved.isNullOrEmpty() && input.isEmpty()) {
+            input = saved
+        }
+        draftLoaded = true
+    }
+    // Debounced save while the user is typing. snapshotFlow turns the
+    // mutable `input` state into a flow; debounce(400) ensures we only
+    // call SetChatDraftMessage when the user pauses for ~400ms instead of
+    // on every keystroke. Combined with the dispose-time flush above this
+    // gives the same UX as Telegram: come back any time and find your text.
+    LaunchedEffect(chatId, draftLoaded) {
+        if (!draftLoaded) return@LaunchedEffect
+        @OptIn(kotlinx.coroutines.FlowPreview::class)
+        snapshotFlow { input to replyTarget?.id }
+            .debounce(400)
+            .distinctUntilChanged()
+            .collect { (text, replyId) ->
+                runCatching { TdClient.setChatDraft(chatId, text, replyId) }
+            }
     }
 
     // Initial history load.
@@ -601,26 +673,72 @@ fun ChatScreen(
                     color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
                 )
             }
-            LazyColumn(
-                state = listState,
-                reverseLayout = true,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(vertical = 8.dp)
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth()
             ) {
-                itemsIndexed(messages, key = { _, m -> m.id }) { _, msg ->
-                    androidx.compose.foundation.layout.Box(
-                        modifier = Modifier.animateItem()
+                LazyColumn(
+                    state = listState,
+                    reverseLayout = true,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(vertical = 8.dp)
+                ) {
+                    itemsIndexed(messages, key = { _, m -> m.id }) { _, msg ->
+                        androidx.compose.foundation.layout.Box(
+                            modifier = Modifier.animateItem()
+                        ) {
+                            MessageBubble(
+                                message = msg,
+                                showSender = isGroupChat,
+                                onLongPress = { deleteTarget = it },
+                                onMediaTap = { path ->
+                                    com.secondream.cheipgram.ui.screens.MediaViewerHolder.currentPath = path
+                                    onOpenMediaViewer()
+                                },
+                                onSwipeReply = { replyTarget = it },
+                                onAvatarClick = { uid -> profileSheetUserId = uid },
+                                interactionRevision = interactionRevisions[msg.id] ?: 0
+                            )
+                        }
+                    }
+                }
+                // Scroll-to-bottom button. Appears as soon as the user has
+                // scrolled up at least a few messages from the bottom of
+                // the chat (reverseLayout=true means firstVisibleItemIndex
+                // grows as they go back in time). Tapping snaps the list
+                // straight to the newest message via animateScrollToItem(0).
+                // We read firstVisibleItemIndex through a derivedStateOf so
+                // recomposition only fires when the visibility threshold
+                // actually flips, not on every pixel of scroll.
+                val showJumpToBottom by remember(listState) {
+                    androidx.compose.runtime.derivedStateOf {
+                        listState.firstVisibleItemIndex > 3
+                    }
+                }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showJumpToBottom,
+                    enter = androidx.compose.animation.fadeIn() +
+                        androidx.compose.animation.scaleIn(initialScale = 0.8f),
+                    exit = androidx.compose.animation.fadeOut() +
+                        androidx.compose.animation.scaleOut(targetScale = 0.8f),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 14.dp, bottom = 14.dp)
+                ) {
+                    androidx.compose.material3.SmallFloatingActionButton(
+                        onClick = {
+                            scope.launch {
+                                runCatching { listState.animateScrollToItem(0) }
+                            }
+                        },
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        elevation = androidx.compose.material3.FloatingActionButtonDefaults
+                            .elevation(defaultElevation = 3.dp)
                     ) {
-                        MessageBubble(
-                            message = msg,
-                            showSender = isGroupChat,
-                            onLongPress = { deleteTarget = it },
-                            onMediaTap = { path ->
-                                com.secondream.cheipgram.ui.screens.MediaViewerHolder.currentPath = path
-                                onOpenMediaViewer()
-                            },
-                            onSwipeReply = { replyTarget = it },
-                            interactionRevision = interactionRevisions[msg.id] ?: 0
+                        Icon(
+                            Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = stringResource(R.string.chat_jump_to_bottom),
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                 }
@@ -747,7 +865,8 @@ fun ChatScreen(
                         }
                     }
                 },
-                recording = recording
+                recording = recording,
+                hasPendingMedia = pendingMedia != null
             )
         }
     }
@@ -784,20 +903,47 @@ fun ChatScreen(
         )
     }
 
-    // Forward picker: appears when the user taps "Forward" in the message
-    // actions sheet. Picks the destination chat then fires forwardMessages
-    // and resets forwardTarget. We capture the source msg into a local
-    // val so the closure doesn't observe the cleared state.
+    // Forward flow: appears when the user taps "Forward" in the message
+    // actions sheet. Two-step bottom sheet — first pick a destination chat,
+    // then preview the message and optionally add a caption before sending.
+    // The forward goes out as a TDLib ForwardMessages call (which preserves
+    // the "Forwarded from" header); when a caption was entered we follow up
+    // with a plain sendText to the same chat so it lands right after, the
+    // same UX as adding a note when sharing in Telegram.
     forwardTarget?.let { msg ->
         com.secondream.cheipgram.ui.components.ForwardChatPickerSheet(
+            sourceMessage = msg,
             onDismiss = { forwardTarget = null },
-            onPick = { destChatId ->
+            onForward = { destChatId, caption ->
                 forwardTarget = null
                 scope.launch {
                     runCatching {
                         TdClient.forwardMessages(destChatId, msg.chatId, longArrayOf(msg.id))
                     }
+                    if (!caption.isNullOrBlank()) {
+                        // Best-effort: even if the forward call failed we
+                        // still try the caption so the user's typed note
+                        // isn't lost silently. If TDLib also rejects the
+                        // text, the user can retry from the sent-failed UI.
+                        runCatching { TdClient.sendText(destChatId, caption) }
+                    }
                 }
+            }
+        )
+    }
+
+    // Profile preview sheet: shown when the user taps a sender's avatar
+    // in a group chat. The sheet handles the start-private-chat flow
+    // itself (we just need to navigate when it tells us to). Dismissing
+    // the sheet clears profileSheetUserId so it doesn't reopen on
+    // recomposition.
+    profileSheetUserId?.let { uid ->
+        com.secondream.cheipgram.ui.components.UserProfileSheet(
+            userId = uid,
+            onDismiss = { profileSheetUserId = null },
+            onStartChat = { newChatId ->
+                profileSheetUserId = null
+                onOpenChat(newChatId)
             }
         )
     }
@@ -836,6 +982,21 @@ fun ChatScreen(
                 val chosenSame = msg.interactionInfo?.reactions?.reactions?.any {
                     it.isChosen && (it.type as? TdApi.ReactionTypeEmoji)?.emoji == emoji
                 } == true
+                // Optimistic local update: mutate the message's reactions
+                // in place and bump the interactionRevision so the bubble
+                // recomposes RIGHT NOW. Without this the user taps an emoji,
+                // the sheet closes, and the chip only pops in once TDLib
+                // sends back UpdateMessageInteractionInfo a moment later —
+                // which felt laggy because the visual feedback lagged the
+                // tap. When the server response eventually arrives it
+                // overwrites this with the canonical state, so any
+                // discrepancy (e.g. another reactor counted) self-corrects.
+                msg.interactionInfo = applyReactionLocally(
+                    msg.interactionInfo,
+                    emoji,
+                    add = !chosenSame
+                )
+                interactionRevisions[msg.id] = (interactionRevisions[msg.id] ?: 0) + 1
                 scope.launch {
                     runCatching {
                         if (chosenSame) {
@@ -1153,7 +1314,13 @@ private fun InputBar(
     onAttach: () -> Unit,
     onMicDown: () -> Unit,
     onMicUp: (sendIt: Boolean) -> Unit,
-    recording: Boolean
+    recording: Boolean,
+    // When there's pending media (photo/video/document staged for send via
+    // the attach sheet) we want the SEND button to be active even with an
+    // empty text field — captions are optional. Without this the user
+    // would see the mic button on an empty caption and have no way to
+    // actually push the media out.
+    hasPendingMedia: Boolean = false
 ) {
     // Pull the custom input-bar color if the user has set one in the
     // theme builder. Falls back to MaterialTheme.colorScheme.background
@@ -1161,8 +1328,22 @@ private fun InputBar(
     val appearance by com.secondream.cheipgram.settings.AppSettings.appearance.collectAsState(
         initial = com.secondream.cheipgram.settings.AppearancePrefs()
     )
+    val cs = MaterialTheme.colorScheme
+    val isLight = cs.background.luminance() > 0.5f
     val inputBg = appearance.customInputBarArgb?.let { androidx.compose.ui.graphics.Color(it) }
-        ?: MaterialTheme.colorScheme.background
+        ?: cs.background
+    // Bubble that wraps the text field. On light themes we go pure white
+    // with black text — matches Telegram's light skin and what Eugenio
+    // explicitly asked for. On dark themes we keep the dark elevated
+    // surface (Ink.SurfaceHi) so the bubble still reads against the chat
+    // backdrop instead of disappearing into it.
+    val bubbleBg = if (isLight) androidx.compose.ui.graphics.Color.White else Ink.SurfaceHi
+    val bubbleBorder = if (isLight) cs.outline.copy(alpha = 0.35f) else Ink.SurfaceLine
+    val textColor = if (isLight) androidx.compose.ui.graphics.Color.Black else Ink.Cream
+    val placeholderColor = if (isLight) {
+        androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f)
+    } else Ink.Faint
+    val iconTint = if (isLight) cs.onSurfaceVariant else Ink.Muted
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1206,53 +1387,79 @@ private fun InputBar(
                 Text(
                     formatRecDuration(elapsed),
                     style = MaterialTheme.typography.titleMedium,
-                    color = Ink.Cream,
+                    color = textColor,
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(Modifier.width(12.dp))
                 Text(
                     stringResource(R.string.recording_hint),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Ink.Muted,
+                    color = iconTint,
                     modifier = Modifier.weight(1f),
                     maxLines = 2
                 )
                 MicButton(recording = true, onDown = onMicDown, onUp = onMicUp)
             }
         } else {
+            // Alignment.Bottom keeps attach + send pinned at the foot of
+            // the row. Without this the buttons stay vertically centered
+            // and visibly creep upward each time the text wraps to a new
+            // line — a behaviour Eugenio specifically called out.
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                IconButton(onClick = onAttach) {
-                    Icon(Icons.Outlined.AttachFile, null, tint = Ink.Muted)
+                IconButton(
+                    onClick = onAttach,
+                    // Manual sizing so the button has the same 48dp tap
+                    // target as MicButton/Send below; default IconButton
+                    // is 48dp anyway but being explicit makes the
+                    // alignment math obvious.
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(Icons.Outlined.AttachFile, null, tint = iconTint)
                 }
                 Box(
                     modifier = Modifier
                         .weight(1f)
+                        // Cap how tall the bubble can grow. ~6 lines at
+                        // bodyLarge gives roughly 150dp; beyond that the
+                        // BasicTextField scrolls internally instead of
+                        // pushing the layout upward.
+                        .heightIn(min = 44.dp, max = 150.dp)
                         .clip(RoundedCornerShape(22.dp))
-                        .background(Ink.SurfaceHi)
-                        .border(0.5.dp, Ink.SurfaceLine, RoundedCornerShape(22.dp))
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .background(bubbleBg)
+                        .border(0.5.dp, bubbleBorder, RoundedCornerShape(22.dp))
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.CenterStart
                 ) {
                     if (value.isEmpty()) {
                         Text(
                             placeholderText ?: stringResource(R.string.input_placeholder),
-                            color = Ink.Faint,
+                            color = placeholderColor,
                             style = MaterialTheme.typography.bodyLarge
                         )
                     }
                     BasicTextField(
                         value = value,
                         onValueChange = onValueChange,
-                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = Ink.Cream),
-                        cursorBrush = androidx.compose.ui.graphics.SolidColor(Ink.Amber),
-                        modifier = Modifier.fillMaxWidth()
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = textColor),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(cs.primary),
+                        // Internal scrolling kicks in once the content
+                        // grows past the 150dp ceiling above. Up to that
+                        // point the field expands naturally so a 1-2
+                        // line message doesn't waste vertical space.
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
                     )
                 }
                 Spacer(Modifier.width(4.dp))
-                if (value.isNotBlank()) {
-                    IconButton(onClick = onSend) {
+                if (value.isNotBlank() || hasPendingMedia) {
+                    IconButton(
+                        onClick = onSend,
+                        modifier = Modifier.size(48.dp)
+                    ) {
                         Box(
                             modifier = Modifier
                                 .size(40.dp)
@@ -1906,4 +2113,98 @@ private fun formatRecDuration(seconds: Int): String {
     val m = seconds / 60
     val s = seconds % 60
     return String.format(java.util.Locale.US, "%d:%02d", m, s)
+}
+
+/**
+ * Apply a reaction toggle to a [TdApi.MessageInteractionInfo] in pure Kotlin,
+ * returning a new InteractionInfo object that reflects the change. Used to
+ * give an instant-feedback chip the moment the user taps an emoji, before
+ * TDLib echoes the authoritative update back.
+ *
+ * Rules mirror Telegram's:
+ *  - add: if the emoji is already in the reactions, increment totalCount and
+ *    mark isChosen=true; otherwise prepend a new MessageReaction with
+ *    totalCount=1.
+ *  - remove (add=false): decrement totalCount and clear isChosen; if the
+ *    new totalCount would be 0 we drop the reaction from the array entirely
+ *    so the empty chip doesn't linger.
+ *
+ * We always allocate a fresh MessageInteractionInfo / MessageReactions
+ * because the parent code mutates message.interactionInfo and we want the
+ * snapshot graph to see a different reference. The inner MessageReaction
+ * we touch is also reconstructed so we never mutate an object TDLib could
+ * still hold a reference to.
+ */
+private fun applyReactionLocally(
+    info: TdApi.MessageInteractionInfo?,
+    emoji: String,
+    add: Boolean
+): TdApi.MessageInteractionInfo {
+    val baseViews = info?.viewCount ?: 0
+    val baseForwards = info?.forwardCount ?: 0
+    val baseReply = info?.replyInfo
+    val currentList = info?.reactions?.reactions?.toMutableList() ?: mutableListOf()
+    val idx = currentList.indexOfFirst {
+        (it.type as? TdApi.ReactionTypeEmoji)?.emoji == emoji
+    }
+    // We build new MessageReaction objects via field assignment rather than
+    // the all-args constructor: TDLib's tl_writer occasionally appends new
+    // fields between versions (e.g. usedSenderId, recentSenderIds), and the
+    // no-arg-then-assign style stays compatible with all of those without
+    // having to track the schema.
+    if (add) {
+        if (idx >= 0) {
+            val existing = currentList[idx]
+            currentList[idx] = TdApi.MessageReaction().apply {
+                type = existing.type
+                totalCount = (existing.totalCount + if (existing.isChosen) 0 else 1).coerceAtLeast(1)
+                isChosen = true
+                usedSenderId = existing.usedSenderId
+                recentSenderIds = existing.recentSenderIds
+            }
+        } else {
+            // New reaction goes to the front so the user immediately sees
+            // their own chip on the leading edge of the strip — same as
+            // real Telegram clients.
+            currentList.add(
+                0,
+                TdApi.MessageReaction().apply {
+                    type = TdApi.ReactionTypeEmoji(emoji)
+                    totalCount = 1
+                    isChosen = true
+                    recentSenderIds = emptyArray()
+                }
+            )
+        }
+    } else if (idx >= 0) {
+        val existing = currentList[idx]
+        val newCount = (existing.totalCount - 1).coerceAtLeast(0)
+        if (newCount == 0) {
+            currentList.removeAt(idx)
+        } else {
+            currentList[idx] = TdApi.MessageReaction().apply {
+                type = existing.type
+                totalCount = newCount
+                isChosen = false
+                usedSenderId = existing.usedSenderId
+                recentSenderIds = existing.recentSenderIds
+            }
+        }
+    }
+    val newReactions = if (currentList.isEmpty()) null else TdApi.MessageReactions().apply {
+        reactions = currentList.toTypedArray()
+        // Carry across the rest of the prior reactions metadata so any flags
+        // (tagged reactions, paid reactors) survive the optimistic update.
+        info?.reactions?.let { prev ->
+            areTags = prev.areTags
+            paidReactors = prev.paidReactors
+            canGetAddedReactions = prev.canGetAddedReactions
+        }
+    }
+    return TdApi.MessageInteractionInfo().apply {
+        viewCount = baseViews
+        forwardCount = baseForwards
+        replyInfo = baseReply
+        reactions = newReactions
+    }
 }

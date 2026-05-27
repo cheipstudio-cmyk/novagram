@@ -226,6 +226,11 @@
     <string name="action_forward">Weiterleiten</string>
     <string name="forward_picker_title">Weiterleiten an</string>
     <string name="forward_picker_search_hint">Chats suchen</string>
+    <string name="forward_compose_target_prefix">Weiterleiten an</string>
+    <string name="forward_compose_from_prefix">Von %1$s</string>
+    <string name="forward_compose_caption_hint">Beschriftung hinzufügen (optional)</string>
+    <string name="forward_compose_send">Weiterleiten</string>
+    <string name="forward_compose_send_with_caption">Mit Beschriftung weiterleiten</string>
     <string name="reactions_who_title">Reaktionen</string>
     <string name="home_shortcut_search">Suchen</string>
     <string name="home_shortcut_new_chat">Neuer Chat</string>
@@ -235,4 +240,5 @@
     <string name="home_period_morning">Guten Morgen</string>
     <string name="home_period_afternoon">Guten Tag</string>
     <string name="home_period_evening">Guten Abend</string>
+    <string name="chat_jump_to_bottom">Nach unten</string>
 </resources>

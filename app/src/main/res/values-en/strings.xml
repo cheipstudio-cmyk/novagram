@@ -226,6 +226,11 @@
     <string name="action_forward">Forward</string>
     <string name="forward_picker_title">Forward to</string>
     <string name="forward_picker_search_hint">Search chats</string>
+    <string name="forward_compose_target_prefix">Forward to</string>
+    <string name="forward_compose_from_prefix">From %1$s</string>
+    <string name="forward_compose_caption_hint">Add a caption (optional)</string>
+    <string name="forward_compose_send">Forward</string>
+    <string name="forward_compose_send_with_caption">Forward with caption</string>
     <string name="reactions_who_title">Reactions</string>
     <string name="home_shortcut_search">Search</string>
     <string name="home_shortcut_new_chat">New chat</string>
@@ -235,4 +240,5 @@
     <string name="home_period_morning">Good morning</string>
     <string name="home_period_afternoon">Good afternoon</string>
     <string name="home_period_evening">Good evening</string>
+    <string name="chat_jump_to_bottom">Jump to bottom</string>
 </resources>

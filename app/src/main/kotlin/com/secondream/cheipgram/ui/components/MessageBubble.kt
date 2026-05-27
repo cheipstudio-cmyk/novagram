@@ -7,8 +7,8 @@ package com.secondream.cheipgram.ui.components
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.input.pointer.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.pointerInput
 
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -76,6 +76,11 @@ fun MessageBubble(
     onLongPress: (TdApi.Message) -> Unit = {},
     onMediaTap: (String) -> Unit = {},
     onSwipeReply: (TdApi.Message) -> Unit = {},
+    /** Fired when the user taps the sender avatar shown next to non-mine
+     *  bubbles in group chats. Receives the sender's userId so the parent
+     *  can open a profile sheet / start a chat. No-op by default for
+     *  callers that don't need profile-on-tap. */
+    onAvatarClick: (userId: Long) -> Unit = {},
     /**
      * Bumped by the parent each time TDLib pushes a new InteractionInfo
      * for this message. Reading it here pulls this composable into the
@@ -126,6 +131,12 @@ fun MessageBubble(
     val animatedOffset by animateFloatAsState(targetValue = swipeOffset, label = "swipe-reply")
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     var hapticFired by remember(message.id) { mutableStateOf(false) }
+    // Coroutine scope + Android context for the bubble click handler:
+    // we need to ask TDLib for the *current* file state at tap time (in
+    // case the closure-captured TdApi.File reference is stale) and we
+    // need a Context to launch system Intents for non-image content.
+    val tapScope = androidx.compose.runtime.rememberCoroutineScope()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
 
     Box(
         modifier = Modifier
@@ -164,28 +175,29 @@ fun MessageBubble(
             // ~400ms expecting the menu to appear — now it does. Also
             // gives a haptic on trigger so the user knows it landed.
             .pointerInput("longpress-${message.id}") {
+                // PointerInputScope IS a CoroutineScope. We grab it here so we
+                // can launch() a timer from a non-restricted scope: delay() is
+                // not allowed inside awaitEachGesture {} because that block has
+                // AwaitPointerEventScope (@RestrictsSuspension) as receiver and
+                // only its own member/extension suspends are callable there.
+                val outerScope = this
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val timeoutMs = 300L
-                    val startNs = System.nanoTime()
-                    var fired = false
-                    while (!fired) {
-                        val elapsedMs = (System.nanoTime() - startNs) / 1_000_000L
-                        val remaining = timeoutMs - elapsedMs
-                        if (remaining <= 0) {
-                            haptic.performHapticFeedback(
-                                androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
-                            )
-                            onLongPress(message)
-                            fired = true
-                            break
-                        }
-                        val event = kotlinx.coroutines.withTimeoutOrNull(remaining) {
-                            awaitPointerEvent()
-                        } ?: continue
-                        val change = event.changes.find { it.id == down.id } ?: break
-                        if (!change.pressed) break
-                        if (change.positionChange().getDistance() > viewConfiguration.touchSlop) break
+                    awaitFirstDown(requireUnconsumed = false)
+                    // 300ms timer fires the long press if the user hasn't lifted
+                    // or moved past touchSlop by then. waitForUpOrCancellation()
+                    // returns when either of those happens, at which point we
+                    // cancel the pending timer.
+                    val timerJob = outerScope.launch {
+                        kotlinx.coroutines.delay(300L)
+                        haptic.performHapticFeedback(
+                            androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
+                        )
+                        onLongPress(message)
+                    }
+                    try {
+                        waitForUpOrCancellation()
+                    } finally {
+                        timerJob.cancel()
                     }
                 }
             }
@@ -218,13 +230,21 @@ fun MessageBubble(
             verticalAlignment = Alignment.Bottom
         ) {
             if (showSender && !mine) {
+                val senderUserId = (message.senderId as? TdApi.MessageSenderUser)?.userId
                 Avatar(
                     file = senderUser?.profilePhoto?.small,
-                fallbackText = senderUser?.firstName ?: "?",
-                size = 28.dp
-            )
-            Spacer(Modifier.width(6.dp))
-        }
+                    fallbackText = senderUser?.firstName ?: "?",
+                    size = 28.dp,
+                    // Tap-on-avatar opens the profile sheet in the parent.
+                    // We only wire the click when we actually have a userId
+                    // to send back; chat-author messages (admin announcements
+                    // posted as the group itself) leave the avatar inert.
+                    modifier = if (senderUserId != null) {
+                        Modifier.clickable { onAvatarClick(senderUserId) }
+                    } else Modifier
+                )
+                Spacer(Modifier.width(6.dp))
+            }
         Column(
             modifier = Modifier
                 .widthIn(max = 300.dp)
@@ -232,17 +252,121 @@ fun MessageBubble(
                 .background(fill.background)
                 .combinedClickable(
                     onClick = {
-                        val path: String? = when (val c = message.content) {
-                            is TdApi.MessagePhoto -> c.photo.sizes
-                                .lastOrNull { it.photo.local.isDownloadingCompleted }
-                                ?.photo?.local?.path
-                            is TdApi.MessageAnimation -> c.animation.animation
-                                .takeIf { it.local.isDownloadingCompleted }?.local?.path
-                            is TdApi.MessageVideo -> c.video.video
-                                .takeIf { it.local.isDownloadingCompleted }?.local?.path
-                            else -> null
+                        // The TdApi.File references inside message.content are
+                        // captured at compose time. TDLib mutates them in
+                        // place when downloads finish, but Compose doesn't
+                        // observe the field-level change so by the time the
+                        // user taps, local.isDownloadingCompleted on the
+                        // captured object may still read false even though
+                        // the file IS actually on disk. We launch a small
+                        // coroutine that re-asks TDLib for the latest state,
+                        // then routes to MediaViewer for images / system
+                        // viewer for documents.
+                        tapScope.launch {
+                            when (val c = message.content) {
+                                is TdApi.MessagePhoto -> {
+                                    val biggest = c.photo.sizes.lastOrNull()?.photo
+                                        ?: return@launch
+                                    val latest = runCatching { TdClient.getFile(biggest.id) }
+                                        .getOrNull() ?: biggest
+                                    val path = latest.local?.path
+                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        onMediaTap(path)
+                                    } else {
+                                        runCatching { TdClient.downloadFile(latest.id) }
+                                            .onSuccess { done ->
+                                                done.local?.path?.takeIf {
+                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                }?.let(onMediaTap)
+                                            }
+                                    }
+                                }
+                                is TdApi.MessageVideo -> {
+                                    val f = c.video.video
+                                    val latest = runCatching { TdClient.getFile(f.id) }
+                                        .getOrNull() ?: f
+                                    val path = latest.local?.path
+                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        // Videos go through the system viewer:
+                                        // MediaViewerScreen is image-only.
+                                        com.secondream.cheipgram.util.FileUtils.openDocument(
+                                            ctx, path, c.video.mimeType, c.video.fileName
+                                        )
+                                    } else {
+                                        runCatching { TdClient.downloadFile(latest.id) }
+                                            .onSuccess { done ->
+                                                done.local?.path?.takeIf {
+                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                }?.let { p ->
+                                                    com.secondream.cheipgram.util.FileUtils.openDocument(
+                                                        ctx, p, c.video.mimeType, c.video.fileName
+                                                    )
+                                                }
+                                            }
+                                    }
+                                }
+                                is TdApi.MessageAnimation -> {
+                                    val f = c.animation.animation
+                                    val latest = runCatching { TdClient.getFile(f.id) }
+                                        .getOrNull() ?: f
+                                    val path = latest.local?.path
+                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        onMediaTap(path)
+                                    } else {
+                                        runCatching { TdClient.downloadFile(latest.id) }
+                                            .onSuccess { done ->
+                                                done.local?.path?.takeIf {
+                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                }?.let(onMediaTap)
+                                            }
+                                    }
+                                }
+                                is TdApi.MessageDocument -> {
+                                    val f = c.document.document
+                                    val latest = runCatching { TdClient.getFile(f.id) }
+                                        .getOrNull() ?: f
+                                    val path = latest.local?.path
+                                    val open: (String) -> Unit = { p ->
+                                        com.secondream.cheipgram.util.FileUtils.openDocument(
+                                            ctx, p, c.document.mimeType, c.document.fileName
+                                        )
+                                    }
+                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        open(path)
+                                    } else {
+                                        runCatching { TdClient.downloadFile(latest.id) }
+                                            .onSuccess { done ->
+                                                done.local?.path?.takeIf {
+                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                }?.let(open)
+                                            }
+                                    }
+                                }
+                                is TdApi.MessageAudio -> {
+                                    val f = c.audio.audio
+                                    val latest = runCatching { TdClient.getFile(f.id) }
+                                        .getOrNull() ?: f
+                                    val path = latest.local?.path
+                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        com.secondream.cheipgram.util.FileUtils.openDocument(
+                                            ctx, path, c.audio.mimeType, c.audio.fileName
+                                        )
+                                    } else {
+                                        runCatching { TdClient.downloadFile(latest.id) }
+                                            .onSuccess { done ->
+                                                done.local?.path?.takeIf {
+                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                }?.let { p ->
+                                                    com.secondream.cheipgram.util.FileUtils.openDocument(
+                                                        ctx, p, c.audio.mimeType, c.audio.fileName
+                                                    )
+                                                }
+                                            }
+                                    }
+                                }
+                                else -> Unit
+                            }
                         }
-                        if (!path.isNullOrBlank()) onMediaTap(path)
                     },
                     onLongClick = { onLongPress(message) }
                 )
@@ -259,6 +383,20 @@ fun MessageBubble(
                     )
                     Spacer(Modifier.height(2.dp))
                 }
+            }
+            // If this message is a reply to another one, render the
+            // quoted-preview bar just above the body. Matches Telegram's
+            // visual: a tinted strip with a left accent stripe carrying
+            // the original sender's name + a one-line preview of the
+            // original content (or the manually-quoted slice when the
+            // user picked a quote range with TDLib's quote feature).
+            (message.replyTo as? TdApi.MessageReplyToMessage)?.let { rt ->
+                ReplyQuoteBar(
+                    replyTo = rt,
+                    accent = MaterialTheme.colorScheme.primary,
+                    onBackground = fill.onBackground
+                )
+                Spacer(Modifier.height(6.dp))
             }
             MessageContent(message, fill.onBackground)
             // Existing reactions strip. We surface every reaction the
@@ -525,9 +663,19 @@ private fun DownloadingImage(
     var file by remember(initialFile.id) { mutableStateOf(initialFile) }
 
     LaunchedEffect(initialFile.id) {
-        val f = initialFile
-        if (!f.local.isDownloadingCompleted && !f.local.isDownloadingActive) {
-            runCatching { TdClient.downloadFile(f.id) }
+        // Snapshot the latest file state from TDLib first. When a LazyColumn
+        // row scrolls off-screen this LaunchedEffect is cancelled, so any
+        // UpdateFile that fired during the off-screen window was missed.
+        // When the row scrolls back in, `initialFile` is still the stale
+        // reference captured by the parent recomposition; without this
+        // snapshot the bubble would sit on the placeholder forever even
+        // though the download has actually completed.
+        runCatching { TdClient.getFile(initialFile.id) }.onSuccess { latest ->
+            file = latest
+        }
+        val current = file
+        if (!current.local.isDownloadingCompleted && !current.local.isDownloadingActive) {
+            runCatching { TdClient.downloadFile(current.id) }
         }
         TdClient.fileUpdates.collect { updated ->
             if (updated.id == initialFile.id) file = updated
@@ -916,5 +1064,149 @@ private fun ReactionStrip(
             messageId = messageId,
             onDismiss = { showViewers = false }
         )
+    }
+}
+
+/**
+ * Quote-style preview of the message we're replying to, rendered inline
+ * inside the bubble (above the new message's content). Visually it's a
+ * 3dp accent stripe + sender name + 1-line preview, same language we
+ * already use in ReplyPreview in the input bar — so the same affordance
+ * reads consistently whether you're seeing it before sending OR seeing
+ * it on a delivered message.
+ *
+ * The TDLib MessageReplyToMessage carries either an inline `content`
+ * snapshot (recent enough TDLib versions) or a `quote.text` slice the
+ * sender hand-picked. If neither is available we fetch the full message
+ * lazily via TdClient.getMessage as a best-effort fallback. When the
+ * source message has been deleted server-side everything stays null
+ * and we render a generic "Messaggio originale" placeholder so the user
+ * still sees the bar instead of an awkward empty space.
+ */
+@Composable
+private fun ReplyQuoteBar(
+    replyTo: TdApi.MessageReplyToMessage,
+    accent: androidx.compose.ui.graphics.Color,
+    onBackground: androidx.compose.ui.graphics.Color,
+) {
+    // The quote text wins when present (manual user-picked quote slice);
+    // otherwise we derive a preview from the inline content TDLib gave us,
+    // and only fall back to the network as a last resort.
+    val inlinePreview = remember(replyTo) { previewFromContentOrQuote(replyTo) }
+    var fetchedPreview by remember(replyTo.messageId) { mutableStateOf<String?>(null) }
+    var fetchedSender by remember(replyTo.messageId) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(replyTo.chatId, replyTo.messageId) {
+        if (inlinePreview != null) return@LaunchedEffect
+        val msg = runCatching {
+            TdClient.getMessage(replyTo.chatId, replyTo.messageId)
+        }.getOrNull() ?: return@LaunchedEffect
+        fetchedPreview = previewFromContent(msg.content)
+        fetchedSender = resolveReplySenderName(msg.senderId, replyTo.origin)
+    }
+
+    val senderName = resolveReplySenderName(null, replyTo.origin)
+        ?: fetchedSender
+        ?: "Messaggio"
+    val preview = inlinePreview ?: fetchedPreview ?: "Messaggio originale"
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(onBackground.copy(alpha = 0.06f))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .height(32.dp)
+                .background(accent)
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                senderName,
+                style = MaterialTheme.typography.labelMedium,
+                color = accent,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+            Text(
+                preview,
+                style = MaterialTheme.typography.bodySmall,
+                color = onBackground.copy(alpha = 0.8f),
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/**
+ * Pull a 1-line preview out of the inline reply-content snapshot if TDLib
+ * carried one. Returns null if it didn't, so the caller knows to fetch the
+ * source message instead. We deliberately don't read the manually-picked
+ * `quote` slice here — its nested shape (TextQuote.text vs FormattedText)
+ * varies between TDLib releases, and the inline content path covers the
+ * common case while staying schema-stable.
+ */
+private fun previewFromContentOrQuote(replyTo: TdApi.MessageReplyToMessage): String? {
+    val inline = replyTo.content ?: return null
+    return previewFromContent(inline)
+}
+
+/**
+ * Short text preview for any [TdApi.MessageContent]. Mirrors the mapping
+ * NotificationHelper / ForwardChatPickerSheet use so the user sees the
+ * same shorthand everywhere replies and notifications appear.
+ */
+private fun previewFromContent(content: TdApi.MessageContent): String = when (content) {
+    is TdApi.MessageText -> content.text.text.take(120)
+    is TdApi.MessagePhoto -> "📷 Foto" +
+        (content.caption.text.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+    is TdApi.MessageVideo -> "🎬 Video"
+    is TdApi.MessageVoiceNote -> "🎙 Nota vocale"
+    is TdApi.MessageDocument -> "📎 ${content.document.fileName}"
+    is TdApi.MessageAnimation -> "GIF"
+    is TdApi.MessageSticker -> content.sticker.emoji.ifBlank { "Sticker" } + " Sticker"
+    is TdApi.MessageAudio -> "🎵 " + content.audio.title.ifBlank { content.audio.fileName.ifBlank { "Audio" } }
+    is TdApi.MessageLocation -> "📍 Posizione"
+    is TdApi.MessageContact -> "👤 Contatto"
+    else -> "Messaggio"
+}
+
+/**
+ * Best-effort sender-name lookup for a quoted reply. We try the message's
+ * own senderId first (when the caller fetched the full message), then fall
+ * back to the [TdApi.MessageOrigin] TDLib stores on the reply target so the
+ * name still resolves even if the original message has been deleted.
+ */
+private fun resolveReplySenderName(
+    senderId: TdApi.MessageSender?,
+    origin: TdApi.MessageOrigin?
+): String? {
+    val fromSender = when (senderId) {
+        is TdApi.MessageSenderUser -> {
+            val u = TdClient.getCachedUser(senderId.userId)
+            "${u?.firstName.orEmpty()} ${u?.lastName.orEmpty()}".trim()
+                .ifBlank { null }
+        }
+        is TdApi.MessageSenderChat -> TdClient.getCachedChat(senderId.chatId)?.title
+        else -> null
+    }
+    if (!fromSender.isNullOrBlank()) return fromSender
+    return when (origin) {
+        is TdApi.MessageOriginUser -> {
+            val u = TdClient.getCachedUser(origin.senderUserId)
+            "${u?.firstName.orEmpty()} ${u?.lastName.orEmpty()}".trim()
+                .ifBlank { null }
+        }
+        is TdApi.MessageOriginChat -> TdClient.getCachedChat(origin.senderChatId)?.title
+        is TdApi.MessageOriginHiddenUser -> origin.senderName.ifBlank { null }
+        is TdApi.MessageOriginChannel -> TdClient.getCachedChat(origin.chatId)?.title
+        else -> null
     }
 }
