@@ -244,4 +244,6 @@
     <string name="action_edit">Bearbeiten</string>
     <string name="edit_preview_title">Nachricht bearbeiten</string>
     <string name="bubble_edited_tag">bearbeitet</string>
+    <string name="chat_pinned_list_title">Angeheftete Nachrichten</string>
+    <string name="chat_pinned_list_empty">Keine angehefteten Nachrichten</string>
 </resources>

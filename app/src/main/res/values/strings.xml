@@ -259,4 +259,6 @@
     <string name="action_edit">Modifica</string>
     <string name="edit_preview_title">Modifica messaggio</string>
     <string name="bubble_edited_tag">modificato</string>
+    <string name="chat_pinned_list_title">Messaggi fissati</string>
+    <string name="chat_pinned_list_empty">Nessun messaggio fissato</string>
 </resources>

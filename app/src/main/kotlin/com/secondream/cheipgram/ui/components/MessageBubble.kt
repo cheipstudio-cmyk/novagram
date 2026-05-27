@@ -81,6 +81,12 @@ fun MessageBubble(
      *  can open a profile sheet / start a chat. No-op by default for
      *  callers that don't need profile-on-tap. */
     onAvatarClick: (userId: Long) -> Unit = {},
+    /** Fired when the user taps a Telegram link in the message text that
+     *  points to a message in THIS SAME chat — caller scrolls the list
+     *  to that message. Return true if it could jump (message is in the
+     *  in-memory window), false to let the default Intent flow handle
+     *  it as a fallback. */
+    onJumpToMessage: (Long) -> Boolean = { false },
     /**
      * Bumped by the parent each time TDLib pushes a new InteractionInfo
      * for this message. Reading it here pulls this composable into the
@@ -396,11 +402,22 @@ fun MessageBubble(
                 ReplyQuoteBar(
                     replyTo = rt,
                     accent = MaterialTheme.colorScheme.primary,
-                    onBackground = fill.onBackground
+                    onBackground = fill.onBackground,
+                    onTap = {
+                        // Only jump if the quoted message is in this chat —
+                        // cross-chat replies (forwarded with reply context)
+                        // would need a different navigation path which we
+                        // don't have wired in this scope. Falling through
+                        // silently is acceptable since the rt.chatId of a
+                        // normal in-chat reply always matches message.chatId.
+                        if (rt.chatId == message.chatId) {
+                            onJumpToMessage(rt.messageId)
+                        }
+                    }
                 )
                 Spacer(Modifier.height(6.dp))
             }
-            MessageContent(message, fill.onBackground)
+            MessageContent(message, fill.onBackground, onJumpToMessage)
             // Existing reactions strip. We surface every reaction the
             // message currently carries; tapping toggles your own reaction
             // (add if missing, remove if you've already used it). Updates
@@ -473,7 +490,11 @@ fun MessageBubble(
 }
 
 @Composable
-private fun MessageContent(message: TdApi.Message, onBackground: androidx.compose.ui.graphics.Color) {
+private fun MessageContent(
+    message: TdApi.Message,
+    onBackground: androidx.compose.ui.graphics.Color,
+    onJumpToMessage: (Long) -> Boolean = { false }
+) {
     when (val c = message.content) {
         is TdApi.MessageText -> {
             val rawText = c.text.text
@@ -493,7 +514,9 @@ private fun MessageContent(message: TdApi.Message, onBackground: androidx.compos
                 FormattedTextRendering(
                     formatted = c.text,
                     onBackground = onBackground,
-                    linkColor = MaterialTheme.colorScheme.primary
+                    linkColor = MaterialTheme.colorScheme.primary,
+                    currentChatId = message.chatId,
+                    onJumpToMessage = onJumpToMessage
                 )
             }
         }
@@ -763,7 +786,9 @@ private fun formatBytes(size: Long): String {
 private fun FormattedTextRendering(
     formatted: TdApi.FormattedText,
     onBackground: androidx.compose.ui.graphics.Color,
-    linkColor: androidx.compose.ui.graphics.Color
+    linkColor: androidx.compose.ui.graphics.Color,
+    currentChatId: Long = 0L,
+    onJumpToMessage: (Long) -> Boolean = { false }
 ) {
     val text = formatted.text
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -851,6 +876,22 @@ private fun FormattedTextRendering(
                     val uri = android.net.Uri.parse(raw)
                     val host = uri.host?.lowercase().orEmpty()
                     val isTelegramLink = host == "t.me" || host == "telegram.me" || host == "telegram.dog"
+
+                    // Same-chat shortcut: if this is a t.me/<chat>/<msgId>
+                    // link pointing INTO the current chat, hand the message
+                    // id to the screen so it can scroll the LazyColumn
+                    // instead of dispatching an Intent. Without this every
+                    // tap on an in-chat link routed through Android →
+                    // MainActivity.onNewIntent → nav.navigate(chat/...),
+                    // stacking a fresh ChatScreen each time and forcing
+                    // the user to press Back N times to escape.
+                    if (isTelegramLink && currentChatId != 0L) {
+                        val targetMsgId = parseSameChatMessageLink(uri, currentChatId)
+                        if (targetMsgId != null && onJumpToMessage(targetMsgId)) {
+                            return@ClickableText
+                        }
+                    }
+
                     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
                         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     // For t.me / telegram.me / telegram.dog links we force
@@ -1103,6 +1144,7 @@ private fun ReplyQuoteBar(
     replyTo: TdApi.MessageReplyToMessage,
     accent: androidx.compose.ui.graphics.Color,
     onBackground: androidx.compose.ui.graphics.Color,
+    onTap: () -> Unit = {},
 ) {
     // The quote text wins when present (manual user-picked quote slice);
     // otherwise we derive a preview from the inline content TDLib gave us,
@@ -1129,6 +1171,7 @@ private fun ReplyQuoteBar(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
+            .clickable { onTap() }
             .background(onBackground.copy(alpha = 0.06f))
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -1223,5 +1266,58 @@ private fun resolveReplySenderName(
         is TdApi.MessageOriginHiddenUser -> origin.senderName.ifBlank { null }
         is TdApi.MessageOriginChannel -> TdClient.getCachedChat(origin.chatId)?.title
         else -> null
+    }
+}
+
+/**
+ * Parse a `t.me/<chatRef>/<messageId>` link and return the messageId IFF
+ * the link points into the same chat as [currentChatId]. Returns null
+ * for cross-chat links (caller falls back to the normal Intent flow) and
+ * for non-message t.me links (joinchat hashes, profile-only `t.me/user`,
+ * etc.).
+ *
+ * Supported link shapes:
+ *  - `t.me/c/<supergroupInternalId>/<messageId>` — private supergroup or
+ *    channel. TDLib chat ids for these are `-100<supergroupInternalId>`
+ *    (e.g. `-1001234567890` ↔ `1234567890` in the link). We reconstruct
+ *    the expected internal id by stripping the `-100` prefix from the
+ *    absolute chat id and compare against the path segment.
+ *  - `t.me/<username>/<messageId>` — public chat / channel. We resolve
+ *    the current chat's active username from TDLib's cached User/Chat
+ *    object and compare case-insensitively.
+ *
+ * Topic links (`t.me/c/<id>/<topicId>/<messageId>`) currently take the
+ * LAST segment as the message id and ignore the topic — Eugenio's chats
+ * aren't using forum topics yet and TDLib's getMessage works regardless.
+ */
+private fun parseSameChatMessageLink(uri: android.net.Uri, currentChatId: Long): Long? {
+    val segments = uri.pathSegments?.filter { it.isNotBlank() } ?: return null
+    if (segments.size < 2) return null
+    // Last segment must be a numeric message id.
+    val msgId = segments.last().toLongOrNull() ?: return null
+    val isPrivateRef = segments.first() == "c"
+    if (isPrivateRef) {
+        if (segments.size < 3) return null
+        val internalId = segments[1].toLongOrNull() ?: return null
+        // TDLib supergroup chat ids are -100<internalId>. abs(chatId) -
+        // 1_000_000_000_000 == internalId when this is the same chat.
+        val expected = kotlin.math.abs(currentChatId) - 1_000_000_000_000L
+        return if (expected == internalId) msgId else null
+    } else {
+        val urlUsername = segments.first().lowercase()
+        // Resolve the current chat's @username. Private chats expose it via
+        // the linked User; groups/channels via Chat.usernames directly.
+        val cachedChat = TdClient.getCachedChat(currentChatId) ?: return null
+        val currentUsername: String? = run {
+            val chatUsernames = cachedChat.usernames?.activeUsernames
+                ?.firstOrNull()?.lowercase()
+            if (!chatUsernames.isNullOrBlank()) return@run chatUsernames
+            // Private chat: pull username off the underlying user
+            (cachedChat.type as? TdApi.ChatTypePrivate)?.userId?.let { uid ->
+                TdClient.getCachedUser(uid)?.usernames?.activeUsernames
+                    ?.firstOrNull()?.lowercase()
+            }
+        }
+        return if (currentUsername != null && currentUsername == urlUsername) msgId else null
     }
 }

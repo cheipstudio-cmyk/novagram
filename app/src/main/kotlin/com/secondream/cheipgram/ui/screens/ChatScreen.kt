@@ -160,6 +160,10 @@ fun ChatScreen(
     // a group chat. When non-null we render UserProfileSheet on top of the
     // chat; the sheet handles its own create-private-chat flow.
     var profileSheetUserId by remember(chatId) { mutableStateOf<Long?>(null) }
+    // Pinned-list sheet visibility. Set true when the user taps the
+    // pinned banner; the sheet itself fetches the full list of pinned
+    // messages via searchPinnedMessages and lets the user jump to any.
+    var pinnedSheetOpen by remember(chatId) { mutableStateOf(false) }
     // Cached list of chat members for the @-mention picker. Loaded lazily
     // the first time the user types "@" in a non-private chat.
     var mentionMembers by remember(chatId) { mutableStateOf<List<TdApi.User>>(emptyList()) }
@@ -684,12 +688,13 @@ fun ChatScreen(
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surface)
                         .clickable {
-                            // Jump the lazy list to the pinned message if
-                            // it's already in our in-memory window.
-                            val idx = messages.indexOfFirst { it.id == pin.id }
-                            if (idx >= 0) {
-                                scope.launch { listState.animateScrollToItem(idx) }
-                            }
+                            // Open the full pinned-messages list. Same UX as
+                            // Telegram: a single tap on the banner reveals
+                            // every pinned message in the chat so the user
+                            // can pick which one to jump to. Scrolling
+                            // directly to the topmost pinned still happens
+                            // by long-pressing the pin icon below.
+                            pinnedSheetOpen = true
                         }
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -750,6 +755,20 @@ fun ChatScreen(
                                 },
                                 onSwipeReply = { replyTarget = it },
                                 onAvatarClick = { uid -> profileSheetUserId = uid },
+                                onJumpToMessage = { targetId ->
+                                    // Same-chat link tapped — try to scroll to
+                                    // it in the in-memory window. We claim
+                                    // success even when the message isn't
+                                    // loaded yet: the alternative is the
+                                    // default Intent flow which causes the
+                                    // chat-relaunch loop Eugenio reported.
+                                    // Better silent than stacking duplicates.
+                                    val idx = messages.indexOfFirst { it.id == targetId }
+                                    if (idx >= 0) {
+                                        scope.launch { listState.animateScrollToItem(idx) }
+                                    }
+                                    true
+                                },
                                 interactionRevision = interactionRevisions[msg.id] ?: 0
                             )
                         }
@@ -1047,6 +1066,24 @@ fun ChatScreen(
             onStartChat = { newChatId ->
                 profileSheetUserId = null
                 onOpenChat(newChatId)
+            }
+        )
+    }
+
+    // Pinned-messages list sheet. Tapping a row jumps the LazyColumn to
+    // that message if it's already in the in-memory window; we don't yet
+    // re-load history around messages beyond the window — most pinned
+    // messages users care about are recent enough to be in scope.
+    if (pinnedSheetOpen) {
+        com.secondream.cheipgram.ui.components.PinnedListSheet(
+            chatId = chatId,
+            onDismiss = { pinnedSheetOpen = false },
+            onJumpToMessage = { targetId ->
+                pinnedSheetOpen = false
+                val idx = messages.indexOfFirst { it.id == targetId }
+                if (idx >= 0) {
+                    scope.launch { listState.animateScrollToItem(idx) }
+                }
             }
         )
     }
@@ -1652,13 +1689,22 @@ private fun AttachSheet(
     onPickSticker: () -> Unit
 ) {
     val state = rememberModalBottomSheetState()
+    // Hardcoded Ink.* tokens were dark-theme only — on light themes the
+    // attach sheet was reading as a dark slab over the white chat list.
+    // Route everything through MaterialTheme.colorScheme so the sheet
+    // tracks whichever skin is active.
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = state,
-        containerColor = Ink.Surface
+        containerColor = MaterialTheme.colorScheme.surface
     ) {
         Column(modifier = Modifier.padding(20.dp).navigationBarsPadding()) {
-            Text(stringResource(R.string.attach_title), style = MaterialTheme.typography.titleLarge, fontStyle = FontStyle.Italic)
+            Text(
+                stringResource(R.string.attach_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontStyle = FontStyle.Italic,
+                color = MaterialTheme.colorScheme.onSurface
+            )
             Spacer(Modifier.height(16.dp))
             AttachOption(stringResource(R.string.attach_photo_or_video), Icons.Outlined.Image, onPickPhoto)
             Spacer(Modifier.height(4.dp))
@@ -1676,22 +1722,40 @@ private fun AttachOption(label: String, icon: androidx.compose.ui.graphics.vecto
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(Ink.SurfaceHi)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            modifier = Modifier.size(40.dp).clip(CircleShape).background(Ink.Bg),
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surface),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, null, tint = Ink.Amber, modifier = Modifier.size(22.dp))
+            Icon(
+                icon, null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp)
+            )
         }
         Spacer(Modifier.width(14.dp))
-        Text(label, style = MaterialTheme.typography.titleMedium, color = Ink.Cream)
+        Text(
+            label,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
         Spacer(Modifier.weight(1f))
-        TextButton(onClick = onClick) {
-            Text(stringResource(R.string.action_open), color = Ink.Amber)
-        }
+        // The TextButton was redundant — the whole row is now clickable.
+        // We keep an arrow-style label so the affordance is still visible
+        // without doubling up on tap targets.
+        Text(
+            stringResource(R.string.action_open),
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 

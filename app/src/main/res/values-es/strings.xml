@@ -244,4 +244,6 @@
     <string name="action_edit">Editar</string>
     <string name="edit_preview_title">Editar mensaje</string>
     <string name="bubble_edited_tag">editado</string>
+    <string name="chat_pinned_list_title">Mensajes fijados</string>
+    <string name="chat_pinned_list_empty">Sin mensajes fijados</string>
 </resources>

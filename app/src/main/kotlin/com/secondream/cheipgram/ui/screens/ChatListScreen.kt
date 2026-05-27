@@ -22,7 +22,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -186,6 +188,19 @@ fun ChatListScreen(
                         }
                     },
                     actions = {
+                        // Home is a digest, not a search target — hide the
+                        // magnifier there entirely. On the other tabs we
+                        // keep the icon (or the live search field when
+                        // open). We also auto-close any active search if
+                        // the user swipes back to Home so the bar doesn't
+                        // linger past its usefulness.
+                        val onHome = TAB_SPECS[selectedTab].isHome
+                        LaunchedEffect(onHome) {
+                            if (onHome && searchOpen) {
+                                searchOpen = false
+                                searchQuery = ""
+                            }
+                        }
                         if (searchOpen) {
                             IconButton(onClick = {
                                 searchOpen = false
@@ -197,11 +212,13 @@ fun ChatListScreen(
                                 )
                             }
                         } else {
-                            IconButton(onClick = { searchOpen = true }) {
-                                Icon(
-                                    Icons.Outlined.Search,
-                                    contentDescription = stringResource(R.string.search_action)
-                                )
+                            if (!onHome) {
+                                IconButton(onClick = { searchOpen = true }) {
+                                    Icon(
+                                        Icons.Outlined.Search,
+                                        contentDescription = stringResource(R.string.search_action)
+                                    )
+                                }
                             }
                             IconButton(onClick = onOpenProfile) {
                                 Avatar(
@@ -522,34 +539,75 @@ private fun PillTabs(
     selected: Int,
     onSelect: (Int) -> Unit
 ) {
-    val animatedPrimary = MaterialTheme.colorScheme.primary
+    // Sliding-pill tabs: instead of recoloring each tab on selection (which
+    // pops abruptly and reads as a flicker during HorizontalPager swipes),
+    // we render a single accent-coloured pill that animates its position
+    // to match the selected tab. The animation source is the selected
+    // index itself, so swipes between tabs glide instead of jumping. Text
+    // colour cross-fades between primary and onPrimary based on how
+    // close each tab sits to the pill mid-animation.
+    val primary = MaterialTheme.colorScheme.primary
     val onPrimary = MaterialTheme.colorScheme.onPrimary
     val onSurfaceMuted = MaterialTheme.colorScheme.onSurfaceVariant
-    Row(
+    val animatedSelected by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = selected.toFloat(),
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioLowBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+        ),
+        label = "tab-slide"
+    )
+    androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(4.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(4.dp)
     ) {
-        titles.forEachIndexed { i, title ->
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
-                    .background(if (selected == i) animatedPrimary else androidx.compose.ui.graphics.Color.Transparent)
-                    .clickable { onSelect(i) }
-                    .padding(vertical = 10.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (selected == i) onPrimary else onSurfaceMuted,
-                    fontWeight = if (selected == i) FontWeight.SemiBold else FontWeight.Medium
-                )
+        val tabCount = titles.size.coerceAtLeast(1)
+        val tabWidth = this.maxWidth / tabCount
+        val tabHeight = 44.dp
+        // Sliding pill drawn underneath the labels.
+        Box(
+            modifier = Modifier
+                .offset(x = tabWidth * animatedSelected)
+                .width(tabWidth)
+                .height(tabHeight)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                .background(primary)
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().height(tabHeight),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            titles.forEachIndexed { i, title ->
+                val distance = kotlin.math.abs(animatedSelected - i).coerceIn(0f, 1f)
+                val textColor = androidx.compose.ui.graphics.lerp(onPrimary, onSurfaceMuted, distance)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(tabHeight)
+                        .clickable(
+                            // Use indication=null so tapping a tab doesn't
+                            // show a ripple ON TOP of the moving pill —
+                            // looks much cleaner with the slide animation.
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null
+                        ) { onSelect(i) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = textColor,
+                        fontWeight = if (i == selected) FontWeight.SemiBold else FontWeight.Medium,
+                        // Italic across the board so the tabs match the
+                        // italic top-bar greeting on Home.
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }
@@ -560,18 +618,32 @@ private fun SearchField(
     value: String,
     onValueChange: (String) -> Unit
 ) {
+    // Theme-aware search bubble. On light themes we paint pure white so it
+    // stands out against the off-white background like Telegram's iOS skin
+    // does, with black text and a grey placeholder. On dark themes we keep
+    // the existing elevated surface tone so the bar reads against the chat
+    // backdrop rather than disappearing into it.
+    val cs = MaterialTheme.colorScheme
+    val isLight = cs.background.luminance() > 0.5f
+    val bubbleBg = if (isLight) androidx.compose.ui.graphics.Color.White else Ink.SurfaceHi
+    val border = if (isLight) cs.outline.copy(alpha = 0.35f) else Ink.SurfaceLine
+    val textColor = if (isLight) androidx.compose.ui.graphics.Color.Black else Ink.Cream
+    val placeholderColor = if (isLight) {
+        androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f)
+    } else Ink.Faint
+    val iconTint = if (isLight) cs.onSurfaceVariant else Ink.Muted
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(22.dp))
-            .background(Ink.SurfaceHi)
-            .border(0.5.dp, Ink.SurfaceLine, RoundedCornerShape(22.dp))
+            .background(bubbleBg)
+            .border(0.5.dp, border, RoundedCornerShape(22.dp))
             .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 Icons.Outlined.Search, null,
-                tint = Ink.Muted,
+                tint = iconTint,
                 modifier = Modifier.size(18.dp)
             )
             Spacer(Modifier.width(10.dp))
@@ -579,15 +651,15 @@ private fun SearchField(
                 if (value.isEmpty()) {
                     Text(
                         stringResource(R.string.search_chats_placeholder),
-                        color = Ink.Faint,
+                        color = placeholderColor,
                         style = MaterialTheme.typography.bodyLarge
                     )
                 }
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Ink.Cream),
-                    cursorBrush = SolidColor(Ink.Amber),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = textColor),
+                    cursorBrush = SolidColor(cs.primary),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -595,6 +667,8 @@ private fun SearchField(
         }
     }
 }
+
+/** Compact search field reused by the chat list and the new-chat screen. */
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -879,20 +953,16 @@ private fun HomePage(
                 }.getOrDefault(false)
             }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    HomeShortcutTile(
-                        icon = Icons.Outlined.BookmarkBorder,
-                        label = stringResource(R.string.home_storage_title),
-                        onClick = { if (myUserId != 0L) onChatClick(myUserId) },
-                        modifier = Modifier.weight(1f)
-                    )
-                    HomeShortcutTile(
-                        icon = Icons.Outlined.Edit,
-                        label = stringResource(R.string.home_shortcut_new_chat),
-                        onClick = onNewChat,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                // Storage shortcut spans the full width now that Nuova chat
+                // has been removed (it duplicated the FAB at the bottom of
+                // the screen — having both was just noise). Eugenio asked
+                // for the cleaner version.
+                HomeShortcutTile(
+                    icon = Icons.Outlined.BookmarkBorder,
+                    label = stringResource(R.string.home_storage_title),
+                    onClick = { if (myUserId != 0L) onChatClick(myUserId) },
+                    modifier = Modifier.fillMaxWidth()
+                )
                 if (cheipgramJoined == false) {
                     // Full-width call to action only when the user isn't a
                     // CheipGram member yet. Once they join (or while we're
