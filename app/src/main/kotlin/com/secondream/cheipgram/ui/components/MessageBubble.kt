@@ -6,6 +6,9 @@
 package com.secondream.cheipgram.ui.components
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
 
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -155,14 +158,36 @@ fun MessageBubble(
                     }
                 )
             }
-            // Separate pointerInput for long-press. Putting it on the same
-            // modifier chain as the swipe detector lets both run; the swipe
-            // engages on horizontal motion, the long-press engages on
-            // dwell-without-motion, so they never fight for the gesture.
+            // Custom long-press detector with shorter trigger time
+            // (300ms vs the default detectTapGestures 500ms) and explicit
+            // touchSlop tolerance. Many users were tapping-and-holding for
+            // ~400ms expecting the menu to appear — now it does. Also
+            // gives a haptic on trigger so the user knows it landed.
             .pointerInput("longpress-${message.id}") {
-                detectTapGestures(
-                    onLongPress = { onLongPress(message) }
-                )
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val timeoutMs = 300L
+                    val startNs = System.nanoTime()
+                    var fired = false
+                    while (!fired) {
+                        val elapsedMs = (System.nanoTime() - startNs) / 1_000_000L
+                        val remaining = timeoutMs - elapsedMs
+                        if (remaining <= 0) {
+                            haptic.performHapticFeedback(
+                                androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
+                            )
+                            onLongPress(message)
+                            fired = true
+                            break
+                        }
+                        val event = kotlinx.coroutines.withTimeoutOrNull(remaining) {
+                            awaitPointerEvent()
+                        } ?: continue
+                        val change = event.changes.find { it.id == down.id } ?: break
+                        if (!change.pressed) break
+                        if (change.positionChange().getDistance() > viewConfiguration.touchSlop) break
+                    }
+                }
             }
     ) {
         // Reply arrow indicator behind the bubble — fades in as the user
@@ -328,7 +353,7 @@ private fun MessageContent(message: TdApi.Message, onBackground: androidx.compos
             )
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = onBackground)
+                Text(c.caption.text, style = MaterialTheme.typography.bodyLarge, color = onBackground)
             }
         }
         is TdApi.MessageVideo -> {
@@ -358,7 +383,7 @@ private fun MessageContent(message: TdApi.Message, onBackground: androidx.compos
             }
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = onBackground)
+                Text(c.caption.text, style = MaterialTheme.typography.bodyLarge, color = onBackground)
             }
         }
         is TdApi.MessageAnimation -> {
@@ -371,7 +396,7 @@ private fun MessageContent(message: TdApi.Message, onBackground: androidx.compos
             )
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = onBackground)
+                Text(c.caption.text, style = MaterialTheme.typography.bodyLarge, color = onBackground)
             }
         }
         is TdApi.MessageDocument -> {
@@ -395,18 +420,15 @@ private fun MessageContent(message: TdApi.Message, onBackground: androidx.compos
             }
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyMedium, color = onBackground)
+                Text(c.caption.text, style = MaterialTheme.typography.bodyLarge, color = onBackground)
             }
         }
         is TdApi.MessageVoiceNote -> {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.GraphicEq, null, tint = Ink.Amber, modifier = Modifier.size(28.dp))
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text(stringResource(R.string.media_voice_note), style = MaterialTheme.typography.titleSmall, color = onBackground)
-                    Text("${c.voiceNote.duration}s", style = MaterialTheme.typography.labelSmall, color = onBackground.copy(alpha = 0.6f))
-                }
-            }
+            VoiceNotePlayer(
+                voiceNote = c.voiceNote,
+                accent = MaterialTheme.colorScheme.primary,
+                onBackground = onBackground
+            )
         }
         is TdApi.MessageAudio -> {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -452,35 +474,35 @@ private fun MessageContent(message: TdApi.Message, onBackground: androidx.compos
         }
         is TdApi.MessageContactRegistered -> Text(
             stringResource(R.string.service_contact_joined),
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = onBackground.copy(alpha = 0.7f)
         )
         is TdApi.MessageChatJoinByLink, is TdApi.MessageChatAddMembers -> Text(
             stringResource(R.string.service_chat_join),
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = onBackground.copy(alpha = 0.7f)
         )
         is TdApi.MessageChatDeleteMember -> Text(
             stringResource(R.string.service_chat_leave),
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = onBackground.copy(alpha = 0.7f)
         )
         is TdApi.MessageChatChangePhoto -> Text(
             stringResource(R.string.service_chat_photo_changed),
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = onBackground.copy(alpha = 0.7f)
         )
         is TdApi.MessageChatChangeTitle -> Text(
             stringResource(R.string.service_chat_title_changed),
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = onBackground.copy(alpha = 0.7f)
         )
         is TdApi.MessagePinMessage -> Text(
             stringResource(R.string.service_pinned_message),
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = onBackground.copy(alpha = 0.7f)
         )
-        else -> Text(stringResource(R.string.media_unsupported), style = MaterialTheme.typography.bodySmall, color = onBackground.copy(alpha = 0.6f))
+        else -> Text(stringResource(R.string.media_unsupported), style = MaterialTheme.typography.bodyLarge, color = onBackground.copy(alpha = 0.6f))
     }
 }
 
@@ -663,10 +685,28 @@ private fun FormattedTextRendering(
             annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let {
                 runCatching {
                     val raw = if (it.item.startsWith("http", ignoreCase = true)) it.item else "https://${it.item}"
-                    ctx.startActivity(
-                        android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(raw))
-                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
+                    val uri = android.net.Uri.parse(raw)
+                    val host = uri.host?.lowercase().orEmpty()
+                    val isTelegramLink = host == "t.me" || host == "telegram.me" || host == "telegram.dog"
+                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    // For t.me / telegram.me / telegram.dog links we force
+                    // the intent to resolve inside CheipGram by setting the
+                    // package — MainActivity's handleTmeDeeplink then opens
+                    // the chat natively instead of bouncing to the system
+                    // chooser (which would offer Telegram nativo + browser).
+                    if (isTelegramLink) {
+                        intent.setPackage(ctx.packageName)
+                    }
+                    runCatching { ctx.startActivity(intent) }.recoverCatching {
+                        // Fallback: if for any reason our own activity refused
+                        // (e.g. unusual t.me sub-path), drop setPackage and
+                        // let the system chooser handle it instead of failing.
+                        ctx.startActivity(
+                            android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
                 }
                 return@ClickableText
             }
@@ -832,10 +872,16 @@ private fun ReactionStrip(
                     .combinedClickable(
                         enabled = emoji != null,
                         onClick = {
-                            // Single tap toggles your own reaction: if you
-                            // already reacted with this emoji it's removed,
-                            // otherwise added. Matches the in-app Telegram
-                            // behavior on the message-bubble chips.
+                            // Single tap opens the "who reacted" sheet —
+                            // the user explicitly asked for this gesture
+                            // mapping. They expect to read who reacted
+                            // first, then optionally remove their own.
+                            showViewers = true
+                        },
+                        onLongClick = {
+                            // Long-press toggles your own reaction (the
+                            // quick action). If you already reacted with
+                            // this emoji it's removed, otherwise added.
                             if (emoji != null) {
                                 scope.launch {
                                     runCatching {
@@ -846,14 +892,6 @@ private fun ReactionStrip(
                                     }
                                 }
                             }
-                        },
-                        onLongClick = {
-                            // Long-press: show the "who reacted" sheet so
-                            // the user can see who added each emoji. We
-                            // route a single sheet at the strip level
-                            // rather than per-chip because the sheet covers
-                            // every reaction on the message anyway.
-                            showViewers = true
                         }
                     )
                     .padding(horizontal = 8.dp, vertical = 3.dp),

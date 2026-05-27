@@ -68,7 +68,8 @@ class MainActivity : ComponentActivity() {
                 themeMode = appearance.themeMode,
                 accentColor = appearance.accentColor,
                 customAccentArgb = appearance.customAccentArgb,
-                customBgArgb = appearance.customBgArgb
+                customBgArgb = appearance.customBgArgb,
+                textScale = appearance.textScale
             ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),

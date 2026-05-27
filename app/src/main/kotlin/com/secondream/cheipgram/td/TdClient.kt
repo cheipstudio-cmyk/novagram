@@ -749,6 +749,35 @@ object TdClient {
         send(TdApi.GetMessageAddedReactions(chatId, messageId, null, "", 100))
 
     /**
+     * Most-recently-pinned message in a chat. Returns null if nothing is
+     * pinned or TDLib hasn't synced the chat yet. Used to drive the
+     * "pinned" banner at the top of ChatScreen.
+     */
+    suspend fun getChatPinnedMessage(chatId: Long): TdApi.Message? =
+        runCatching { send(TdApi.GetChatPinnedMessage(chatId)) }.getOrNull()
+
+    /**
+     * All pinned messages in a chat (channels can have many). We cap at
+     * 20 because the banner only cycles through visible ones; pulling
+     * everything would slow first-render.
+     */
+    suspend fun searchPinnedMessages(chatId: Long): List<TdApi.Message> {
+        val res = runCatching {
+            send(TdApi.SearchChatMessages(
+                chatId,
+                null,                                  // topic_id
+                "",                                    // query
+                null,                                  // sender_id
+                0L,                                    // from_message_id (0 = newest)
+                0,                                     // offset
+                20,                                    // limit
+                TdApi.SearchMessagesFilterPinned()
+            ))
+        }.getOrNull() ?: return emptyList()
+        return res.messages.toList()
+    }
+
+    /**
      * Resolve public chats by username/title query. Returns the cached Chat
      * objects so callers can read title, type, photo, etc. Used by the
      * home-page "Join CheipGram" card to detect membership.

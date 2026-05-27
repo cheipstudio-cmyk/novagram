@@ -229,4 +229,10 @@
     <string name="reactions_who_title">Reaktionen</string>
     <string name="home_shortcut_search">Suchen</string>
     <string name="home_shortcut_new_chat">Neuer Chat</string>
+    <string name="settings_section_text_size">Schriftgröße</string>
+    <string name="settings_text_size_sample">Vorschau</string>
+    <string name="chat_pinned_label">Angeheftete Nachricht</string>
+    <string name="home_period_morning">Guten Morgen</string>
+    <string name="home_period_afternoon">Guten Tag</string>
+    <string name="home_period_evening">Guten Abend</string>
 </resources>

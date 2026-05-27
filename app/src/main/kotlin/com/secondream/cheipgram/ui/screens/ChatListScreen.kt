@@ -747,16 +747,35 @@ private fun HomePage(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            // Greeting headline. Italic + heavyweight to match the
-            // CheipGram top bar typography.
-            Text(
-                text = firstName?.let { stringResource(R.string.home_greeting, it) }
-                    ?: stringResource(R.string.home_greeting_anon),
-                style = MaterialTheme.typography.headlineMedium,
-                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onBackground
+            // Time-of-day aware greeting. The italic title carries the
+            // user's first name; the smaller line below switches between
+            // Buongiorno / Buon pomeriggio / Buonasera so the home page
+            // feels alive instead of static.
+            val hour = remember {
+                java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            }
+            val sub = stringResource(
+                when (hour) {
+                    in 5..11 -> R.string.home_period_morning
+                    in 12..17 -> R.string.home_period_afternoon
+                    else -> R.string.home_period_evening
+                }
             )
+            Column {
+                Text(
+                    text = firstName?.let { stringResource(R.string.home_greeting, it) }
+                        ?: stringResource(R.string.home_greeting_anon),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    sub,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         item {
             // Summary card with two stat tiles side-by-side.
@@ -796,173 +815,68 @@ private fun HomePage(
                 }
             }
         }
-        // "Il tuo storage" — direct shortcut to Saved Messages, which in
-        // Telegram is just the private chat where chatId == your own
-        // userId. Useful spot on the home screen since lots of people use
-        // it as their personal scratchpad / file storage.
-        item {
-            if (myUserId != 0L) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .border(
-                            width = 0.5.dp,
-                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                            shape = RoundedCornerShape(20.dp)
-                        )
-                        .clickable { onChatClick(myUserId) }
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Outlined.BookmarkBorder,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            stringResource(R.string.home_storage_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            stringResource(R.string.home_storage_subtitle),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Icon(
-                        Icons.AutoMirrored.Outlined.ArrowForward,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-        }
-
-        // Official CheipGram group invite. We poke TDLib to see if the
-        // user is already a member of @cheipgram — if so the card hides
-        // itself and never re-appears in this session.
+        // Quick actions grid. Four uniform tiles in a 2x2 layout — Storage,
+        // Cerca, Nuova chat, and either "Unisciti a CheipGram" (if the
+        // user isn't a member yet) or "Inoltrati" (Saved-Messages alias)
+        // as a fallback fourth slot. Replacing the old mix of full-width
+        // cards + ad-hoc 2-tile rows gives the home page a clean rhythm.
         item {
             val ctx = LocalContext.current
-            var joined by remember { mutableStateOf<Boolean?>(null) }
+            var cheipgramJoined by remember { mutableStateOf<Boolean?>(null) }
             LaunchedEffect(allChats.size) {
-                if (joined == true) return@LaunchedEffect
-                joined = runCatching {
-                    // searchPublicChats already resolves the @cheipgram
-                    // username to a chat, so we just look at the title to
-                    // pick our own group out of any look-alike results.
+                if (cheipgramJoined == true) return@LaunchedEffect
+                cheipgramJoined = runCatching {
                     val res = TdClient.searchPublicChats("cheipgram")
                     val match = res.firstOrNull { c ->
                         c.title.equals("CheipGram", ignoreCase = true)
                     } ?: return@runCatching false
-                    // We're "joined" if the chat is already in the user's
-                    // chat list (i.e. it appeared in allChats from refreshChats).
                     allChats.any { it.id == match.id }
                 }.getOrDefault(false)
             }
-            if (joined == false) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(
-                            androidx.compose.ui.graphics.Brush.linearGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.primary,
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HomeShortcutTile(
+                        icon = Icons.Outlined.BookmarkBorder,
+                        label = stringResource(R.string.home_storage_title),
+                        onClick = { if (myUserId != 0L) onChatClick(myUserId) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    HomeShortcutTile(
+                        icon = Icons.Outlined.Search,
+                        label = stringResource(R.string.home_shortcut_search),
+                        onClick = onOpenSearch,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HomeShortcutTile(
+                        icon = Icons.Outlined.Edit,
+                        label = stringResource(R.string.home_shortcut_new_chat),
+                        onClick = onNewChat,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (cheipgramJoined == false) {
+                        HomeShortcutTile(
+                            icon = Icons.Outlined.Campaign,
+                            label = stringResource(R.string.home_card_join_title),
+                            onClick = {
+                                val intent = android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse("https://t.me/cheipgram")
                                 )
-                            )
+                                runCatching { ctx.startActivity(intent) }
+                            },
+                            modifier = Modifier.weight(1f),
+                            accentBackground = true
                         )
-                        .clickable {
-                            val intent = android.content.Intent(
-                                android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://t.me/cheipgram")
-                            )
-                            runCatching { ctx.startActivity(intent) }
-                        }
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Outlined.Campaign,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            stringResource(R.string.home_card_join_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            stringResource(R.string.home_card_join_subtitle),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.2f))
-                            .padding(horizontal = 14.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            stringResource(R.string.home_card_join_action),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                    } else {
+                        // User is already in the CheipGram group — fill the
+                        // 4th slot with an invisible Spacer so the grid
+                        // stays a clean 2x2 instead of becoming a lonely
+                        // single-tile row.
+                        Spacer(modifier = Modifier.weight(1f))
                     }
                 }
-            }
-        }
-        // Two small shortcut tiles side by side: global search + new chat.
-        // Visually distinct from the bigger "Storage" / "CheipGram" cards
-        // above so the home page doesn't feel like one flat list of
-        // identical-looking rows.
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                HomeShortcutTile(
-                    icon = Icons.Outlined.Search,
-                    label = stringResource(R.string.home_shortcut_search),
-                    onClick = onOpenSearch,
-                    modifier = Modifier.weight(1f)
-                )
-                HomeShortcutTile(
-                    icon = Icons.Outlined.Edit,
-                    label = stringResource(R.string.home_shortcut_new_chat),
-                    onClick = onNewChat,
-                    modifier = Modifier.weight(1f)
-                )
             }
         }
         item {
@@ -1097,17 +1011,36 @@ private fun HomeShortcutTile(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * When true, the tile uses the accent color as background (with
+     * onPrimary text + icon) instead of the neutral surface look. Used
+     * for the "Unisciti a CheipGram" call-to-action so it stands out
+     * inside the otherwise uniform grid without breaking the rhythm.
+     */
+    accentBackground: Boolean = false
 ) {
+    val bg = if (accentBackground) MaterialTheme.colorScheme.primary
+             else MaterialTheme.colorScheme.surface
+    val fg = if (accentBackground) MaterialTheme.colorScheme.onPrimary
+             else MaterialTheme.colorScheme.onSurface
+    val iconBg = if (accentBackground)
+        androidx.compose.ui.graphics.Color.White.copy(alpha = 0.18f)
+        else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+    val iconTint = if (accentBackground) MaterialTheme.colorScheme.onPrimary
+                   else MaterialTheme.colorScheme.primary
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(
-                width = 0.5.dp,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                shape = RoundedCornerShape(18.dp)
-            )
+            .background(bg)
+            .let {
+                if (accentBackground) it
+                else it.border(
+                    width = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(18.dp)
+                )
+            }
             .clickable(onClick = onClick)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1116,20 +1049,21 @@ private fun HomeShortcutTile(
             modifier = Modifier
                 .size(36.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                .background(iconBg),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = iconTint,
                 modifier = Modifier.size(20.dp)
             )
         }
         Text(
             label,
             style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.SemiBold,
+            color = fg
         )
     }
 }

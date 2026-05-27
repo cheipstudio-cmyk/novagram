@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.NotificationsOff
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.automirrored.outlined.Forward
 import androidx.compose.material.icons.outlined.AlternateEmail
 import androidx.compose.material.icons.outlined.Info
@@ -526,6 +527,80 @@ fun ChatScreen(
                 .padding(padding)
                 .imePadding()
         ) {
+            // Pinned message banner. Reads the most-recently-pinned message
+            // from TDLib on chat open and re-fetches when the chat list
+            // updates (a new pin fires UpdateChatLastMessage / UpdateNewMessage
+            // which bumps chatUpdates → recompose). Tapping the banner
+            // scrolls the LazyColumn to the pinned message's index.
+            var pinned by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
+            LaunchedEffect(chatId) {
+                pinned = TdClient.getChatPinnedMessage(chatId)
+            }
+            LaunchedEffect(chatId) {
+                TdClient.chatUpdates.collect { id ->
+                    if (id == chatId) pinned = TdClient.getChatPinnedMessage(chatId)
+                }
+            }
+            pinned?.let { pin ->
+                val preview = remember(pin.id) {
+                    when (val c = pin.content) {
+                        is TdApi.MessageText -> c.text.text
+                        is TdApi.MessagePhoto -> c.caption.text.ifBlank { "📷 Foto" }
+                        is TdApi.MessageVideo -> c.caption.text.ifBlank { "🎬 Video" }
+                        is TdApi.MessageDocument -> c.caption.text.ifBlank { c.document.fileName.ifBlank { "📄 File" } }
+                        is TdApi.MessageVoiceNote -> "🎤 Vocale"
+                        is TdApi.MessageSticker -> c.sticker.emoji.ifBlank { "🖼" }
+                        else -> ""
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .clickable {
+                            // Jump the lazy list to the pinned message if
+                            // it's already in our in-memory window.
+                            val idx = messages.indexOfFirst { it.id == pin.id }
+                            if (idx >= 0) {
+                                scope.launch { listState.animateScrollToItem(idx) }
+                            }
+                        }
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(3.dp)
+                            .height(36.dp)
+                            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.chat_pinned_label),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            preview,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Icon(
+                        Icons.Outlined.PushPin,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                androidx.compose.material3.HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                )
+            }
             LazyColumn(
                 state = listState,
                 reverseLayout = true,
@@ -1185,10 +1260,13 @@ private fun InputBar(
                                 .background(MaterialTheme.colorScheme.primary),
                             contentAlignment = Alignment.Center
                         ) {
+                            // Plain paper-plane vector — single-color so it
+                            // tints cleanly with the accent's onPrimary.
+                            // (We used to render ic_cheipgram_logo here, but
+                            // tinting a multi-color PNG flattens it to a
+                            // solid silhouette and looked terrible.)
                             Icon(
-                                painter = androidx.compose.ui.res.painterResource(
-                                    R.drawable.ic_cheipgram_logo
-                                ),
+                                Icons.AutoMirrored.Outlined.Send,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onPrimary,
                                 modifier = Modifier.size(20.dp)
@@ -1209,7 +1287,10 @@ private fun MicButton(recording: Boolean, onDown: () -> Unit, onUp: (Boolean) ->
         modifier = Modifier
             .size(48.dp)
             .clip(CircleShape)
-            .background(if (recording) Ink.Error else Ink.Amber)
+            .background(
+                if (recording) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.primary
+            )
             .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = {
@@ -1221,7 +1302,12 @@ private fun MicButton(recording: Boolean, onDown: () -> Unit, onUp: (Boolean) ->
             },
         contentAlignment = Alignment.Center
     ) {
-        Icon(Icons.Outlined.Mic, null, tint = if (recording) Ink.Cream else Ink.OnAmber)
+        Icon(
+            Icons.Outlined.Mic,
+            null,
+            tint = if (recording) MaterialTheme.colorScheme.onError
+                   else MaterialTheme.colorScheme.onPrimary
+        )
     }
 }
 

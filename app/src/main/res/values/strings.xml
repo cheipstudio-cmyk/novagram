@@ -244,4 +244,10 @@
     <string name="reactions_who_title">Reazioni</string>
     <string name="home_shortcut_search">Cerca</string>
     <string name="home_shortcut_new_chat">Nuova chat</string>
+    <string name="settings_section_text_size">Dimensione testo</string>
+    <string name="settings_text_size_sample">Esempio anteprima</string>
+    <string name="chat_pinned_label">Messaggio fissato</string>
+    <string name="home_period_morning">Buongiorno</string>
+    <string name="home_period_afternoon">Buon pomeriggio</string>
+    <string name="home_period_evening">Buonasera</string>
 </resources>

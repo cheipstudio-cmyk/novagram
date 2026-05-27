@@ -23,6 +23,12 @@ fun CheipGramTheme(
     accentColor: AccentColor = AccentColor.Amber,
     customAccentArgb: Int? = null,
     customBgArgb: Int? = null,
+    /**
+     * Global text size multiplier (1.0 = default). Applied by re-emitting
+     * every Typography role with its fontSize multiplied; the value comes
+     * from the user's slider in Settings.
+     */
+    textScale: Float = 1.0f,
     content: @Composable () -> Unit
 ) {
     val isDark = when (themeMode) {
@@ -86,9 +92,32 @@ fun CheipGramTheme(
             controller.isAppearanceLightNavigationBars = effectiveIsLight
         }
     }
+    // Re-emit AppTypography with every TextStyle's fontSize multiplied by
+    // textScale. We do this once at theme level so every Text in the app
+    // honors the user's preference, no per-component code change needed.
+    val scaledTypography = remember(textScale) {
+        if (textScale == 1.0f) AppTypography
+        else AppTypography.copy(
+            displayLarge = AppTypography.displayLarge.copy(fontSize = AppTypography.displayLarge.fontSize * textScale),
+            displayMedium = AppTypography.displayMedium.copy(fontSize = AppTypography.displayMedium.fontSize * textScale),
+            displaySmall = AppTypography.displaySmall.copy(fontSize = AppTypography.displaySmall.fontSize * textScale),
+            headlineLarge = AppTypography.headlineLarge.copy(fontSize = AppTypography.headlineLarge.fontSize * textScale),
+            headlineMedium = AppTypography.headlineMedium.copy(fontSize = AppTypography.headlineMedium.fontSize * textScale),
+            headlineSmall = AppTypography.headlineSmall.copy(fontSize = AppTypography.headlineSmall.fontSize * textScale),
+            titleLarge = AppTypography.titleLarge.copy(fontSize = AppTypography.titleLarge.fontSize * textScale),
+            titleMedium = AppTypography.titleMedium.copy(fontSize = AppTypography.titleMedium.fontSize * textScale),
+            titleSmall = AppTypography.titleSmall.copy(fontSize = AppTypography.titleSmall.fontSize * textScale),
+            bodyLarge = AppTypography.bodyLarge.copy(fontSize = AppTypography.bodyLarge.fontSize * textScale),
+            bodyMedium = AppTypography.bodyMedium.copy(fontSize = AppTypography.bodyMedium.fontSize * textScale),
+            bodySmall = AppTypography.bodySmall.copy(fontSize = AppTypography.bodySmall.fontSize * textScale),
+            labelLarge = AppTypography.labelLarge.copy(fontSize = AppTypography.labelLarge.fontSize * textScale),
+            labelMedium = AppTypography.labelMedium.copy(fontSize = AppTypography.labelMedium.fontSize * textScale),
+            labelSmall = AppTypography.labelSmall.copy(fontSize = AppTypography.labelSmall.fontSize * textScale)
+        )
+    }
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = AppTypography,
+        typography = scaledTypography,
         content = content
     )
 }

@@ -48,6 +48,12 @@ data class AppearancePrefs(
     /** Optional ARGB override for the message-input bar background. */
     val customInputBarArgb: Int? = null,
     /**
+     * Global text scale multiplier applied to MaterialTheme typography
+     * before it reaches any composable. 1.0 = system default, range 0.85
+     * (smaller) to 1.35 (larger). Saved per-user, never sent to TDLib.
+     */
+    val textScale: Float = 1.0f,
+    /**
      * Id of the saved theme currently applied (so the row gets a checkmark in
      * Settings). null = no saved theme active, the user is on a base theme
      * mode (System/Light/Dark/Amoled) or freely tweaked customs.
@@ -91,6 +97,7 @@ object AppSettings {
     private val CUSTOM_INPUT_BAR = intPreferencesKey("custom_input_bar_argb")
     private val ACTIVE_SAVED_THEME_ID = stringPreferencesKey("active_saved_theme_id")
     private val SAVED_THEMES_JSON = stringPreferencesKey("saved_themes_json")
+    private val TEXT_SCALE = androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -128,7 +135,8 @@ object AppSettings {
                 customOthersBubbleArgb = prefs[CUSTOM_OTHERS_BUBBLE],
                 customBgArgb = prefs[CUSTOM_BG],
                 customInputBarArgb = prefs[CUSTOM_INPUT_BAR],
-                activeSavedThemeId = prefs[ACTIVE_SAVED_THEME_ID]
+                activeSavedThemeId = prefs[ACTIVE_SAVED_THEME_ID],
+                textScale = (prefs[TEXT_SCALE] ?: 1.0f).coerceIn(0.85f, 1.35f)
             )
         }
 
@@ -259,6 +267,16 @@ object AppSettings {
         appContext.dataStore.edit {
             if (argb == null) it.remove(CUSTOM_INPUT_BAR) else it[CUSTOM_INPUT_BAR] = argb
         }
+    }
+
+    /**
+     * Global text scale multiplier. Clamped to [0.85, 1.35] before writing
+     * so a malformed input can't make the UI unreadable. Applied at the
+     * theme level so every Text/Material composable honors it.
+     */
+    suspend fun setTextScale(scale: Float) {
+        val clamped = scale.coerceIn(0.85f, 1.35f)
+        appContext.dataStore.edit { it[TEXT_SCALE] = clamped }
     }
 
     suspend fun setThemeMode(mode: ThemeMode) {

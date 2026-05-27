@@ -130,6 +130,43 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(20.dp))
 
+            // TEXT SIZE — global multiplier for every Text in the app.
+            SectionHeader(stringResource(R.string.settings_section_text_size))
+            SectionCard {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            stringResource(R.string.settings_text_size_sample),
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "${(appearance.textScale * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.Slider(
+                        value = appearance.textScale,
+                        // The slider commits the new value to DataStore on
+                        // every drag step. DataStore writes are cheap and
+                        // the Theme recomposes immediately, so the preview
+                        // line above updates as the user scrubs.
+                        onValueChange = { v ->
+                            scope.launch { AppSettings.setTextScale(v) }
+                        },
+                        valueRange = 0.85f..1.35f,
+                        steps = 9
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
             // LANGUAGE
             SectionHeader(stringResource(R.string.settings_section_language))
             SectionCard {
