@@ -1255,14 +1255,25 @@ private fun MessageActionsSheet(
 ) {
     val state = rememberModalBottomSheetState()
     val cachedChat = TdClient.getCachedChat(message.chatId)
-    // "Delete for everyone" is allowed for: outgoing messages (any chat),
-    // any message in a 1:1 private chat, or any message authored by
-    // someone else when the caller is an admin in a group. Telegram still
-    // enforces server-side window limits and revoke rights — runCatching
-    // wrapping in the handler swallows the rejection if it fires.
-    val canRevoke = message.isOutgoing ||
-        cachedChat?.type is TdApi.ChatTypePrivate ||
-        isAdmin
+    // Authoritative "delete for everyone" flag from TDLib's MessageProperties.
+    // Telegram applies all server-side rules (time window, admin's
+    // canDeleteMessages permission, basic vs supergroup differences) and
+    // gives us a single boolean. Fetched on sheet open so we don't pay
+    // the round trip until the user actually long-pressed.
+    var canRevokeFromServer by remember(message.id) { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(message.id) {
+        canRevokeFromServer = runCatching {
+            TdClient.getMessageProperties(message.chatId, message.id).canBeDeletedForAllUsers
+        }.getOrNull()
+    }
+    // While the round trip is in flight we fall back to the conservative
+    // heuristic (outgoing || private || isAdmin) so the button is shown
+    // immediately rather than popping in late.
+    val canRevoke = canRevokeFromServer ?: (
+        message.isOutgoing ||
+            cachedChat?.type is TdApi.ChatTypePrivate ||
+            isAdmin
+    )
     // Admin actions are only meaningful in groups, only against someone
     // who isn't you and isn't yourself the sender. We hide the entire
     // block otherwise to keep the sheet uncluttered.

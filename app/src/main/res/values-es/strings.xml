@@ -221,4 +221,6 @@
     <string name="chat_info_bio_label">Bio</string>
     <string name="chat_info_username_label">Usuario</string>
     <string name="chat_info_phone_label">Teléfono</string>
+    <string name="home_storage_title">Tu almacenamiento</string>
+    <string name="home_storage_subtitle">Mensajes guardados para ti.</string>
 </resources>

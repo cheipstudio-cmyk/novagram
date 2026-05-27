@@ -715,6 +715,15 @@ object TdClient {
     }
 
     /**
+     * Per-message properties (can be deleted for all, can be forwarded,
+     * can be edited, etc). TDLib stopped exposing these flags on Message
+     * directly — they live on this separate object now, fetched on demand.
+     * Used by the message-actions sheet to decide which buttons to show.
+     */
+    suspend fun getMessageProperties(chatId: Long, messageId: Long): TdApi.MessageProperties =
+        send(TdApi.GetMessageProperties(chatId, messageId))
+
+    /**
      * Resolve public chats by username/title query. Returns the cached Chat
      * objects so callers can read title, type, photo, etc. Used by the
      * home-page "Join CheipGram" card to detect membership.

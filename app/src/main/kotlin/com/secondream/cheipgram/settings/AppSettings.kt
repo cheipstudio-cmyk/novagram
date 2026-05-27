@@ -193,8 +193,14 @@ object AppSettings {
             e[SAVED_THEMES_JSON] = encodeSavedThemes(updated)
             e[ACTIVE_SAVED_THEME_ID] = theme.id
             e[CUSTOM_ACCENT] = theme.accentArgb
-            e[CUSTOM_MY_BUBBLE] = theme.myBubbleArgb
-            e[CUSTOM_OTHERS_BUBBLE] = theme.othersBubbleArgb
+            // Bubble overrides only apply if the saved theme actually has
+            // them set (legacy themes from when the builder exposed those
+            // sections). New themes pass 0 here → we leave the override
+            // cleared so bubbles derive from theme + accent.
+            if (theme.myBubbleArgb != 0) e[CUSTOM_MY_BUBBLE] = theme.myBubbleArgb
+            else e.remove(CUSTOM_MY_BUBBLE)
+            if (theme.othersBubbleArgb != 0) e[CUSTOM_OTHERS_BUBBLE] = theme.othersBubbleArgb
+            else e.remove(CUSTOM_OTHERS_BUBBLE)
             e[CUSTOM_BG] = theme.bgArgb
             e[CUSTOM_INPUT_BAR] = theme.inputBarArgb
         }
@@ -224,8 +230,10 @@ object AppSettings {
                 ?: return@edit
             e[ACTIVE_SAVED_THEME_ID] = theme.id
             e[CUSTOM_ACCENT] = theme.accentArgb
-            e[CUSTOM_MY_BUBBLE] = theme.myBubbleArgb
-            e[CUSTOM_OTHERS_BUBBLE] = theme.othersBubbleArgb
+            if (theme.myBubbleArgb != 0) e[CUSTOM_MY_BUBBLE] = theme.myBubbleArgb
+            else e.remove(CUSTOM_MY_BUBBLE)
+            if (theme.othersBubbleArgb != 0) e[CUSTOM_OTHERS_BUBBLE] = theme.othersBubbleArgb
+            else e.remove(CUSTOM_OTHERS_BUBBLE)
             e[CUSTOM_BG] = theme.bgArgb
             e[CUSTOM_INPUT_BAR] = theme.inputBarArgb
         }
@@ -254,11 +262,36 @@ object AppSettings {
     }
 
     suspend fun setThemeMode(mode: ThemeMode) {
-        appContext.dataStore.edit { it[THEME_MODE] = mode.name }
+        // Selecting one of the 4 base modes is treated as "reset to the
+        // matrix": we drop every custom override and detach the active
+        // saved theme so the chosen mode × accent preset gives a clean
+        // combo. Without this clearing step, a previously-applied saved
+        // theme keeps its customAccentArgb in place and the base mode
+        // appears to do nothing — exactly the bug you hit.
+        appContext.dataStore.edit { e ->
+            e[THEME_MODE] = mode.name
+            e.remove(CUSTOM_ACCENT)
+            e.remove(CUSTOM_MY_BUBBLE)
+            e.remove(CUSTOM_OTHERS_BUBBLE)
+            e.remove(CUSTOM_BG)
+            e.remove(CUSTOM_INPUT_BAR)
+            e.remove(ACTIVE_SAVED_THEME_ID)
+        }
     }
 
     suspend fun setAccentColor(color: AccentColor) {
-        appContext.dataStore.edit { it[ACCENT_COLOR] = color.name }
+        // Same logic as setThemeMode: tapping a preset accent swatch must
+        // release the customAccentArgb override, otherwise the preset is
+        // saved but invisible (the override wins on every read).
+        appContext.dataStore.edit { e ->
+            e[ACCENT_COLOR] = color.name
+            e.remove(CUSTOM_ACCENT)
+            e.remove(CUSTOM_MY_BUBBLE)
+            e.remove(CUSTOM_OTHERS_BUBBLE)
+            e.remove(CUSTOM_BG)
+            e.remove(CUSTOM_INPUT_BAR)
+            e.remove(ACTIVE_SAVED_THEME_ID)
+        }
     }
 
     suspend fun setLanguageTag(tag: String) {

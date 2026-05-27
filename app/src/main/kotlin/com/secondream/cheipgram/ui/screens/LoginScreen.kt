@@ -69,9 +69,9 @@ fun LoginScreen() {
                     com.secondream.cheipgram.R.drawable.ic_cheipgram_logo
                 ),
                 contentDescription = null,
-                colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
-                    MaterialTheme.colorScheme.primary
-                ),
+                // No colorFilter — the PNG already has the right gold/white
+                // colors on transparent background. Tinting it solid hid
+                // all the inner detail and made it look like a plain swatch.
                 modifier = Modifier
                     .size(72.dp)
                     .padding(bottom = 12.dp)

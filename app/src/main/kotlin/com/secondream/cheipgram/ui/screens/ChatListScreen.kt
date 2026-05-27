@@ -37,6 +37,8 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.PeopleAlt
 import androidx.compose.material.icons.outlined.NotificationsOff
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.HorizontalDivider
@@ -149,9 +151,6 @@ fun ChatListScreen(
                                         R.drawable.ic_cheipgram_logo
                                     ),
                                     contentDescription = null,
-                                    colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
-                                        MaterialTheme.colorScheme.primary
-                                    ),
                                     modifier = Modifier.size(28.dp)
                                 )
                                 Spacer(Modifier.width(8.dp))
@@ -726,8 +725,16 @@ private fun HomePage(
     // the locale-neutral "Ciao" if TDLib hasn't synced or networking
     // failed — never shows an empty placeholder.
     var firstName by remember { mutableStateOf<String?>(null) }
+    // We grab our own userId at the same time we look up firstName. Saved
+    // Messages in Telegram is a private chat where chatId == userId, so
+    // tapping the storage card just opens that chat by passing the userId
+    // as a Long chatId. No separate "create" step needed — TDLib already
+    // has it in its chat list.
+    var myUserId by remember { mutableStateOf(0L) }
     LaunchedEffect(Unit) {
-        firstName = runCatching { TdClient.getMe().firstName.trim().ifBlank { null } }.getOrNull()
+        val me = runCatching { TdClient.getMe() }.getOrNull()
+        firstName = me?.firstName?.trim()?.ifBlank { null }
+        myUserId = me?.id ?: 0L
     }
 
     androidx.compose.foundation.lazy.LazyColumn(
@@ -785,6 +792,63 @@ private fun HomePage(
                 }
             }
         }
+        // "Il tuo storage" — direct shortcut to Saved Messages, which in
+        // Telegram is just the private chat where chatId == your own
+        // userId. Useful spot on the home screen since lots of people use
+        // it as their personal scratchpad / file storage.
+        item {
+            if (myUserId != 0L) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(
+                            width = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(20.dp)
+                        )
+                        .clickable { onChatClick(myUserId) }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Outlined.BookmarkBorder,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.home_storage_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            stringResource(R.string.home_storage_subtitle),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        Icons.AutoMirrored.Outlined.ArrowForward,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+
         // Official CheipGram group invite. We poke TDLib to see if the
         // user is already a member of @cheipgram — if so the card hides
         // itself and never re-appears in this session.

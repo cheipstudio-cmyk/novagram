@@ -157,23 +157,9 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(20.dp))
 
-            // MESSAGE COLORS
-            SectionHeader(stringResource(R.string.settings_section_bubbles))
-            SectionCard {
-                BubbleColorRow(
-                    label = stringResource(R.string.settings_bubble_mine),
-                    current = appearance.myBubbleColor,
-                    onPick = { c -> scope.launch { AppSettings.setMyBubbleColor(c) } }
-                )
-                Divider()
-                BubbleColorRow(
-                    label = stringResource(R.string.settings_bubble_others),
-                    current = appearance.othersBubbleColor,
-                    onPick = { c -> scope.launch { AppSettings.setOthersBubbleColor(c) } }
-                )
-            }
-
-            Spacer(Modifier.height(20.dp))
+            // (Bubble color picker removed — bubbles now derive
+            // automatically from the active theme + accent preset to keep
+            // the 4×4 combo matrix readable in every mode.)
 
             // CUSTOM THEME
             SectionHeader(stringResource(R.string.settings_section_custom_theme))
@@ -1067,10 +1053,12 @@ private fun ThemeBuilderDialog(
         0xFF0F1115.toInt(), // bg
         0xFF1A1D24.toInt()  // input bar
     )
+    // 3-slot color list. The bubble fields stay in SavedTheme for
+    // backward compatibility with old saved themes, but the builder no
+    // longer exposes them — bubbles derive from theme + accent.
+    // Indices: 0 = accent, 1 = bg, 2 = input bar.
     val initials = listOf(
         initialTheme?.accentArgb ?: defaults[0],
-        initialTheme?.myBubbleArgb ?: defaults[1],
-        initialTheme?.othersBubbleArgb ?: defaults[2],
         initialTheme?.bgArgb ?: defaults[3],
         initialTheme?.inputBarArgb ?: defaults[4]
     )
@@ -1081,8 +1069,6 @@ private fun ThemeBuilderDialog(
 
     val sectionTitles = listOf(
         stringResource(R.string.theme_section_accent),
-        stringResource(R.string.theme_section_my_bubble),
-        stringResource(R.string.theme_section_others_bubble),
         stringResource(R.string.theme_section_bg),
         stringResource(R.string.theme_section_input_bar)
     )
@@ -1151,10 +1137,16 @@ private fun ThemeBuilderDialog(
                         id = initialTheme?.id ?: java.util.UUID.randomUUID().toString(),
                         name = name.trim(),
                         accentArgb = colors[0],
-                        myBubbleArgb = colors[1],
-                        othersBubbleArgb = colors[2],
-                        bgArgb = colors[3],
-                        inputBarArgb = colors[4]
+                        // Bubble fields kept on the data class for binary
+                        // compatibility with previously-saved JSON, but no
+                        // longer editable in the builder. We pass 0 (or the
+                        // initial theme's previous value if editing) and
+                        // ignore them at render time — bubbleFillFor falls
+                        // back to derive-from-accent in that case.
+                        myBubbleArgb = initialTheme?.myBubbleArgb ?: 0,
+                        othersBubbleArgb = initialTheme?.othersBubbleArgb ?: 0,
+                        bgArgb = colors[1],
+                        inputBarArgb = colors[2]
                     )
                     onSave(theme)
                 },
