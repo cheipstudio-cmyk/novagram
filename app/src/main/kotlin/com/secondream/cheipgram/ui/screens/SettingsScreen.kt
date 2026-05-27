@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1043,4 +1044,128 @@ internal fun parseThemeJson(raw: String): com.secondream.cheipgram.settings.Appe
 private inline fun <reified E : Enum<E>> enumValueOfOrNull(name: String?): E? {
     if (name.isNullOrBlank()) return null
     return runCatching { enumValueOf<E>(name) }.getOrNull()
+}
+
+/**
+ * Theme builder dialog. 5 sections (accent, my-bubble, others-bubble, bg,
+ * input bar) selectable via pill tabs, each editing one color via the
+ * HSV ColorWheelPicker. Name field is required — saved themes can't be
+ * unnamed. On save we hand back a SavedTheme to the parent.
+ */
+@Composable
+private fun ThemeBuilderDialog(
+    initialTheme: com.secondream.cheipgram.settings.SavedTheme?,
+    onDismiss: () -> Unit,
+    onSave: (com.secondream.cheipgram.settings.SavedTheme) -> Unit
+) {
+    var section by remember { mutableStateOf(0) }
+    val defaults = listOf(
+        0xFFD9A85C.toInt(), // accent
+        0xFF2A4F7A.toInt(), // my bubble
+        0xFF374151.toInt(), // others bubble
+        0xFF0F1115.toInt(), // bg
+        0xFF1A1D24.toInt()  // input bar
+    )
+    val initials = listOf(
+        initialTheme?.accentArgb ?: defaults[0],
+        initialTheme?.myBubbleArgb ?: defaults[1],
+        initialTheme?.othersBubbleArgb ?: defaults[2],
+        initialTheme?.bgArgb ?: defaults[3],
+        initialTheme?.inputBarArgb ?: defaults[4]
+    )
+    val colors = remember {
+        mutableStateListOf<Int>().apply { initials.forEach { add(it) } }
+    }
+    var name by remember { mutableStateOf(initialTheme?.name ?: "") }
+
+    val sectionTitles = listOf(
+        stringResource(R.string.theme_section_accent),
+        stringResource(R.string.theme_section_my_bubble),
+        stringResource(R.string.theme_section_others_bubble),
+        stringResource(R.string.theme_section_bg),
+        stringResource(R.string.theme_section_input_bar)
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.theme_builder_title)) },
+        text = {
+            Column {
+                androidx.compose.material3.OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.theme_name_label)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+
+                androidx.compose.foundation.layout.FlowRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    sectionTitles.forEachIndexed { i, title ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    if (section == i) MaterialTheme.colorScheme.primary
+                                    else Color.Transparent
+                                )
+                                .clickable { section = i }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (section == i)
+                                    MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (section == i) FontWeight.SemiBold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+
+                // HSV wheel — keyed on section so it resets to the stored
+                // color when the user switches tabs.
+                key(section) {
+                    com.secondream.cheipgram.ui.components.ColorWheelPicker(
+                        initialArgb = colors[section],
+                        onColorChanged = { argb -> colors[section] = argb }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(
+                onClick = {
+                    if (name.isBlank()) return@TextButton
+                    val theme = com.secondream.cheipgram.settings.SavedTheme(
+                        id = initialTheme?.id ?: java.util.UUID.randomUUID().toString(),
+                        name = name.trim(),
+                        accentArgb = colors[0],
+                        myBubbleArgb = colors[1],
+                        othersBubbleArgb = colors[2],
+                        bgArgb = colors[3],
+                        inputBarArgb = colors[4]
+                    )
+                    onSave(theme)
+                },
+                enabled = name.isNotBlank()
+            ) {
+                Text(stringResource(R.string.theme_save))
+            }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.delete_chat_cancel))
+            }
+        }
+    )
 }

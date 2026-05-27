@@ -723,7 +723,7 @@ object TdClient {
         val ids = runCatching {
             send(TdApi.SearchPublicChats(query))
         }.getOrNull()?.chatIds ?: return emptyList()
-        return ids.mapNotNull { id ->
+        return ids.toList().mapNotNull { id ->
             chatCache[id] ?: runCatching { send(TdApi.GetChat(id)) }.getOrNull()
         }
     }

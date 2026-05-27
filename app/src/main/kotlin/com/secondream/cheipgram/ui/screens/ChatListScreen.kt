@@ -1,6 +1,11 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 
 package com.secondream.cheipgram.ui.screens
+import org.drinkless.tdlib.TdApi
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.TextButton
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -789,16 +794,15 @@ private fun HomePage(
             LaunchedEffect(allChats.size) {
                 if (joined == true) return@LaunchedEffect
                 joined = runCatching {
+                    // searchPublicChats already resolves the @cheipgram
+                    // username to a chat, so we just look at the title to
+                    // pick our own group out of any look-alike results.
                     val res = TdClient.searchPublicChats("cheipgram")
                     val match = res.firstOrNull { c ->
-                        val username = (c.type as? TdApi.ChatTypeSupergroup)?.let { st ->
-                            TdClient.getCachedUser(st.supergroupId)?.usernames?.activeUsernames?.firstOrNull()
-                        }
-                        c.title.equals("CheipGram", ignoreCase = true) ||
-                            username?.equals("cheipgram", ignoreCase = true) == true
+                        c.title.equals("CheipGram", ignoreCase = true)
                     } ?: return@runCatching false
-                    // We're "joined" if the chat shows up in the user's
-                    // own chat list with a position > 0, i.e. a member.
+                    // We're "joined" if the chat is already in the user's
+                    // chat list (i.e. it appeared in allChats from refreshChats).
                     allChats.any { it.id == match.id }
                 }.getOrDefault(false)
             }
