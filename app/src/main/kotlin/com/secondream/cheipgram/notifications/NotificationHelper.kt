@@ -16,6 +16,11 @@ import org.drinkless.tdlib.TdApi
 object NotificationHelper {
 
     const val CHANNEL_MESSAGES = "cheipgram_messages"
+    // Action + extras used by the inline-reply PendingIntent. Kept here
+    // so ReplyReceiver can read them with the same names.
+    const val ACTION_REPLY = "com.secondream.cheipgram.action.REPLY"
+    const val KEY_REPLY_TEXT = "reply_text"
+    const val EXTRA_CHAT_ID = "chat_id"
     const val CHANNEL_SERVICE = "cheipgram_service"
     const val SERVICE_NOTIF_ID = 9999
     private const val GROUP_KEY_MESSAGES = "cheipgram_messages_group"
@@ -76,6 +81,10 @@ object NotificationHelper {
      */
     fun showMessage(message: TdApi.Message) {
         if (message.isOutgoing) return
+        // If the user already has CheipGram open, don't fire a heads-up
+        // notification — they will see the message right there in the
+        // ChatScreen or in the chat list. Posting one anyway is just noise.
+        if (com.secondream.cheipgram.AppForegroundState.isInForeground) return
         val chat = TdClient.getCachedChat(message.chatId)
         // Skip muted chats (notification settings come from TDLib)
         val muted = chat?.notificationSettings?.let {
@@ -108,6 +117,31 @@ object NotificationHelper {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        // Inline-reply action: tapping "Rispondi" expands a text field inside
+        // the notification shade. The text gets delivered to ReplyReceiver
+        // via RemoteInput, which forwards it to TdClient on a background
+        // coroutine — we never reopen the app.
+        val replyLabel = appContext.getString(R.string.notification_reply_label)
+        val remoteInput = androidx.core.app.RemoteInput.Builder(KEY_REPLY_TEXT)
+            .setLabel(replyLabel)
+            .build()
+        val replyPendingIntent = PendingIntent.getBroadcast(
+            appContext,
+            message.chatId.hashCode(),
+            Intent(appContext, ReplyReceiver::class.java).apply {
+                action = ACTION_REPLY
+                putExtra(EXTRA_CHAT_ID, message.chatId)
+            },
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val replyAction = NotificationCompat.Action.Builder(
+            R.drawable.ic_stat_messenger, replyLabel, replyPendingIntent
+        )
+            .addRemoteInput(remoteInput)
+            .setAllowGeneratedReplies(true)
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+            .build()
+
         val notif = NotificationCompat.Builder(appContext, CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_stat_messenger)
             .setContentTitle(chatTitle)
@@ -119,6 +153,7 @@ object NotificationHelper {
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setGroup(GROUP_KEY_MESSAGES)
             .setContentIntent(openIntent)
+            .addAction(replyAction)
             .build()
 
         NotificationManagerCompat.from(appContext).runCatching {

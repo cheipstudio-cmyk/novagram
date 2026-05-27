@@ -147,6 +147,14 @@ object TdClient {
                 chatCache[obj.chatId]?.lastReadOutboxMessageId = obj.lastReadOutboxMessageId
                 scope.launch { _chatUpdates.emit(obj.chatId) }
             }
+            is TdApi.UpdateChatNotificationSettings -> {
+                // After setChatMuted(...) TDLib echoes the new settings back
+                // via this update. Without this handler the cached chat keeps
+                // showing the old muteFor and "Silenzia" in the action sheet
+                // never flips to "Riattiva" even though the mute actually took.
+                chatCache[obj.chatId]?.notificationSettings = obj.notificationSettings
+                refreshChats()
+            }
             is TdApi.UpdateUser -> {
                 userCache[obj.user.id] = obj.user
             }
@@ -360,37 +368,99 @@ object TdClient {
     suspend fun getChatHistory(chatId: Long, fromMessageId: Long, limit: Int): TdApi.Messages =
         send(TdApi.GetChatHistory(chatId, fromMessageId, 0, limit, false))
 
-    suspend fun sendText(chatId: Long, text: String) {
+    /**
+     * Build the InputMessageReplyTo for the SendMessage call. Returns null
+     * when there's no reply (TDLib treats null as "not a reply"). The 0/""
+     * trailing args are the checklist/poll-option fields, irrelevant for
+     * regular message replies.
+     */
+    private fun buildReplyTo(messageId: Long?): TdApi.InputMessageReplyTo? =
+        messageId?.takeIf { it != 0L }?.let {
+            TdApi.InputMessageReplyToMessage(it, null, 0, "")
+        }
+
+    suspend fun sendText(chatId: Long, text: String, replyToMessageId: Long? = null) {
         val content = TdApi.InputMessageText(TdApi.FormattedText(text, emptyArray()), null, true)
-        send(TdApi.SendMessage(chatId, null, null, null, null, content))
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
-    suspend fun sendPhoto(chatId: Long, filePath: String, caption: String? = null) {
+    suspend fun sendPhoto(chatId: Long, filePath: String, caption: String? = null, replyToMessageId: Long? = null) {
         val content = TdApi.InputMessagePhoto(
             TdApi.InputFileLocal(filePath),
             null, null, intArrayOf(), 0, 0,
             caption?.let { TdApi.FormattedText(it, emptyArray()) },
             false, null, false
         )
-        send(TdApi.SendMessage(chatId, null, null, null, null, content))
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
-    suspend fun sendDocument(chatId: Long, filePath: String, caption: String? = null) {
+    suspend fun sendDocument(chatId: Long, filePath: String, caption: String? = null, replyToMessageId: Long? = null) {
         val content = TdApi.InputMessageDocument(
             TdApi.InputFileLocal(filePath),
             null, false,
             caption?.let { TdApi.FormattedText(it, emptyArray()) }
         )
-        send(TdApi.SendMessage(chatId, null, null, null, null, content))
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
-    suspend fun sendVoiceNote(chatId: Long, filePath: String, durationSeconds: Int) {
+    suspend fun sendVoiceNote(chatId: Long, filePath: String, durationSeconds: Int, replyToMessageId: Long? = null) {
         val content = TdApi.InputMessageVoiceNote(
             TdApi.InputFileLocal(filePath),
             durationSeconds, ByteArray(0), null, null
         )
-        send(TdApi.SendMessage(chatId, null, null, null, null, content))
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
+
+    /**
+     * Send a local video with optional caption. duration/width/height left
+     * at 0 — TDLib derives them from the file during upload. We claim
+     * supportsStreaming=true so the recipient can start playback before the
+     * download finishes (TDLib will adjust based on the actual container).
+     */
+    suspend fun sendVideo(chatId: Long, filePath: String, caption: String? = null, replyToMessageId: Long? = null) {
+        val content = TdApi.InputMessageVideo(
+            TdApi.InputFileLocal(filePath),
+            null, null, 0,           // thumbnail, cover, start_timestamp
+            intArrayOf(),            // added_sticker_file_ids
+            0, 0, 0,                 // duration, width, height
+            true,                    // supports_streaming
+            caption?.let { TdApi.FormattedText(it, emptyArray()) },
+            false, null, false       // show_caption_above_media, self_destruct, has_spoiler
+        )
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
+    }
+
+    /** Recently used stickers (most-recently-sent first). */
+    suspend fun getRecentStickers(): TdApi.Stickers =
+        send(TdApi.GetRecentStickers(false))
+
+    /** Stickers the user has explicitly favourited via Telegram. */
+    suspend fun getFavoriteStickers(): TdApi.Stickers =
+        send(TdApi.GetFavoriteStickers())
+
+    /**
+     * Send a sticker the user already has in their stickers list. We pass
+     * the sticker's existing file id via InputFileId; width/height/emoji
+     * come straight from the TdApi.Sticker we picked.
+     */
+    suspend fun sendSticker(chatId: Long, sticker: TdApi.Sticker, replyToMessageId: Long? = null) {
+        val content = TdApi.InputMessageSticker(
+            TdApi.InputFileId(sticker.sticker.id),
+            null,                       // thumbnail
+            sticker.width,
+            sticker.height,
+            sticker.emoji
+        )
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
+    }
+
+    /**
+     * Fetch members of a supergroup (or non-channel megagroup). filter=null
+     * returns the most recently active members which is what we want for the
+     * @-mention picker. limit capped at 200 by TDLib.
+     */
+    suspend fun getSupergroupMembers(supergroupId: Long, limit: Int = 100): TdApi.ChatMembers =
+        send(TdApi.GetSupergroupMembers(supergroupId, null, 0, limit.coerceIn(1, 200)))
 
     suspend fun downloadFile(fileId: Int): TdApi.File {
         return send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
@@ -410,6 +480,14 @@ object TdClient {
      */
     suspend fun getUserFullInfo(userId: Long): TdApi.UserFullInfo =
         send(TdApi.GetUserFullInfo(userId))
+
+    /** Full info about a basic group, including its description and members. */
+    suspend fun getBasicGroupFullInfo(basicGroupId: Long): TdApi.BasicGroupFullInfo =
+        send(TdApi.GetBasicGroupFullInfo(basicGroupId))
+
+    /** Full info about a supergroup or channel: description, member count, link. */
+    suspend fun getSupergroupFullInfo(supergroupId: Long): TdApi.SupergroupFullInfo =
+        send(TdApi.GetSupergroupFullInfo(supergroupId))
 
     /** Update the signed-in user's first/last name (last name may be empty). */
     suspend fun setName(firstName: String, lastName: String) {

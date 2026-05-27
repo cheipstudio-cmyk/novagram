@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -32,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,7 +61,8 @@ fun MessageBubble(
     message: TdApi.Message,
     showSender: Boolean = false,
     onLongPress: (TdApi.Message) -> Unit = {},
-    onMediaTap: (String) -> Unit = {}
+    onMediaTap: (String) -> Unit = {},
+    onSwipeReply: (TdApi.Message) -> Unit = {}
 ) {
     val mine = message.isOutgoing
     val appearance by AppSettings.appearance.collectAsState(
@@ -72,10 +77,7 @@ fun MessageBubble(
         RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 4.dp, bottomEnd = 18.dp)
     }
 
-    // Resolve sender user once (groups/supergroups, non-outgoing). The user
-    // arrives in TdClient.userCache as soon as TDLib emits UpdateUser; the
-    // first call to getUser() may have to wait for the first round-trip, so
-    // we wrap it in a remember+LaunchedEffect rather than do it synchronously.
+    // Resolve sender user once (groups/supergroups, non-outgoing).
     var senderUser by remember(message.id) { mutableStateOf<TdApi.User?>(null) }
     LaunchedEffect(message.id, message.senderId) {
         if (!showSender || mine) return@LaunchedEffect
@@ -86,14 +88,81 @@ fun MessageBubble(
         }
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
-        horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
-        verticalAlignment = Alignment.Bottom
+    // Swipe-to-reply gesture. We drag the bubble horizontally; if the user
+    // releases past `triggerPx` we fire onSwipeReply and snap back. During
+    // the drag a small reply arrow fades in behind the bubble on the
+    // opposite side (the side the bubble is being pulled FROM). For
+    // outgoing messages we swipe LEFT (so the arrow appears on the right),
+    // for incoming we swipe RIGHT (arrow on the left) — matching Telegram.
+    var swipeOffset by remember(message.id) { mutableFloatStateOf(0f) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val triggerPx = with(density) { 64.dp.toPx() }
+    val maxPx = with(density) { 120.dp.toPx() }
+    val animatedOffset by animateFloatAsState(targetValue = swipeOffset, label = "swipe-reply")
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    var hapticFired by remember(message.id) { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pointerInput(message.id) {
+                androidx.compose.foundation.gestures.detectHorizontalDragGestures(
+                    onDragEnd = {
+                        if (kotlin.math.abs(swipeOffset) >= triggerPx) {
+                            onSwipeReply(message)
+                        }
+                        swipeOffset = 0f
+                        hapticFired = false
+                    },
+                    onDragCancel = {
+                        swipeOffset = 0f
+                        hapticFired = false
+                    },
+                    onHorizontalDrag = { _, delta ->
+                        // Allow drag in only one direction depending on side.
+                        val proposed = swipeOffset + delta
+                        swipeOffset = if (mine) {
+                            proposed.coerceIn(-maxPx, 0f)
+                        } else {
+                            proposed.coerceIn(0f, maxPx)
+                        }
+                        if (!hapticFired && kotlin.math.abs(swipeOffset) >= triggerPx) {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            hapticFired = true
+                        }
+                    }
+                )
+            }
     ) {
-        if (showSender && !mine) {
-            Avatar(
-                file = senderUser?.profilePhoto?.small,
+        // Reply arrow indicator behind the bubble — fades in as the user
+        // approaches the trigger threshold. Positioned on the side opposite
+        // to the swipe direction so it appears "revealed" by the gesture.
+        val revealAlpha = (kotlin.math.abs(animatedOffset) / triggerPx).coerceIn(0f, 1f)
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .padding(horizontal = 20.dp),
+            contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart
+        ) {
+            Icon(
+                Icons.AutoMirrored.Outlined.Reply,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = revealAlpha),
+                modifier = Modifier.size(22.dp)
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { androidx.compose.ui.unit.IntOffset(animatedOffset.toInt(), 0) }
+                .padding(horizontal = 12.dp, vertical = 3.dp),
+            horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.Bottom
+        ) {
+            if (showSender && !mine) {
+                Avatar(
+                    file = senderUser?.profilePhoto?.small,
                 fallbackText = senderUser?.firstName ?: "?",
                 size = 28.dp
             )
@@ -174,16 +243,17 @@ fun MessageBubble(
             }
         }
     }
+    }
 }
 
 @Composable
 private fun MessageContent(message: TdApi.Message, onBackground: androidx.compose.ui.graphics.Color) {
     when (val c = message.content) {
         is TdApi.MessageText -> {
-            Text(
-                c.text.text,
-                style = MaterialTheme.typography.bodyLarge,
-                color = onBackground
+            FormattedTextRendering(
+                formatted = c.text,
+                onBackground = onBackground,
+                linkColor = MaterialTheme.colorScheme.primary
             )
         }
         is TdApi.MessagePhoto -> {
@@ -289,7 +359,34 @@ private fun MessageContent(message: TdApi.Message, onBackground: androidx.compos
                 }
             }
         }
-        is TdApi.MessageSticker -> Text(stringResource(R.string.media_sticker), style = MaterialTheme.typography.bodyMedium, color = onBackground.copy(alpha = 0.6f))
+        is TdApi.MessageSticker -> {
+            val st = c.sticker
+            when (st.format) {
+                is TdApi.StickerFormatWebp -> {
+                    DownloadingImage(
+                        initialFile = st.sticker,
+                        placeholderIcon = { Text(st.emoji.ifBlank { "🖼" }, style = MaterialTheme.typography.headlineMedium) },
+                        placeholderLabel = ""
+                    )
+                }
+                is TdApi.StickerFormatTgs -> {
+                    AnimatedTgsSticker(
+                        file = st.sticker,
+                        fallbackEmoji = st.emoji.ifBlank { "🖼" }
+                    )
+                }
+                is TdApi.StickerFormatWebm -> {
+                    WebmVideoSticker(
+                        file = st.sticker,
+                        fallbackEmoji = st.emoji.ifBlank { "🖼" }
+                    )
+                }
+                else -> Text(
+                    st.emoji.ifBlank { "🖼" },
+                    style = MaterialTheme.typography.headlineMedium
+                )
+            }
+        }
         is TdApi.MessageContactRegistered -> Text(
             stringResource(R.string.service_contact_joined),
             style = MaterialTheme.typography.labelMedium,
@@ -401,4 +498,132 @@ private fun formatBytes(size: Long): String {
     val digit = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt().coerceAtMost(3)
     val value = size / Math.pow(1024.0, digit.toDouble())
     return String.format(Locale.US, "%.1f %s", value, units[digit])
+}
+
+/**
+ * Render a TdApi.FormattedText as a Compose Text with the right inline styles
+ * (bold/italic/underline/strikethrough) and clickable URL spans. Each entity
+ * coming from TDLib has an offset+length pointing into formatted.text; we
+ * convert those into Compose SpanStyles and String annotations, then route
+ * taps inside the URL ranges to ACTION_VIEW so OS picks a browser.
+ *
+ * Why bother with annotations: ClickableText delivers a tap by character
+ * offset, not by entity. The annotation lookup at that offset is how we map
+ * back from "user tapped here" to "user tapped this URL".
+ */
+@Composable
+private fun FormattedTextRendering(
+    formatted: TdApi.FormattedText,
+    onBackground: androidx.compose.ui.graphics.Color,
+    linkColor: androidx.compose.ui.graphics.Color
+) {
+    val text = formatted.text
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val annotated = androidx.compose.runtime.remember(text, formatted.entities) {
+        androidx.compose.ui.text.buildAnnotatedString {
+            append(text)
+            val len = text.length
+            formatted.entities?.forEach { e ->
+                val start = e.offset.coerceIn(0, len)
+                val end = (e.offset + e.length).coerceIn(start, len)
+                if (start == end) return@forEach
+                when (val type = e.type) {
+                    is TdApi.TextEntityTypeUrl -> {
+                        addStyle(
+                            androidx.compose.ui.text.SpanStyle(
+                                color = linkColor,
+                                textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+                            ),
+                            start, end
+                        )
+                        addStringAnnotation("URL", text.substring(start, end), start, end)
+                    }
+                    is TdApi.TextEntityTypeTextUrl -> {
+                        addStyle(
+                            androidx.compose.ui.text.SpanStyle(
+                                color = linkColor,
+                                textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+                            ),
+                            start, end
+                        )
+                        addStringAnnotation("URL", type.url, start, end)
+                    }
+                    is TdApi.TextEntityTypeEmailAddress -> {
+                        addStyle(
+                            androidx.compose.ui.text.SpanStyle(
+                                color = linkColor,
+                                textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+                            ),
+                            start, end
+                        )
+                        addStringAnnotation("EMAIL", text.substring(start, end), start, end)
+                    }
+                    is TdApi.TextEntityTypePhoneNumber -> {
+                        addStyle(
+                            androidx.compose.ui.text.SpanStyle(color = linkColor),
+                            start, end
+                        )
+                        addStringAnnotation("PHONE", text.substring(start, end), start, end)
+                    }
+                    is TdApi.TextEntityTypeMention -> {
+                        addStyle(
+                            androidx.compose.ui.text.SpanStyle(color = linkColor),
+                            start, end
+                        )
+                    }
+                    is TdApi.TextEntityTypeHashtag -> {
+                        addStyle(
+                            androidx.compose.ui.text.SpanStyle(color = linkColor),
+                            start, end
+                        )
+                    }
+                    is TdApi.TextEntityTypeBold ->
+                        addStyle(androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), start, end)
+                    is TdApi.TextEntityTypeItalic ->
+                        addStyle(androidx.compose.ui.text.SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic), start, end)
+                    is TdApi.TextEntityTypeUnderline ->
+                        addStyle(androidx.compose.ui.text.SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline), start, end)
+                    is TdApi.TextEntityTypeStrikethrough ->
+                        addStyle(androidx.compose.ui.text.SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough), start, end)
+                    is TdApi.TextEntityTypeCode, is TdApi.TextEntityTypePre ->
+                        addStyle(androidx.compose.ui.text.SpanStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), start, end)
+                    else -> {}
+                }
+            }
+        }
+    }
+    androidx.compose.foundation.text.ClickableText(
+        text = annotated,
+        style = MaterialTheme.typography.bodyLarge.copy(color = onBackground),
+        onClick = { offset ->
+            // Try URL, then EMAIL, then PHONE annotation at that offset.
+            annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let {
+                runCatching {
+                    val raw = if (it.item.startsWith("http", ignoreCase = true)) it.item else "https://${it.item}"
+                    ctx.startActivity(
+                        android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(raw))
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+                return@ClickableText
+            }
+            annotated.getStringAnnotations("EMAIL", offset, offset).firstOrNull()?.let {
+                runCatching {
+                    ctx.startActivity(
+                        android.content.Intent(android.content.Intent.ACTION_SENDTO, android.net.Uri.parse("mailto:${it.item}"))
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+                return@ClickableText
+            }
+            annotated.getStringAnnotations("PHONE", offset, offset).firstOrNull()?.let {
+                runCatching {
+                    ctx.startActivity(
+                        android.content.Intent(android.content.Intent.ACTION_DIAL, android.net.Uri.parse("tel:${it.item}"))
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            }
+        }
+    )
 }

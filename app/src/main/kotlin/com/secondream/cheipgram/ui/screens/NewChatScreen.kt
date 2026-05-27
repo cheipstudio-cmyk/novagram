@@ -189,40 +189,36 @@ fun NewChatScreen(
                 Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                     SearchInline(value = query, onValueChange = { query = it })
                 }
-                PrimaryTabRow(
-                    selectedTabIndex = selectedTab,
-                    containerColor = MaterialTheme.colorScheme.background
-                ) {
-                    Tab(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        text = {
-                            Text(
-                                stringResource(R.string.new_chat_tab_telegram),
-                                fontWeight = if (selectedTab == 0) FontWeight.SemiBold else FontWeight.Normal
-                            )
-                        }
-                    )
-                    Tab(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        text = {
-                            Text(
-                                stringResource(R.string.new_chat_tab_phone),
-                                fontWeight = if (selectedTab == 1) FontWeight.SemiBold else FontWeight.Normal
-                            )
-                        }
-                    )
-                }
+                PillTabs(
+                    titles = listOf(
+                        stringResource(R.string.new_chat_tab_telegram),
+                        stringResource(R.string.new_chat_tab_phone)
+                    ),
+                    selected = selectedTab,
+                    onSelect = { selectedTab = it }
+                )
             }
         }
     ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            when (selectedTab) {
+        val pagerState = androidx.compose.foundation.pager.rememberPagerState(
+            initialPage = selectedTab,
+            pageCount = { 2 }
+        )
+        LaunchedEffect(selectedTab) {
+            if (pagerState.currentPage != selectedTab && pagerState.targetPage != selectedTab) {
+                pagerState.animateScrollToPage(selectedTab)
+            }
+        }
+        LaunchedEffect(pagerState) {
+            androidx.compose.runtime.snapshotFlow { pagerState.targetPage }.collect { target ->
+                if (selectedTab != target) selectedTab = target
+            }
+        }
+        androidx.compose.foundation.pager.HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize().padding(padding)
+        ) { page ->
+            when (page) {
                 0 -> TelegramList(
                     contacts = filteredTelegram,
                     loading = loadingTelegram,
@@ -257,6 +253,45 @@ fun NewChatScreen(
                             context.startActivity(intent)
                         }
                     }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PillTabs(
+    titles: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
+    val onMuted = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        titles.forEachIndexed { i, title ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                    .background(if (selected == i) primary else androidx.compose.ui.graphics.Color.Transparent)
+                    .clickable { onSelect(i) }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected == i) onPrimary else onMuted,
+                    fontWeight = if (selected == i) FontWeight.SemiBold else FontWeight.Medium
                 )
             }
         }

@@ -21,6 +21,7 @@ import com.secondream.cheipgram.settings.ThemeMode
 fun CheipGramTheme(
     themeMode: ThemeMode = ThemeMode.Dark,
     accentColor: AccentColor = AccentColor.Amber,
+    customAccentArgb: Int? = null,
     content: @Composable () -> Unit
 ) {
     val isDark = when (themeMode) {
@@ -29,12 +30,31 @@ fun CheipGramTheme(
         ThemeMode.Dark -> true
         ThemeMode.Amoled -> true
     }
-    val accent = when (accentColor) {
+    val baseAccent = when (accentColor) {
         AccentColor.Amber -> AccentPalette.Amber
         AccentColor.Blue -> AccentPalette.Blue
         AccentColor.Green -> AccentPalette.Green
         AccentColor.Violet -> AccentPalette.Violet
     }
+    // Custom accent overrides the preset primary. We keep `primaryDeep` and
+    // `onPrimary` derived: a perceptually-darker shade for primaryDeep, and
+    // black/white for onPrimary based on the accent's luminance. This keeps
+    // the API surface small (one ARGB int) while still producing readable
+    // schemes for any color the user picks.
+    val accent = if (customAccentArgb != null) {
+        val custom = Color(customAccentArgb)
+        val luminance = custom.luminance()
+        Accent(
+            primary = custom,
+            primaryDeep = Color(
+                red = (custom.red * 0.7f).coerceIn(0f, 1f),
+                green = (custom.green * 0.7f).coerceIn(0f, 1f),
+                blue = (custom.blue * 0.7f).coerceIn(0f, 1f),
+                alpha = 1f
+            ),
+            onPrimary = if (luminance > 0.5f) Color.Black else Color.White
+        )
+    } else baseAccent
     val colorScheme = when {
         themeMode == ThemeMode.Amoled -> buildAmoledScheme(accent)
         isDark -> buildDarkScheme(accent)

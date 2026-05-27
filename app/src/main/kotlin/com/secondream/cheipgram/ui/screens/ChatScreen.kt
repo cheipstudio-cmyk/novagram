@@ -38,6 +38,10 @@ import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Mood
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -57,6 +61,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -104,6 +109,13 @@ fun ChatScreen(
     var recording by remember { mutableStateOf(false) }
     var needMicPermission by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<TdApi.Message?>(null) }
+    // Message the user has swiped on (or null if not replying). Cleared on
+    // send and on tap of the "x" in the ReplyPreview.
+    var replyTarget by remember { mutableStateOf<TdApi.Message?>(null) }
+    // Cached list of chat members for the @-mention picker. Loaded lazily
+    // the first time the user types "@" in a non-private chat.
+    var mentionMembers by remember(chatId) { mutableStateOf<List<TdApi.User>>(emptyList()) }
+    var mentionLoaded by remember(chatId) { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
     val recorder = remember { VoiceRecorder(context) }
@@ -126,18 +138,44 @@ fun ChatScreen(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) needMicPermission = false }
 
+    // Selected-but-not-yet-sent media. Once the user picks something it
+    // sits here while they type an optional caption; pressing send
+    // dispatches it together with the caption text (Telegram-style flow).
+    // We copy the URI's content into the cache up-front so the InputBar can
+    // show a thumbnail and we don't have to keep the SAF permission alive.
+    var pendingMedia by remember(chatId) { mutableStateOf<PendingMediaItem?>(null) }
+
     val photoLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         showAttach = false
-        uri?.let { handlePickedMedia(scope, context, chatId, it, asPhoto = true) }
+        uri?.let { picked ->
+            scope.launch(Dispatchers.IO) {
+                val file = FileUtils.copyUriToCache(context, picked) ?: return@launch
+                val isVideo = isVideoFile(file.name)
+                pendingMedia = PendingMediaItem(
+                    file = file,
+                    kind = if (isVideo) PendingMediaKind.Video else PendingMediaKind.Photo,
+                    displayName = file.name
+                )
+            }
+        }
     }
 
     val docLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         showAttach = false
-        uri?.let { handlePickedMedia(scope, context, chatId, it, asPhoto = false) }
+        uri?.let { picked ->
+            scope.launch(Dispatchers.IO) {
+                val file = FileUtils.copyUriToCache(context, picked) ?: return@launch
+                pendingMedia = PendingMediaItem(
+                    file = file,
+                    kind = PendingMediaKind.Document,
+                    displayName = file.name
+                )
+            }
+        }
     }
 
     DisposableEffect(chatId) {
@@ -235,6 +273,12 @@ fun ChatScreen(
             }
     }
 
+    var menuOpen by remember { mutableStateOf(false) }
+    var infoOpen by remember { mutableStateOf(false) }
+    var deleteOpen by remember { mutableStateOf(false) }
+    val cachedChatLive = TdClient.getCachedChat(chatId)
+    val isMuted = (cachedChatLive?.notificationSettings?.muteFor ?: 0) > 0
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -243,12 +287,49 @@ fun ChatScreen(
                         chatTitle,
                         style = MaterialTheme.typography.headlineSmall,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable { infoOpen = true }
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, null)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Outlined.MoreVert, null)
+                    }
+                    androidx.compose.material3.DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false }
+                    ) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = {
+                                Text(stringResource(
+                                    if (isMuted) R.string.action_unmute_chat
+                                    else R.string.action_mute_chat
+                                ))
+                            },
+                            onClick = {
+                                menuOpen = false
+                                scope.launch {
+                                    runCatching { TdClient.setChatMuted(chatId, !isMuted) }
+                                }
+                            }
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = {
+                                Text(
+                                    stringResource(R.string.action_delete_chat),
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            },
+                            onClick = {
+                                menuOpen = false
+                                deleteOpen = true
+                            }
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -270,25 +351,90 @@ fun ChatScreen(
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
                 itemsIndexed(messages, key = { _, m -> m.id }) { _, msg ->
-                    MessageBubble(
-                        message = msg,
-                        showSender = isGroupChat,
-                        onLongPress = { deleteTarget = it },
-                        onMediaTap = { path ->
-                            com.secondream.cheipgram.ui.screens.MediaViewerHolder.currentPath = path
-                            onOpenMediaViewer()
-                        }
-                    )
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier.animateItem()
+                    ) {
+                        MessageBubble(
+                            message = msg,
+                            showSender = isGroupChat,
+                            onLongPress = { deleteTarget = it },
+                            onMediaTap = { path ->
+                                com.secondream.cheipgram.ui.screens.MediaViewerHolder.currentPath = path
+                                onOpenMediaViewer()
+                            },
+                            onSwipeReply = { replyTarget = it }
+                        )
+                    }
                 }
+            }
+
+            // Mention picker (popup just above the input bar). The detection
+            // logic computes the @-query at the cursor; if null the picker
+            // is hidden. Members are loaded lazily the first time the user
+            // types '@' so we don't pay the round-trip cost on chat open.
+            val mentionQuery = remember(input) { detectMentionQuery(input) }
+            LaunchedEffect(mentionQuery, isGroupChat) {
+                if (mentionQuery != null && isGroupChat && !mentionLoaded) {
+                    mentionMembers = loadChatMembers(chatId)
+                    mentionLoaded = true
+                }
+            }
+            if (mentionQuery != null && isGroupChat && mentionMembers.isNotEmpty()) {
+                MentionPicker(
+                    query = mentionQuery,
+                    members = mentionMembers,
+                    onPick = { user ->
+                        input = applyMentionPick(input, user)
+                    }
+                )
+            }
+
+            if (replyTarget != null) {
+                ReplyPreview(
+                    message = replyTarget!!,
+                    onCancel = { replyTarget = null }
+                )
+            }
+            pendingMedia?.let { media ->
+                PendingMediaPreview(
+                    media = media,
+                    onCancel = { pendingMedia = null }
+                )
             }
             InputBar(
                 value = input,
                 onValueChange = { input = it },
+                placeholderText = if (pendingMedia != null)
+                    stringResource(R.string.media_caption_hint)
+                else null,
                 onSend = {
                     val text = input.trim()
-                    if (text.isNotEmpty()) {
+                    val media = pendingMedia
+                    val rid = replyTarget?.id
+                    if (media != null) {
+                        // Sending media with optional caption — caption may
+                        // be blank, that's fine. Always clear local state
+                        // before launching so a double-tap doesn't double-send.
                         input = ""
-                        scope.launch { runCatching { TdClient.sendText(chatId, text) } }
+                        pendingMedia = null
+                        replyTarget = null
+                        val caption = text.ifBlank { null }
+                        scope.launch(Dispatchers.IO) {
+                            runCatching {
+                                when (media.kind) {
+                                    PendingMediaKind.Photo ->
+                                        TdClient.sendPhoto(chatId, media.file.absolutePath, caption, rid)
+                                    PendingMediaKind.Video ->
+                                        TdClient.sendVideo(chatId, media.file.absolutePath, caption, rid)
+                                    PendingMediaKind.Document ->
+                                        TdClient.sendDocument(chatId, media.file.absolutePath, caption, rid)
+                                }
+                            }
+                        }
+                    } else if (text.isNotEmpty()) {
+                        input = ""
+                        replyTarget = null
+                        scope.launch { runCatching { TdClient.sendText(chatId, text, rid) } }
                     }
                 },
                 onAttach = { showAttach = true },
@@ -312,9 +458,11 @@ fun ChatScreen(
                         if (send) {
                             val res = recorder.stop()
                             if (res != null) {
+                                val rid = replyTarget?.id
+                                replyTarget = null
                                 scope.launch {
                                     runCatching {
-                                        TdClient.sendVoiceNote(chatId, res.file.absolutePath, res.durationSeconds)
+                                        TdClient.sendVoiceNote(chatId, res.file.absolutePath, res.durationSeconds, rid)
                                     }
                                 }
                             }
@@ -328,6 +476,8 @@ fun ChatScreen(
         }
     }
 
+    var showStickerPicker by remember { mutableStateOf(false) }
+
     if (showAttach) {
         AttachSheet(
             onDismiss = { showAttach = false },
@@ -338,7 +488,23 @@ fun ChatScreen(
                     )
                 )
             },
-            onPickDocument = { docLauncher.launch(arrayOf("*/*")) }
+            onPickDocument = { docLauncher.launch(arrayOf("*/*")) },
+            onPickSticker = {
+                showAttach = false
+                showStickerPicker = true
+            }
+        )
+    }
+
+    if (showStickerPicker) {
+        StickerPickerSheet(
+            onDismiss = { showStickerPicker = false },
+            onPick = { sticker ->
+                val rid = replyTarget?.id
+                showStickerPicker = false
+                replyTarget = null
+                scope.launch { runCatching { TdClient.sendSticker(chatId, sticker, rid) } }
+            }
         )
     }
 
@@ -389,12 +555,142 @@ fun ChatScreen(
             }
         )
     }
+
+    if (infoOpen) {
+        ChatInfoDialog(
+            chatId = chatId,
+            onDismiss = { infoOpen = false }
+        )
+    }
+
+    if (deleteOpen) {
+        val isPrivate = cachedChatLive?.type is TdApi.ChatTypePrivate
+        var alsoRevoke by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { deleteOpen = false },
+            title = { Text(stringResource(R.string.delete_chat_confirm_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.delete_chat_confirm_body))
+                    if (isPrivate) {
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().clickable { alsoRevoke = !alsoRevoke }
+                        ) {
+                            androidx.compose.material3.Checkbox(
+                                checked = alsoRevoke,
+                                onCheckedChange = { alsoRevoke = it }
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(stringResource(R.string.delete_chat_for_everyone))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val revoke = alsoRevoke && isPrivate
+                    deleteOpen = false
+                    scope.launch {
+                        runCatching {
+                            TdClient.deleteChatHistory(chatId, removeFromChatList = true, revoke = revoke)
+                        }
+                        onBack()
+                    }
+                }) {
+                    Text(stringResource(R.string.action_delete_chat), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteOpen = false }) {
+                    Text(stringResource(R.string.delete_chat_cancel))
+                }
+            }
+        )
+    }
 }
+
+/**
+ * Read-only info dialog shown when the user taps the chat title.
+ *
+ * Picks what to display based on the chat type:
+ *  - Private:      user name, bio (from getUserFullInfo), phone if known.
+ *  - Group/super:  title, description, member count.
+ *  - Channel:      title, description, subscriber count.
+ * Falls back to just the title if any of the *FullInfo calls fail (e.g. the
+ * user is no longer accessible). Doesn't navigate anywhere — this is a quick
+ * peek, not a profile screen, which we'll add as its own route in a later
+ * round.
+ */
+@Composable
+private fun ChatInfoDialog(chatId: Long, onDismiss: () -> Unit) {
+    val chat = remember(chatId) { TdClient.getCachedChat(chatId) }
+    val title = chat?.title ?: stringResource(R.string.chat_default_title)
+
+    var subtitle by remember(chatId) { mutableStateOf<String?>(null) }
+    var description by remember(chatId) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(chatId) {
+        val c = chat ?: return@LaunchedEffect
+        when (val t = c.type) {
+            is TdApi.ChatTypePrivate -> {
+                val user = TdClient.getCachedUser(t.userId)
+                    ?: runCatching { TdClient.getUser(t.userId) }.getOrNull()
+                subtitle = user?.usernames?.editableUsername?.let { "@$it" }
+                description = runCatching { TdClient.getUserFullInfo(t.userId).bio?.text }
+                    .getOrNull()?.takeIf { it.isNotBlank() }
+            }
+            is TdApi.ChatTypeBasicGroup -> {
+                val info = runCatching { TdClient.getBasicGroupFullInfo(t.basicGroupId) }.getOrNull()
+                subtitle = info?.members?.size?.let { "$it ${labelMembers(it)}" }
+                description = info?.description?.takeIf { it.isNotBlank() }
+            }
+            is TdApi.ChatTypeSupergroup -> {
+                val info = runCatching { TdClient.getSupergroupFullInfo(t.supergroupId) }.getOrNull()
+                subtitle = info?.memberCount?.let { "$it ${labelMembers(it, channel = t.isChannel)}" }
+                description = info?.description?.takeIf { it.isNotBlank() }
+            }
+            else -> {}
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, style = MaterialTheme.typography.titleLarge) },
+        text = {
+            Column {
+                subtitle?.let {
+                    Text(it, style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                }
+                description?.let {
+                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                }
+                if (subtitle == null && description == null) {
+                    Text(
+                        stringResource(R.string.chat_info_no_details),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_ok)) }
+        }
+    )
+}
+
+private fun labelMembers(count: Int, channel: Boolean = false): String =
+    if (channel) "iscritti" else "membri"
 
 @Composable
 private fun InputBar(
     value: String,
     onValueChange: (String) -> Unit,
+    placeholderText: String?,
     onSend: () -> Unit,
     onAttach: () -> Unit,
     onMicDown: () -> Unit,
@@ -409,19 +705,52 @@ private fun InputBar(
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
         if (recording) {
+            // Count-up timer driven by a LaunchedEffect that ticks every
+            // second while the user is holding the mic. Doesn't try to be
+            // sample-accurate — it's a UI hint, not the official duration
+            // (that's measured by VoiceRecorder via SystemClock.elapsedRealtime).
+            var elapsed by remember { mutableIntStateOf(0) }
+            LaunchedEffect(Unit) {
+                while (true) {
+                    kotlinx.coroutines.delay(1000)
+                    elapsed += 1
+                }
+            }
+            // Pulsing red dot for the live indicator.
+            val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "rec-pulse")
+                .animateFloat(
+                    initialValue = 0.5f, targetValue = 1f,
+                    animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                        animation = androidx.compose.animation.core.tween(700),
+                        repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+                    ),
+                    label = "rec-alpha"
+                )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
             ) {
                 Box(
-                    modifier = Modifier.size(10.dp).clip(CircleShape).background(Ink.Error)
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(Ink.Error.copy(alpha = pulse))
                 )
                 Spacer(Modifier.width(10.dp))
-                Text(stringResource(R.string.recording_hint),
+                Text(
+                    formatRecDuration(elapsed),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Ink.Cream,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    stringResource(R.string.recording_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = Ink.Muted,
                     modifier = Modifier.weight(1f),
-                    maxLines = 2)
+                    maxLines = 2
+                )
                 MicButton(recording = true, onDown = onMicDown, onUp = onMicUp)
             }
         } else {
@@ -441,7 +770,11 @@ private fun InputBar(
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
                     if (value.isEmpty()) {
-                        Text(stringResource(R.string.input_placeholder), color = Ink.Faint, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            placeholderText ?: stringResource(R.string.input_placeholder),
+                            color = Ink.Faint,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
                     }
                     BasicTextField(
                         value = value,
@@ -505,7 +838,8 @@ private fun MicButton(recording: Boolean, onDown: () -> Unit, onUp: (Boolean) ->
 private fun AttachSheet(
     onDismiss: () -> Unit,
     onPickPhoto: () -> Unit,
-    onPickDocument: () -> Unit
+    onPickDocument: () -> Unit,
+    onPickSticker: () -> Unit
 ) {
     val state = rememberModalBottomSheetState()
     ModalBottomSheet(
@@ -519,6 +853,8 @@ private fun AttachSheet(
             AttachOption(stringResource(R.string.attach_photo_or_video), Icons.Outlined.Image, onPickPhoto)
             Spacer(Modifier.height(4.dp))
             AttachOption(stringResource(R.string.attach_document_or_file), Icons.Outlined.Description, onPickDocument)
+            Spacer(Modifier.height(4.dp))
+            AttachOption(stringResource(R.string.attach_sticker), Icons.Outlined.Mood, onPickSticker)
             Spacer(Modifier.height(8.dp))
         }
     }
@@ -624,14 +960,15 @@ private fun handlePickedMedia(
     context: android.content.Context,
     chatId: Long,
     uri: Uri,
-    asPhoto: Boolean
+    asPhoto: Boolean,
+    replyToMessageId: Long? = null
 ) {
     scope.launch(Dispatchers.IO) {
         val file = FileUtils.copyUriToCache(context, uri) ?: return@launch
         if (asPhoto && isImage(file.name)) {
-            runCatching { TdClient.sendPhoto(chatId, file.absolutePath) }
+            runCatching { TdClient.sendPhoto(chatId, file.absolutePath, replyToMessageId = replyToMessageId) }
         } else {
-            runCatching { TdClient.sendDocument(chatId, file.absolutePath) }
+            runCatching { TdClient.sendDocument(chatId, file.absolutePath, replyToMessageId = replyToMessageId) }
         }
     }
 }
@@ -639,4 +976,313 @@ private fun handlePickedMedia(
 private fun isImage(name: String): Boolean {
     val lower = name.lowercase()
     return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp") || lower.endsWith(".heic")
+}
+
+/**
+ * Tiny banner that sits above the InputBar while the user is replying to a
+ * specific message. Tap on the X clears the reply target; sending a message
+ * with this banner visible attaches reply_to to the SendMessage call.
+ */
+@Composable
+private fun ReplyPreview(message: TdApi.Message, onCancel: () -> Unit) {
+    val preview = remember(message.id) {
+        when (val c = message.content) {
+            is TdApi.MessageText -> c.text.text.take(80)
+            is TdApi.MessagePhoto -> "📷 Foto" + (c.caption.text.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+            is TdApi.MessageVideo -> "🎬 Video"
+            is TdApi.MessageVoiceNote -> "🎤 Vocale"
+            is TdApi.MessageDocument -> "📎 ${c.document.fileName}"
+            is TdApi.MessageAnimation -> "GIF"
+            is TdApi.MessageSticker -> "Sticker"
+            else -> "Messaggio"
+        }
+    }
+    val senderName = remember(message.senderId) {
+        when (val s = message.senderId) {
+            is TdApi.MessageSenderUser -> {
+                val u = TdClient.getCachedUser(s.userId)
+                "${u?.firstName.orEmpty()} ${u?.lastName.orEmpty()}".trim().ifBlank { "Utente" }
+            }
+            is TdApi.MessageSenderChat -> TdClient.getCachedChat(s.chatId)?.title ?: "Chat"
+            else -> ""
+        }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .height(36.dp)
+                .background(MaterialTheme.colorScheme.primary)
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "Rispondi a $senderName",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                preview,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        IconButton(onClick = onCancel) {
+            Icon(
+                Icons.Outlined.Close,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Returns the @-mention query (text after the last '@' at or before the
+ * cursor) if the user is currently typing one, or null otherwise. The '@'
+ * must be at the start of the input or preceded by whitespace, and the
+ * query may not contain spaces/newlines.
+ */
+private fun detectMentionQuery(text: String): String? {
+    val atIndex = text.lastIndexOf('@')
+    if (atIndex < 0) return null
+    if (atIndex > 0 && !text[atIndex - 1].isWhitespace()) return null
+    val between = text.substring(atIndex + 1)
+    if (between.any { it.isWhitespace() }) return null
+    return between
+}
+
+/**
+ * Replace the @query at the end of the input with @username plus a trailing
+ * space, leaving everything before the @ untouched. Falls back to firstName
+ * if the user has no username.
+ */
+private fun applyMentionPick(text: String, user: TdApi.User): String {
+    val atIndex = text.lastIndexOf('@')
+    if (atIndex < 0) return text
+    val before = text.substring(0, atIndex)
+    val username = user.usernames?.editableUsername
+    val token = if (!username.isNullOrBlank()) "@$username" else "@${user.firstName.trim()}"
+    return "$before$token "
+}
+
+/**
+ * Lazily load chat members for the @-mention picker. Returns up to 100
+ * members. For BasicGroups we use FullInfo (it ships the member list
+ * directly); for Supergroups we call GetSupergroupMembers.
+ */
+private suspend fun loadChatMembers(chatId: Long): List<TdApi.User> {
+    val chat = TdClient.getCachedChat(chatId) ?: return emptyList()
+    return when (val t = chat.type) {
+        is TdApi.ChatTypeBasicGroup -> {
+            val info = runCatching { TdClient.getBasicGroupFullInfo(t.basicGroupId) }.getOrNull()
+                ?: return emptyList()
+            info.members.mapNotNull { m ->
+                val uid = (m.memberId as? TdApi.MessageSenderUser)?.userId ?: return@mapNotNull null
+                TdClient.getCachedUser(uid) ?: runCatching { TdClient.getUser(uid) }.getOrNull()
+            }
+        }
+        is TdApi.ChatTypeSupergroup -> {
+            if (t.isChannel) return emptyList()
+            val res = runCatching { TdClient.getSupergroupMembers(t.supergroupId, 100) }.getOrNull()
+                ?: return emptyList()
+            res.members.mapNotNull { m ->
+                val uid = (m.memberId as? TdApi.MessageSenderUser)?.userId ?: return@mapNotNull null
+                TdClient.getCachedUser(uid) ?: runCatching { TdClient.getUser(uid) }.getOrNull()
+            }
+        }
+        else -> emptyList()
+    }
+}
+
+/**
+ * Floating list of members matching the @-query. Appears just above the
+ * input bar. Shows up to 5 hits; tapping one substitutes the partial @query
+ * in the input with the chosen @username.
+ */
+@Composable
+private fun MentionPicker(
+    query: String,
+    members: List<TdApi.User>,
+    onPick: (TdApi.User) -> Unit
+) {
+    val filtered = remember(query, members) {
+        val q = query.lowercase()
+        members
+            .asSequence()
+            .filter { u ->
+                val full = "${u.firstName} ${u.lastName}".lowercase()
+                val uname = u.usernames?.editableUsername?.lowercase().orEmpty()
+                q.isBlank() || full.contains(q) || uname.contains(q)
+            }
+            .take(6)
+            .toList()
+    }
+    if (filtered.isEmpty()) return
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 240.dp)
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(vertical = 6.dp)
+    ) {
+        filtered.forEach { user ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPick(user) }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                com.secondream.cheipgram.ui.components.Avatar(
+                    file = user.profilePhoto?.small,
+                    fallbackText = user.firstName,
+                    size = 32.dp
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "${user.firstName} ${user.lastName}".trim(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    val uname = user.usernames?.editableUsername
+                    if (!uname.isNullOrBlank()) {
+                        Text(
+                            "@$uname",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * What kind of staged media is in the compose area. Drives both the
+ * thumbnail rendering and which TdClient.send* method to use on dispatch.
+ */
+enum class PendingMediaKind { Photo, Video, Document }
+
+/**
+ * One piece of media the user has selected but not yet sent. The file is
+ * already in our cache directory (FileUtils.copyUriToCache) so we don't
+ * need to keep the SAF URI permission alive, and the cache file gets
+ * cleaned up by the OS LRU eviction policy.
+ */
+data class PendingMediaItem(
+    val file: java.io.File,
+    val kind: PendingMediaKind,
+    val displayName: String
+)
+
+/**
+ * Sits between the reply banner and the InputBar while a piece of media is
+ * pending dispatch. Shows a thumbnail (photo/video) or a file icon, the
+ * filename, and an X to cancel. The user types the caption directly in
+ * the InputBar — InputBar swaps its placeholder when pendingMedia != null.
+ */
+@Composable
+private fun PendingMediaPreview(media: PendingMediaItem, onCancel: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            when (media.kind) {
+                PendingMediaKind.Photo -> coil.compose.AsyncImage(
+                    model = media.file,
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                PendingMediaKind.Video -> {
+                    // Video thumbnail extraction needs MediaMetadataRetriever
+                    // which is heavy; for now show a play icon overlay over
+                    // the surface so the user sees "this is a video".
+                    coil.compose.AsyncImage(
+                        model = media.file,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Icon(
+                        Icons.Outlined.PlayArrow,
+                        contentDescription = null,
+                        tint = androidx.compose.ui.graphics.Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                PendingMediaKind.Document -> Icon(
+                    Icons.Outlined.Description,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                when (media.kind) {
+                    PendingMediaKind.Photo -> stringResource(R.string.pending_media_photo)
+                    PendingMediaKind.Video -> stringResource(R.string.pending_media_video)
+                    PendingMediaKind.Document -> stringResource(R.string.pending_media_document)
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                media.displayName,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        IconButton(onClick = onCancel) {
+            Icon(
+                Icons.Outlined.Close,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+private fun isVideoFile(name: String): Boolean {
+    val n = name.lowercase()
+    return n.endsWith(".mp4") || n.endsWith(".mov") || n.endsWith(".mkv") ||
+        n.endsWith(".webm") || n.endsWith(".3gp") || n.endsWith(".avi")
+}
+
+private fun formatRecDuration(seconds: Int): String {
+    val m = seconds / 60
+    val s = seconds % 60
+    return String.format(java.util.Locale.US, "%d:%02d", m, s)
 }

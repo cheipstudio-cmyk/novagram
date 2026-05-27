@@ -3,10 +3,28 @@ package com.secondream.cheipgram
 import android.app.Application
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.runBlocking
 import com.secondream.cheipgram.notifications.NotificationHelper
 import com.secondream.cheipgram.settings.AppSettings
 import com.secondream.cheipgram.td.TdClient
+
+/**
+ * Global flag indicating whether the app is currently visible to the user.
+ * NotificationHelper consults this before posting a heads-up notification:
+ * if the user already has the app open, there is no point waking the
+ * notification shade — they will see the message directly in ChatScreen or
+ * the ChatList and the notification would just create noise.
+ *
+ * Updated by App.onCreate via ProcessLifecycleOwner. Volatile because the
+ * notification path runs on a background coroutine while lifecycle callbacks
+ * run on the main thread.
+ */
+object AppForegroundState {
+    @Volatile var isInForeground: Boolean = false
+}
 
 class App : Application() {
     override fun onCreate() {
@@ -14,10 +32,6 @@ class App : Application() {
         instance = this
         AppSettings.init(this)
 
-        // Apply persisted language before any UI is shown. AppCompatDelegate
-        // remembers the choice across process restarts via its own storage,
-        // but reading it back from DataStore here keeps the source of truth
-        // single (DataStore), which is what the Settings screen edits.
         val tag = runBlocking { AppSettings.currentLanguageTag() }
         val locales = if (tag == "system") {
             LocaleListCompat.getEmptyLocaleList()
@@ -25,6 +39,16 @@ class App : Application() {
             LocaleListCompat.forLanguageTags(tag)
         }
         AppCompatDelegate.setApplicationLocales(locales)
+
+        // Foreground / background tracking. ProcessLifecycleOwner aggregates
+        // every Activity in the process: onStart fires the first time any
+        // activity becomes visible, onStop fires after the LAST activity has
+        // become invisible (with a small grace period for rotation etc.) so
+        // we don't flap on configuration changes.
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) { AppForegroundState.isInForeground = true }
+            override fun onStop(owner: LifecycleOwner) { AppForegroundState.isInForeground = false }
+        })
 
         NotificationHelper.init(this)
         TdClient.init(this)

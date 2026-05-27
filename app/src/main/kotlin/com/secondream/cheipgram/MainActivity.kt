@@ -63,7 +63,8 @@ class MainActivity : ComponentActivity() {
             val chatToOpen by pendingChatId.collectAsState()
             CheipGramTheme(
                 themeMode = appearance.themeMode,
-                accentColor = appearance.accentColor
+                accentColor = appearance.accentColor,
+                customAccentArgb = appearance.customAccentArgb
             ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),

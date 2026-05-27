@@ -23,8 +23,8 @@ android {
         applicationId = "com.secondream.cheipgram"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "0.4.6"
+        versionCode = 20
+        versionName = "0.5.0"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -108,6 +108,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
+    implementation("androidx.lifecycle:lifecycle-process:2.8.6")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
     implementation("androidx.activity:activity-compose:1.9.2")
@@ -124,6 +125,19 @@ dependencies {
     implementation("androidx.compose.ui:ui-text-google-fonts:1.7.2")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // Lottie for animated stickers in .tgs format (gzipped JSON). We gunzip
+    // the file in-memory and feed the resulting JSON string to Lottie via
+    // LottieCompositionSpec.JsonString — Telegram's TGS is just Lottie JSON
+    // wrapped in gzip with a custom file extension.
+    implementation("com.airbnb.android:lottie-compose:6.5.2")
+
+    // Media3 / ExoPlayer for WebM stickers (video-format animated stickers).
+    // We use the raw exoplayer module plus the minimal ui module just for
+    // PlayerView; the sticker view embeds PlayerView via AndroidView without
+    // any controls (useController = false, autoplay+loop+muted).
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")

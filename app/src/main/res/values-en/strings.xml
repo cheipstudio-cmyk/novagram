@@ -153,4 +153,26 @@
     <string name="login_country_code">Country code</string>
     <string name="login_country_search">Search country</string>
     <string name="login_phone_only_number">Number (without code)</string>
+    <string name="chat_info_no_details">No additional info</string>
+    <string name="media_caption_hint">Add a caption...</string>
+    <string name="pending_media_photo">Photo to send</string>
+    <string name="pending_media_video">Video to send</string>
+    <string name="pending_media_document">File to send</string>
+    <string name="notification_reply_label">Reply</string>
+    <string name="attach_sticker">Sticker</string>
+    <string name="sticker_picker_title">Stickers</string>
+    <string name="sticker_tab_favorites">Favorites</string>
+    <string name="sticker_tab_recents">Recent</string>
+    <string name="sticker_picker_empty">No stickers here</string>
+    <string name="settings_section_custom_theme">Custom theme</string>
+    <string name="theme_custom_title">Build your theme</string>
+    <string name="theme_custom_active">Custom accent active</string>
+    <string name="theme_custom_inactive">Using preset above</string>
+    <string name="theme_open_builder">Customize</string>
+    <string name="theme_reset">Reset</string>
+    <string name="theme_share">Share theme</string>
+    <string name="theme_share_chooser">Share CheipGram theme</string>
+    <string name="theme_builder_title">Accent color</string>
+    <string name="theme_preview">Preview</string>
+    <string name="theme_save">Save</string>
 </resources>

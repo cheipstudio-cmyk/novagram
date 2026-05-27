@@ -1,21 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Compact CheipGram mark, square 60x60 viewport so the asset doesn't get
-    horizontally squashed when rendered into a 1:1 container (send button,
-    profile placeholders). Composition stays inside a centred 56x44 box so
-    there is some breathing room around the edges.
+  Canonical CheipGram mark. Viewport 60x60. Same path is reused (scaled) for
+  the launcher foreground and the notification status-bar icon so all three
+  surfaces show identical artwork.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
+    android:width="60dp"
+    android:height="60dp"
     android:viewportWidth="60"
     android:viewportHeight="60">
-    <!-- C: arc opened to the right, italic-leaning -->
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M28,8 C18,8 10,16 10,30 C10,44 18,52 28,52 C32,52 36,51 39,49 L35,40 C33,41 31,42 29,42 C22,42 17,38 17,30 C17,22 22,18 29,18 C31,18 33,19 35,20 L39,11 C36,9 32,8 28,8 Z" />
-    <!-- Play triangle inside the C opening -->
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M36,18 L52,30 L36,42 Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M44,12 C36,8 28,8 22,14 C16,20 14,26 14,30 C14,34 16,40 22,46 C28,52 36,52 44,48 L40,38 C36,40 32,42 28,39 C24,36 21,34 21,30 C21,26 24,24 28,21 C32,18 36,20 40,22 Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M37,18 L52,30 L37,42 Z" />
 </vector>

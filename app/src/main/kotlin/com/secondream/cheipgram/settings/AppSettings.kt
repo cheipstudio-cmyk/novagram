@@ -35,7 +35,12 @@ data class AppearancePrefs(
     val accentColor: AccentColor = AccentColor.Amber,
     val languageTag: String = "system",
     val myBubbleColor: BubbleColor = BubbleColor.Default,
-    val othersBubbleColor: BubbleColor = BubbleColor.Default
+    val othersBubbleColor: BubbleColor = BubbleColor.Default,
+    /**
+     * Optional ARGB override that wins over `accentColor`. Set via the theme
+     * builder; null means use the preset chosen in `accentColor`.
+     */
+    val customAccentArgb: Int? = null
 )
 
 object AppSettings {
@@ -48,6 +53,7 @@ object AppSettings {
     private val LANGUAGE_TAG = stringPreferencesKey("language_tag")
     private val MY_BUBBLE = stringPreferencesKey("my_bubble_color")
     private val OTHERS_BUBBLE = stringPreferencesKey("others_bubble_color")
+    private val CUSTOM_ACCENT = intPreferencesKey("custom_accent_argb")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -79,7 +85,8 @@ object AppSettings {
                 accentColor = parseEnumOrNull<AccentColor>(prefs[ACCENT_COLOR]) ?: AccentColor.Amber,
                 languageTag = prefs[LANGUAGE_TAG] ?: "system",
                 myBubbleColor = parseEnumOrNull<BubbleColor>(prefs[MY_BUBBLE]) ?: BubbleColor.Default,
-                othersBubbleColor = parseEnumOrNull<BubbleColor>(prefs[OTHERS_BUBBLE]) ?: BubbleColor.Default
+                othersBubbleColor = parseEnumOrNull<BubbleColor>(prefs[OTHERS_BUBBLE]) ?: BubbleColor.Default,
+                customAccentArgb = prefs[CUSTOM_ACCENT]
             )
         }
 
@@ -101,6 +108,16 @@ object AppSettings {
 
     suspend fun setOthersBubbleColor(color: BubbleColor) {
         appContext.dataStore.edit { it[OTHERS_BUBBLE] = color.name }
+    }
+
+    /**
+     * Set the custom accent ARGB override, or pass null to clear it and
+     * fall back to the AccentColor preset.
+     */
+    suspend fun setCustomAccentArgb(argb: Int?) {
+        appContext.dataStore.edit {
+            if (argb == null) it.remove(CUSTOM_ACCENT) else it[CUSTOM_ACCENT] = argb
+        }
     }
 
     /**

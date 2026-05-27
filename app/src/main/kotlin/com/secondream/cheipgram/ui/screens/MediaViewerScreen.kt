@@ -7,17 +7,20 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -32,10 +35,18 @@ import coil.compose.AsyncImage
 import com.secondream.cheipgram.R
 
 /**
- * Full-screen image viewer with pinch-zoom and tap-to-dismiss. Receives the
- * local file path from MediaViewerNav.openImage(...) via a tiny in-memory
- * registry — passing a long base64 path through a NavController argument is
- * ugly and slow, so we keep the path in a top-level holder.
+ * Full-screen image viewer.
+ *
+ * Gestures:
+ *  - Pinch + drag: continuous zoom (1x–5x) and pan when zoomed.
+ *  - Double tap: toggle between 1x and 2.5x at the tap point.
+ *  - Tap: does NOT close the viewer — Eugenio wants to be able to tap
+ *    around to dismiss UI without losing the photo. Use the explicit X
+ *    button (top-left) or the system back gesture to close.
+ *
+ * The X is placed inside statusBarsPadding so it doesn't sit under the
+ * notch / status bar; the previous 16dp absolute padding made the touch
+ * target too high on most phones.
  */
 @Composable
 fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
@@ -44,13 +55,34 @@ fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
     var offsetY by remember { mutableFloatStateOf(0f) }
 
     val targetScale by animateFloatAsState(targetValue = scale, label = "viewer-scale")
+    val targetOffsetX by animateFloatAsState(targetValue = offsetX, label = "viewer-ox")
+    val targetOffsetY by animateFloatAsState(targetValue = offsetY, label = "viewer-oy")
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
             .pointerInput(Unit) {
-                detectTapGestures(onTap = { onClose() })
+                detectTapGestures(
+                    // Single tap intentionally does nothing — see kdoc above.
+                    onDoubleTap = { tapPos ->
+                        if (scale > 1.05f) {
+                            // Zoom out fully and recenter.
+                            scale = 1f
+                            offsetX = 0f
+                            offsetY = 0f
+                        } else {
+                            // Zoom to 2.5x focused on the tap location:
+                            // shift the content so the tapped point ends up
+                            // at the screen centre.
+                            scale = 2.5f
+                            val w = size.width.toFloat()
+                            val h = size.height.toFloat()
+                            offsetX = (w / 2f - tapPos.x) * (scale - 1f)
+                            offsetY = (h / 2f - tapPos.y) * (scale - 1f)
+                        }
+                    }
+                )
             }
             .pointerInput(Unit) {
                 detectTransformGestures { _, pan, zoom, _ ->
@@ -75,21 +107,28 @@ fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
                 .graphicsLayer(
                     scaleX = targetScale,
                     scaleY = targetScale,
-                    translationX = offsetX,
-                    translationY = offsetY
+                    translationX = targetOffsetX,
+                    translationY = targetOffsetY
                 )
         )
+        // Close button on a subtle dark scrim circle so it stays visible
+        // against bright photos. statusBarsPadding pushes it under the
+        // status bar/notch on edge-to-edge devices.
         IconButton(
             onClick = onClose,
+            colors = IconButtonDefaults.iconButtonColors(
+                containerColor = Color.Black.copy(alpha = 0.45f)
+            ),
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(16.dp)
+                .statusBarsPadding()
+                .padding(start = 12.dp, top = 8.dp)
         ) {
             Icon(
                 Icons.Outlined.Close,
                 contentDescription = stringResource(R.string.media_viewer_close),
                 tint = Color.White,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(24.dp)
             )
         }
     }

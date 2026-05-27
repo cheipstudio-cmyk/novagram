@@ -153,4 +153,26 @@
     <string name="login_country_code">Indicatif</string>
     <string name="login_country_search">Rechercher un pays</string>
     <string name="login_phone_only_number">Numéro (sans indicatif)</string>
+    <string name="chat_info_no_details">Aucune information supplémentaire</string>
+    <string name="media_caption_hint">Ajouter une légende...</string>
+    <string name="pending_media_photo">Photo à envoyer</string>
+    <string name="pending_media_video">Vidéo à envoyer</string>
+    <string name="pending_media_document">Fichier à envoyer</string>
+    <string name="notification_reply_label">Répondre</string>
+    <string name="attach_sticker">Sticker</string>
+    <string name="sticker_picker_title">Stickers</string>
+    <string name="sticker_tab_favorites">Favoris</string>
+    <string name="sticker_tab_recents">Récents</string>
+    <string name="sticker_picker_empty">Aucun sticker ici</string>
+    <string name="settings_section_custom_theme">Thème personnalisé</string>
+    <string name="theme_custom_title">Crée ton thème</string>
+    <string name="theme_custom_active">Accent personnalisé actif</string>
+    <string name="theme_custom_inactive">Préréglage actif</string>
+    <string name="theme_open_builder">Personnaliser</string>
+    <string name="theme_reset">Réinitialiser</string>
+    <string name="theme_share">Partager le thème</string>
+    <string name="theme_share_chooser">Partager le thème CheipGram</string>
+    <string name="theme_builder_title">Couleur d\'accent</string>
+    <string name="theme_preview">Aperçu</string>
+    <string name="theme_save">Enregistrer</string>
 </resources>

@@ -50,6 +50,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -91,7 +93,7 @@ fun ChatListScreen(
     val allChats by TdClient.chats.collectAsState()
     val scope = rememberCoroutineScope()
 
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by rememberSaveable { mutableStateOf(0) }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var chatActionTarget by remember { mutableStateOf<ChatSummary?>(null) }
@@ -204,15 +206,19 @@ fun ChatListScreen(
             initialPage = selectedTab,
             pageCount = { TAB_SPECS.size }
         )
-        // Two-way sync between the pill tabs and the pager.
+        // Tap on a pill -> animate the pager to that page.
         LaunchedEffect(selectedTab) {
-            if (pagerState.currentPage != selectedTab) {
+            if (pagerState.currentPage != selectedTab && pagerState.targetPage != selectedTab) {
                 pagerState.animateScrollToPage(selectedTab)
             }
         }
-        LaunchedEffect(pagerState.currentPage, pagerState.isScrollInProgress) {
-            if (!pagerState.isScrollInProgress && selectedTab != pagerState.currentPage) {
-                selectedTab = pagerState.currentPage
+        // Swipe gesture -> sync the pill highlight without a 200ms lag.
+        // pagerState.targetPage flips to the destination as soon as the
+        // gesture passes the threshold (well before currentPage updates),
+        // so the highlight follows the user's finger instead of trailing it.
+        LaunchedEffect(pagerState) {
+            snapshotFlow { pagerState.targetPage }.collect { target ->
+                if (selectedTab != target) selectedTab = target
             }
         }
         androidx.compose.foundation.pager.HorizontalPager(

@@ -1,22 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    CheipGram logo: italic-style C opened to the right with a play triangle
-    nested in the gap. Designed to stay legible at small sizes (it also gets
-    reused as the send-message button icon at 24-28dp). The whole composition
-    fits inside the 72×72 safe zone of the 108×108 adaptive-icon canvas so
-    the launcher will not crop it on any Android launcher shape.
+  Launcher foreground. Wraps the canonical 60x60 mark in a <group> that scales
+  it up to fit a centered 80x80 area inside the 108x108 adaptive-icon canvas,
+  so the logo sits well inside the 72x72 safe zone on circle masks and still
+  reads at squircle/square masks.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- C: open-arc shape, italic-leaning, no border -->
-    <path
-        android:fillColor="#D9A85C"
-        android:pathData="M61,32 C45,32 33,44 33,60 C33,76 45,86 61,86 C66,86 70,85 73,83 L70,73 C68,74 65,75 62,75 C53,75 47,69 47,60 C47,51 53,43 62,43 C65,43 68,44 70,45 L74,35 C70,33 66,32 61,32 Z" />
-    <!-- Play triangle sitting in the C opening -->
-    <path
-        android:fillColor="#D9A85C"
-        android:pathData="M68,50 L84,60 L68,70 Z" />
+    <group
+        android:translateX="14"
+        android:translateY="14"
+        android:scaleX="1.333"
+        android:scaleY="1.333">
+        <path android:fillColor="#FFD9A85C" android:pathData="M44,12 C36,8 28,8 22,14 C16,20 14,26 14,30 C14,34 16,40 22,46 C28,52 36,52 44,48 L40,38 C36,40 32,42 28,39 C24,36 21,34 21,30 C21,26 24,24 28,21 C32,18 36,20 40,22 Z" />
+        <path android:fillColor="#FFD9A85C" android:pathData="M37,18 L52,30 L37,42 Z" />
+    </group>
 </vector>

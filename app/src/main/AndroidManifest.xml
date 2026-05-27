@@ -45,6 +45,18 @@
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 
+        <!--
+            Inline-reply receiver. Not exported: only the system can fire
+            this via the PendingIntent we attach to message notifications.
+        -->
+        <receiver
+            android:name=".notifications.ReplyReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.secondream.cheipgram.action.REPLY" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

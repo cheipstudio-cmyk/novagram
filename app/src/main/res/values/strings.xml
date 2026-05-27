@@ -168,4 +168,26 @@
     <string name="login_country_code">Prefisso</string>
     <string name="login_country_search">Cerca paese</string>
     <string name="login_phone_only_number">Numero (senza prefisso)</string>
+    <string name="chat_info_no_details">Nessuna informazione aggiuntiva</string>
+    <string name="media_caption_hint">Aggiungi una didascalia...</string>
+    <string name="pending_media_photo">Foto da inviare</string>
+    <string name="pending_media_video">Video da inviare</string>
+    <string name="pending_media_document">File da inviare</string>
+    <string name="notification_reply_label">Rispondi</string>
+    <string name="attach_sticker">Sticker</string>
+    <string name="sticker_picker_title">Sticker</string>
+    <string name="sticker_tab_favorites">Preferiti</string>
+    <string name="sticker_tab_recents">Recenti</string>
+    <string name="sticker_picker_empty">Nessuno sticker qui</string>
+    <string name="settings_section_custom_theme">Tema personalizzato</string>
+    <string name="theme_custom_title">Crea il tuo tema</string>
+    <string name="theme_custom_active">Colore accento personalizzato attivo</string>
+    <string name="theme_custom_inactive">Usa i preset di sopra</string>
+    <string name="theme_open_builder">Personalizza</string>
+    <string name="theme_reset">Reimposta</string>
+    <string name="theme_share">Condividi tema</string>
+    <string name="theme_share_chooser">Condividi tema CheipGram</string>
+    <string name="theme_builder_title">Colore accento</string>
+    <string name="theme_preview">Anteprima</string>
+    <string name="theme_save">Salva</string>
 </resources>

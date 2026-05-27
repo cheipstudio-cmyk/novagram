@@ -44,11 +44,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.os.LocaleListCompat
 import kotlinx.coroutines.launch
 import com.secondream.cheipgram.BuildConfig
@@ -69,6 +71,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         initial = com.secondream.cheipgram.settings.AppearancePrefs()
     )
     var showReadDate by remember { mutableStateOf(true) }
+    var showThemeBuilder by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         runCatching { showReadDate = TdClient.getReadDatePrivacy() }
     }
@@ -165,6 +168,36 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(20.dp))
 
+            // CUSTOM THEME
+            SectionHeader(stringResource(R.string.settings_section_custom_theme))
+            SectionCard {
+                CustomThemeRow(
+                    customAccent = appearance.customAccentArgb,
+                    onOpenBuilder = { showThemeBuilder = true },
+                    onClearCustom = {
+                        scope.launch { AppSettings.setCustomAccentArgb(null) }
+                    },
+                    onShare = {
+                        val json = buildThemeShareJson(appearance)
+                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(android.content.Intent.EXTRA_TEXT, json)
+                            putExtra(android.content.Intent.EXTRA_SUBJECT, "CheipGram theme")
+                        }
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent.createChooser(
+                                    intent,
+                                    context.getString(R.string.theme_share_chooser)
+                                )
+                            )
+                        }
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+
             // PRIVACY
             SectionHeader(stringResource(R.string.settings_section_privacy))
             SectionCard {
@@ -205,16 +238,32 @@ fun SettingsScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(40.dp))
         }
     }
+
+    if (showThemeBuilder) {
+        ThemeBuilderDialog(
+            initialArgb = appearance.customAccentArgb,
+            onDismiss = { showThemeBuilder = false },
+            onSave = { argb ->
+                scope.launch { AppSettings.setCustomAccentArgb(argb) }
+                showThemeBuilder = false
+            },
+            onReset = {
+                scope.launch { AppSettings.setCustomAccentArgb(null) }
+                showThemeBuilder = false
+            }
+        )
+    }
 }
 
 @Composable
 private fun SectionHeader(title: String) {
     Text(
         title.uppercase(),
-        style = MaterialTheme.typography.labelMedium,
+        style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(start = 12.dp, bottom = 8.dp, top = 4.dp)
+        letterSpacing = 1.2.sp,
+        modifier = Modifier.padding(start = 16.dp, bottom = 10.dp, top = 4.dp)
     )
 }
 
@@ -223,12 +272,12 @@ private fun SectionCard(content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(MaterialTheme.colorScheme.surface)
             .border(
                 width = 0.5.dp,
-                color = MaterialTheme.colorScheme.outline,
-                shape = RoundedCornerShape(16.dp)
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                shape = RoundedCornerShape(20.dp)
             )
     ) {
         content()
@@ -576,13 +625,14 @@ private fun CreditsBlock() {
     ) {
         Text(
             stringResource(R.string.credits_built_by),
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(14.dp))
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(22.dp))
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(28.dp))
                 .background(MaterialTheme.colorScheme.primary)
                 .clickable {
                     runCatching {
@@ -593,17 +643,231 @@ private fun CreditsBlock() {
                         context.startActivity(intent)
                     }
                 }
-                .padding(horizontal = 18.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
-            Text("☕", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.width(8.dp))
+            Text("☕", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.width(10.dp))
             Text(
                 stringResource(R.string.credits_buy_coffee),
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onPrimary,
                 fontWeight = FontWeight.SemiBold
             )
         }
     }
+}
+
+/**
+ * Row inside the "Tema personalizzato" section of Settings. Shows a swatch
+ * with the active custom accent (if any) plus three actions: open the
+ * builder (sliders + preview), clear the override and go back to the
+ * preset palette, and share the current theme JSON via Intent.ACTION_SEND.
+ */
+@Composable
+private fun CustomThemeRow(
+    customAccent: Int?,
+    onOpenBuilder: () -> Unit,
+    onClearCustom: () -> Unit,
+    onShare: () -> Unit
+) {
+    Column(modifier = Modifier.padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (customAccent != null) Color(customAccent)
+                        else MaterialTheme.colorScheme.primary
+                    )
+                    .border(
+                        width = if (customAccent == null) 1.dp else 0.dp,
+                        color = MaterialTheme.colorScheme.outline,
+                        shape = CircleShape
+                    )
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.theme_custom_title),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    if (customAccent != null) stringResource(R.string.theme_custom_active)
+                    else stringResource(R.string.theme_custom_inactive),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ThemeActionButton(
+                label = stringResource(R.string.theme_open_builder),
+                onClick = onOpenBuilder,
+                modifier = Modifier.weight(1f)
+            )
+            if (customAccent != null) {
+                ThemeActionButton(
+                    label = stringResource(R.string.theme_reset),
+                    onClick = onClearCustom,
+                    modifier = Modifier.weight(1f),
+                    outline = true
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        ThemeActionButton(
+            label = stringResource(R.string.theme_share),
+            onClick = onShare,
+            modifier = Modifier.fillMaxWidth(),
+            outline = true
+        )
+    }
+}
+
+@Composable
+private fun ThemeActionButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    outline: Boolean = false
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(24.dp))
+            .then(
+                if (outline) Modifier.border(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outline,
+                    shape = RoundedCornerShape(24.dp)
+                ) else Modifier.background(MaterialTheme.colorScheme.primary)
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (outline) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onPrimary,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+/**
+ * Dialog with three sliders (R, G, B) and a live preview swatch.
+ *
+ * Why RGB sliders instead of an HSV color wheel: a color wheel needs a 2D
+ * gesture handler and is hard to make accessible at small sizes; three
+ * sliders are 60 lines of Compose, work for everyone, and give the user
+ * precise control. Initial slider positions come from initialArgb (or
+ * a neutral amber if there is no custom override yet).
+ */
+@Composable
+private fun ThemeBuilderDialog(
+    initialArgb: Int?,
+    onDismiss: () -> Unit,
+    onSave: (Int) -> Unit,
+    onReset: () -> Unit
+) {
+    val start = initialArgb ?: 0xFFD9A85C.toInt()
+    var red by remember { mutableStateOf(android.graphics.Color.red(start).toFloat()) }
+    var green by remember { mutableStateOf(android.graphics.Color.green(start).toFloat()) }
+    var blue by remember { mutableStateOf(android.graphics.Color.blue(start).toFloat()) }
+
+    val previewArgb = android.graphics.Color.argb(255, red.toInt(), green.toInt(), blue.toInt())
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.theme_builder_title)) },
+        text = {
+            Column {
+                // Preview chip — mimics a primary button at the chosen color
+                // so the user sees the effect immediately.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(previewArgb)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        stringResource(R.string.theme_preview),
+                        color = if (Color(previewArgb).luminance() > 0.5f) Color.Black else Color.White,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                ColorSlider("R", red, Color.Red) { red = it }
+                ColorSlider("G", green, Color.Green) { green = it }
+                ColorSlider("B", blue, Color.Blue) { blue = it }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = { onSave(previewArgb) }) {
+                Text(stringResource(R.string.theme_save))
+            }
+        },
+        dismissButton = {
+            Row {
+                androidx.compose.material3.TextButton(onClick = onReset) {
+                    Text(stringResource(R.string.theme_reset))
+                }
+                androidx.compose.material3.TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.delete_chat_cancel))
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun ColorSlider(label: String, value: Float, tint: Color, onChange: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = tint,
+             modifier = Modifier.width(24.dp))
+        androidx.compose.material3.Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = 0f..255f,
+            colors = androidx.compose.material3.SliderDefaults.colors(
+                thumbColor = tint, activeTrackColor = tint
+            ),
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            value.toInt().toString(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(36.dp).padding(start = 6.dp)
+        )
+    }
+}
+
+/**
+ * Serialize the user's appearance preferences to a JSON string suitable
+ * for sharing. We only ship fields that are device-portable — language
+ * tag is included so importing on another device picks up the same
+ * locale preference too.
+ *
+ * org.json is used instead of kotlinx.serialization because the schema
+ * is six lines long and pulling in a Serializable annotation just for
+ * this would be overkill.
+ */
+internal fun buildThemeShareJson(prefs: com.secondream.cheipgram.settings.AppearancePrefs): String {
+    val obj = org.json.JSONObject()
+    obj.put("cheipgram_theme_version", 1)
+    obj.put("themeMode", prefs.themeMode.name)
+    obj.put("accentColor", prefs.accentColor.name)
+    obj.put("myBubbleColor", prefs.myBubbleColor.name)
+    obj.put("othersBubbleColor", prefs.othersBubbleColor.name)
+    obj.put("languageTag", prefs.languageTag)
+    prefs.customAccentArgb?.let { obj.put("customAccentArgb", it) }
+    return obj.toString(2)
 }
