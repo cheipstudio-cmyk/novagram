@@ -267,4 +267,9 @@
     <string name="settings_archived_tab_desc">Einen vierten Tab mit archivierten Chats anzeigen</string>
     <string name="action_archive_chat">Archivieren</string>
     <string name="action_unarchive_chat">Aus Archiv</string>
+    <string name="settings_ai_status_on">Aktiv</string>
+    <string name="settings_ai_status_off">Nicht konfiguriert</string>
+    <string name="settings_ai_get_key">Schlüssel auf console.anthropic.com erstellen →</string>
+    <string name="credits_join_group">Telegram-Gruppe beitreten</string>
+    <string name="link_open_failed">Link konnte nicht geöffnet werden</string>
 </resources>

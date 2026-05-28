@@ -1079,6 +1079,15 @@ object TdClient {
         send(TdApi.JoinChatByInviteLink(link))
 
     /**
+     * Inspect an invite link without joining. Returns info including the
+     * chatId when the current user is already a member (chatId != 0), so
+     * callers can open the existing chat instead of triggering the
+     * "already participant" error from JoinChatByInviteLink.
+     */
+    suspend fun checkChatInviteLink(link: String): TdApi.ChatInviteLinkInfo =
+        send(TdApi.CheckChatInviteLink(link))
+
+    /**
      * Mute or unmute a chat. Mute is implemented as Int.MAX_VALUE seconds —
      * effectively "forever" — which matches Telegram's "Disable notifications".
      * Unmute clears `muteFor` back to zero. All other notification fields are

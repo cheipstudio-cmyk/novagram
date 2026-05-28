@@ -267,4 +267,9 @@
     <string name="settings_archived_tab_desc">Afficher un quatrième onglet avec les discussions archivées</string>
     <string name="action_archive_chat">Archiver</string>
     <string name="action_unarchive_chat">Désarchiver</string>
+    <string name="settings_ai_status_on">Actif</string>
+    <string name="settings_ai_status_off">Non configuré</string>
+    <string name="settings_ai_get_key">Créez une clé sur console.anthropic.com →</string>
+    <string name="credits_join_group">Rejoindre le groupe Telegram</string>
+    <string name="link_open_failed">Impossible d ouvrir le lien</string>
 </resources>

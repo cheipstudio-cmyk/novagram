@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -80,7 +81,8 @@ fun TransferPanel(modifier: Modifier = Modifier) {
         Column(
             modifier = Modifier
                 .statusBarsPadding()
-                .padding(top = 6.dp, start = 12.dp, end = 12.dp),
+                .displayCutoutPadding()
+                .padding(top = 10.dp, start = 12.dp, end = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             val down = transfers.count { !it.isUpload }

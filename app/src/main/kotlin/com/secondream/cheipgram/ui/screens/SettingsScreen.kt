@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Check
@@ -396,17 +397,68 @@ fun SettingsScreen(onBack: () -> Unit) {
             SectionHeader(stringResource(R.string.settings_section_ai))
             SectionCard {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        stringResource(R.string.settings_ai_apikey_label),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    // Header: sparkle icon in an accent circle + title +
+                    // a status chip showing whether a key is configured.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                androidx.compose.material.icons.Icons.Outlined.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.settings_ai_apikey_label),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            val configured = appearance.anthropicApiKey != null
+                            Text(
+                                stringResource(
+                                    if (configured) R.string.settings_ai_status_on
+                                    else R.string.settings_ai_status_off
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (configured) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
                     Text(
                         stringResource(R.string.settings_ai_apikey_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(6.dp))
+                    // Create-key link.
+                    Text(
+                        stringResource(R.string.settings_ai_get_key),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clickable {
+                            runCatching {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse("https://console.anthropic.com/settings/keys")
+                                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
+                        }
+                    )
+                    Spacer(Modifier.height(12.dp))
                     var apiKeyDraft by remember(appearance.anthropicApiKey) {
                         mutableStateOf(appearance.anthropicApiKey.orEmpty())
                     }
@@ -415,7 +467,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
                     ) {
                         if (apiKeyDraft.isEmpty()) {
                             Text(
@@ -437,21 +489,23 @@ fun SettingsScreen(onBack: () -> Unit) {
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        androidx.compose.material3.TextButton(
+                        androidx.compose.material3.Button(
                             onClick = {
                                 scope.launch { AppSettings.setAnthropicApiKey(apiKeyDraft) }
-                            }
+                            },
+                            modifier = Modifier.weight(1f)
                         ) {
                             Text(stringResource(R.string.settings_ai_apikey_save))
                         }
                         if (appearance.anthropicApiKey != null) {
-                            androidx.compose.material3.TextButton(
+                            androidx.compose.material3.OutlinedButton(
                                 onClick = {
                                     scope.launch { AppSettings.setAnthropicApiKey("") }
                                     apiKeyDraft = ""
-                                }
+                                },
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Text(stringResource(R.string.settings_ai_apikey_clear))
                             }
@@ -890,6 +944,43 @@ private fun CreditsBlock() {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(14.dp))
+        // Join the Cheip Gram Telegram community. Opens the group link
+        // INSIDE this app (setPackage) so it doesn't bounce to a browser.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(28.dp))
+                .background(MaterialTheme.colorScheme.secondaryContainer)
+                .clickable {
+                    runCatching {
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://t.me/cheipgram")
+                        ).setPackage(context.packageName)
+                        context.startActivity(intent)
+                    }.recoverCatching {
+                        context.startActivity(
+                            android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://t.me/cheipgram")
+                            )
+                        )
+                    }
+                }
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text("✈\uFE0F", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                stringResource(R.string.credits_join_group),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        Spacer(Modifier.height(14.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1285,25 +1376,31 @@ private fun ThemeBuilderDialog(
                 )
                 Spacer(Modifier.height(12.dp))
 
-                // Base mode buttons. Tapping Chiaro / Scuro resets the
-                // background + input-bar colours to a clean light or dark
-                // preset, keeping ONLY the chosen accent — so the new theme
-                // starts from a pure base instead of inheriting whatever
-                // theme is currently applied to the app.
+                // Base mode: whether the theme is built on a light or dark
+                // foundation. Saved into the theme so applying it flips the
+                // app's themeMode and surfaces match. Default inferred from
+                // the initial theme (or its bg luminance for legacy themes).
+                var baseLight by remember {
+                    mutableStateOf(
+                        initialTheme?.isLight
+                            ?: (initialTheme?.let { Color(it.bgArgb).luminance() > 0.5f } ?: false)
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    val applyBase: (bg: Int, input: Int) -> Unit = { bg, input ->
+                    val applyBase: (light: Boolean, bg: Int, input: Int) -> Unit = { light, bg, input ->
+                        baseLight = light
                         colors[1] = bg      // background
                         colors[2] = input   // input bar
                     }
                     androidx.compose.material3.OutlinedButton(
-                        onClick = { applyBase(0xFFF6F6F8.toInt(), 0xFFFFFFFF.toInt()) },
+                        onClick = { applyBase(true, 0xFFFBF8F2.toInt(), 0xFFFFFFFF.toInt()) },
                         modifier = Modifier.weight(1f)
                     ) { Text(stringResource(R.string.settings_theme_light)) }
                     androidx.compose.material3.OutlinedButton(
-                        onClick = { applyBase(0xFF0F1115.toInt(), 0xFF1A1D24.toInt()) },
+                        onClick = { applyBase(false, 0xFF0F1115.toInt(), 0xFF1A1D24.toInt()) },
                         modifier = Modifier.weight(1f)
                     ) { Text(stringResource(R.string.settings_theme_dark)) }
                 }
@@ -1368,7 +1465,8 @@ private fun ThemeBuilderDialog(
                         myBubbleArgb = initialTheme?.myBubbleArgb ?: 0,
                         othersBubbleArgb = initialTheme?.othersBubbleArgb ?: 0,
                         bgArgb = colors[1],
-                        inputBarArgb = colors[2]
+                        inputBarArgb = colors[2],
+                        isLight = baseLight
                     )
                     onSave(theme)
                 },

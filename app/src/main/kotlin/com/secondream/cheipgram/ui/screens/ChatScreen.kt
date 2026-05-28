@@ -595,27 +595,37 @@ fun ChatScreen(
                     first.isNullOrBlank() -> {}
                     first == "joinchat" && segs.size >= 2 -> invite = "https://t.me/joinchat/${segs[1]}"
                     first.startsWith("+") -> invite = "https://t.me/$first"
+                    // s/<channel> is the "preview" path; the real username
+                    // is the next segment.
+                    first == "s" && segs.size >= 2 -> username = segs[1]
                     else -> username = first
                 }
             }
-            val resolvedId = runCatching {
-                when {
-                    invite != null -> TdClient.joinChatByInviteLink(invite!!).id
-                    username != null -> TdClient.searchPublicChat(username!!).id
-                    else -> null
+            val resolvedId: Long? = when {
+                invite != null -> {
+                    // For invite links, first inspect the link WITHOUT
+                    // joining (checkChatInviteLink) — if we're already a
+                    // member it returns the existing chatId, avoiding the
+                    // "already participant" error that JoinChatByInviteLink
+                    // throws. Only actually join when we're not in it yet.
+                    val info = runCatching { TdClient.checkChatInviteLink(invite!!) }.getOrNull()
+                    val existing = info?.chatId?.takeIf { it != 0L }
+                    existing ?: runCatching { TdClient.joinChatByInviteLink(invite!!).id }.getOrNull()
                 }
-            }.getOrNull()
+                username != null -> runCatching { TdClient.searchPublicChat(username!!).id }.getOrNull()
+                else -> null
+            }
             if (resolvedId != null && resolvedId != 0L) {
                 onOpenChat(resolvedId)
             } else {
-                // Couldn't resolve as a chat (sticker set, settings link,
-                // etc.) — fall back to the system so it's not a dead tap.
-                runCatching {
-                    context.startActivity(
-                        android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
-                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
-                }
+                // Could not resolve to a chat. Per Eugenio's hard
+                // requirement, NEVER bounce out to the browser / real
+                // Telegram — just inform the user.
+                android.widget.Toast.makeText(
+                    context,
+                    context.getString(R.string.link_open_failed),
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }

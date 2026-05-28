@@ -98,7 +98,12 @@ data class SavedTheme(
     val myBubbleArgb: Int,
     val othersBubbleArgb: Int,
     val bgArgb: Int,
-    val inputBarArgb: Int
+    val inputBarArgb: Int,
+    /** Whether this theme is built on a LIGHT base. Applying it sets the
+     *  app's themeMode to Light/Dark so surfaces (cards, menus) match —
+     *  otherwise a light-bg theme over a dark base mode produced dark
+     *  cards under a white background. */
+    val isLight: Boolean = false
 )
 
 object AppSettings {
@@ -210,7 +215,8 @@ object AppSettings {
                         myBubbleArgb = o.getInt("myBubble"),
                         othersBubbleArgb = o.getInt("othersBubble"),
                         bgArgb = o.getInt("bg"),
-                        inputBarArgb = o.optInt("inputBar", o.getInt("bg"))
+                        inputBarArgb = o.optInt("inputBar", o.getInt("bg")),
+                        isLight = o.optBoolean("isLight", false)
                     ))
                 }
             }
@@ -228,6 +234,7 @@ object AppSettings {
             o.put("othersBubble", t.othersBubbleArgb)
             o.put("bg", t.bgArgb)
             o.put("inputBar", t.inputBarArgb)
+            o.put("isLight", t.isLight)
             arr.put(o)
         }
         return arr.toString()
@@ -258,6 +265,9 @@ object AppSettings {
             else e.remove(CUSTOM_OTHERS_BUBBLE)
             e[CUSTOM_BG] = theme.bgArgb
             e[CUSTOM_INPUT_BAR] = theme.inputBarArgb
+            // Align base mode with the theme so surfaces match (light theme
+            // → light cards). Fixes the "white bg + dark cards" mix.
+            e[THEME_MODE] = if (theme.isLight) ThemeMode.Light.name else ThemeMode.Dark.name
         }
     }
 
@@ -291,6 +301,7 @@ object AppSettings {
             else e.remove(CUSTOM_OTHERS_BUBBLE)
             e[CUSTOM_BG] = theme.bgArgb
             e[CUSTOM_INPUT_BAR] = theme.inputBarArgb
+            e[THEME_MODE] = if (theme.isLight) ThemeMode.Light.name else ThemeMode.Dark.name
         }
     }
 
