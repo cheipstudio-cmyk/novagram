@@ -45,6 +45,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import coil.compose.AsyncImage
 import com.secondream.cheipgram.R
 import com.secondream.cheipgram.td.TdClient
+import com.secondream.cheipgram.ui.components.AnimatedTgsSticker
+import com.secondream.cheipgram.ui.components.WebmVideoSticker
 import org.drinkless.tdlib.TdApi
 
 /**
@@ -233,47 +235,17 @@ fun StickerPickerSheet(
 }
 
 /**
- * Single sticker tile in the picker grid.
- *
- * The previous version rendered the full sticker for every tile —
- * Lottie for TGS, ExoPlayer for WebM — and that meant a 200-sticker
- * "Tutti" grid spun up 200 decoders. On real devices the scroll
- * stuttered and individual cells took multiple seconds to show
- * because each one was waiting on its own decode pipeline.
- *
- * Now every format renders the THUMBNAIL (sticker.thumbnail) as a
- * plain image — TDLib produces a static WebP/PNG thumbnail for both
- * TGS and WebM stickers, so the picker stays cheap and consistent.
- * The full animation only runs when an incoming chat message uses
- * the sticker, which is where users actually want to see it move.
- *
- * We also subscribe to fileUpdates so the thumbnail fades in as it
- * downloads, instead of showing the emoji fallback "forever".
+ * Single sticker tile in the picker grid. Three render paths:
+ *   - WebP (static): downloaded thumbnail or the sticker file itself
+ *   - TGS (Lottie): we keep the Lottie playing because the tile is small
+ *     and the cost is low; previewing only the thumbnail strips animation
+ *     which makes the picker feel dead.
+ *   - WebM (video): ExoPlayer instance, same reasoning. We rely on
+ *     DisposableEffect inside WebmVideoSticker to release decoders as the
+ *     user scrolls past.
  */
 @Composable
 private fun StickerCell(sticker: TdApi.Sticker, onClick: () -> Unit) {
-    val thumbFile: TdApi.File? = sticker.thumbnail?.file ?: sticker.sticker
-    var fileState by remember(thumbFile?.id) {
-        mutableStateOf(thumbFile)
-    }
-    LaunchedEffect(thumbFile?.id) {
-        val f = thumbFile ?: return@LaunchedEffect
-        // Snapshot the live state on (re-)entry. Without this a tile
-        // that scrolled offscreen then back can stay stuck on the
-        // emoji fallback even though the thumb finished downloading
-        // in the gap — same bug pattern we fixed for chat photos.
-        runCatching { TdClient.getFile(f.id) }.onSuccess { latest ->
-            fileState = latest
-        }
-        val current = fileState ?: return@LaunchedEffect
-        if (!current.local.isDownloadingCompleted && !current.local.isDownloadingActive) {
-            runCatching { TdClient.downloadFile(current.id) }
-        }
-        TdClient.fileUpdates.collect { updated ->
-            if (updated.id == f.id) fileState = updated
-        }
-    }
-
     Box(
         modifier = Modifier
             .aspectRatio(1f)
@@ -283,22 +255,28 @@ private fun StickerCell(sticker: TdApi.Sticker, onClick: () -> Unit) {
             .padding(4.dp),
         contentAlignment = Alignment.Center
     ) {
-        val path = fileState?.local?.path
-        if (!path.isNullOrBlank() && fileState?.local?.isDownloadingCompleted == true) {
-            AsyncImage(
-                model = path,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize()
+        when (sticker.format) {
+            is TdApi.StickerFormatWebp -> {
+                val thumb = sticker.thumbnail?.file?.local?.path
+                if (!thumb.isNullOrBlank()) {
+                    AsyncImage(
+                        model = thumb,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text(sticker.emoji.ifBlank { "🖼" }, style = MaterialTheme.typography.titleLarge)
+                }
+            }
+            is TdApi.StickerFormatTgs -> AnimatedTgsSticker(
+                file = sticker.sticker,
+                fallbackEmoji = sticker.emoji.ifBlank { "🖼" }
             )
-        } else {
-            // While we wait for the thumbnail, show the sticker's emoji
-            // hint (every Telegram sticker has one). Much friendlier
-            // than an empty square and gives the user something to
-            // pick by even before files finish syncing.
-            Text(
-                sticker.emoji.ifBlank { "🖼" },
-                style = MaterialTheme.typography.titleLarge
+            is TdApi.StickerFormatWebm -> WebmVideoSticker(
+                file = sticker.sticker,
+                fallbackEmoji = sticker.emoji.ifBlank { "🖼" }
             )
+            else -> Text(sticker.emoji.ifBlank { "🖼" }, style = MaterialTheme.typography.titleLarge)
         }
     }
 }

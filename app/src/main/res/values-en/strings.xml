@@ -226,11 +226,6 @@
     <string name="action_forward">Forward</string>
     <string name="forward_picker_title">Forward to</string>
     <string name="forward_picker_search_hint">Search chats</string>
-    <string name="forward_compose_target_prefix">Forward to</string>
-    <string name="forward_compose_from_prefix">From %1$s</string>
-    <string name="forward_compose_caption_hint">Add a caption (optional)</string>
-    <string name="forward_compose_send">Forward</string>
-    <string name="forward_compose_send_with_caption">Forward with caption</string>
     <string name="reactions_who_title">Reactions</string>
     <string name="home_shortcut_search">Search</string>
     <string name="home_shortcut_new_chat">New chat</string>
@@ -240,23 +235,4 @@
     <string name="home_period_morning">Good morning</string>
     <string name="home_period_afternoon">Good afternoon</string>
     <string name="home_period_evening">Good evening</string>
-    <string name="chat_jump_to_bottom">Jump to bottom</string>
-    <string name="action_edit">Edit</string>
-    <string name="edit_preview_title">Edit message</string>
-    <string name="bubble_edited_tag">edited</string>
-    <string name="chat_pinned_list_title">Pinned messages</string>
-    <string name="chat_pinned_list_empty">No pinned messages</string>
-    <string name="settings_section_media">Media</string>
-    <string name="settings_media_autodownload">Auto-download while scrolling</string>
-    <string name="settings_media_autodownload_desc">When off, photos/videos/files require a tap to download before viewing</string>
-    <string name="media_tap_to_download">Tap to download</string>
-    <string name="action_save">Save</string>
-    <string name="media_save_success">Saved to Cheip Gram</string>
-    <string name="media_save_error">Save failed</string>
-    <string name="settings_section_ai">AI</string>
-    <string name="settings_ai_apikey_label">Anthropic API key</string>
-    <string name="settings_ai_apikey_desc">Paste your key from console.anthropic.com to enable AI actions on messages. Stored only on this device.</string>
-    <string name="settings_ai_apikey_save">Save</string>
-    <string name="settings_ai_apikey_clear">Remove</string>
-    <string name="action_ai">AI</string>
 </resources>

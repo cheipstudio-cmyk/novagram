@@ -27,43 +27,6 @@ object NotificationHelper {
 
     private lateinit var appContext: Context
 
-    /**
-     * Cached self-userId, used by [isReplyToMyMessage] to decide whether
-     * an incoming reply targets me (and therefore deserves to bypass the
-     * chat mute). Populated lazily on the first call; refreshed only on
-     * TDLib re-init since the value can change after a logout/login.
-     */
-    @Volatile private var cachedSelfUserId: Long = 0L
-
-    /**
-     * True when [message] is a reply to a message that the current user
-     * sent. We compare the replied-to sender against our own cached
-     * userId. For [TdApi.MessageReplyToMessage] TDLib carries a nested
-     * `origin` describing who originally posted the replied-to message
-     * — when it's [TdApi.MessageOriginUser] with the same userId as
-     * ours, it's a ping for us.
-     *
-     * Best-effort: if the origin info isn't filled in (older TDLib
-     * records, deleted messages with sparse metadata) we return false
-     * rather than guess. That's fine — the worst case is the user
-     * misses one notification, not one that fires incorrectly.
-     */
-    private fun isReplyToMyMessage(message: TdApi.Message): Boolean {
-        val rt = message.replyTo as? TdApi.MessageReplyToMessage ?: return false
-        val selfId = ensureSelfUserId()
-        if (selfId == 0L) return false
-        val origin = rt.origin as? TdApi.MessageOriginUser ?: return false
-        return origin.senderUserId == selfId
-    }
-
-    private fun ensureSelfUserId(): Long {
-        val current = cachedSelfUserId
-        if (current != 0L) return current
-        return runCatching {
-            kotlinx.coroutines.runBlocking { TdClient.getMe().id }
-        }.getOrDefault(0L).also { cachedSelfUserId = it }
-    }
-
     fun init(ctx: Context) {
         appContext = ctx.applicationContext
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -118,35 +81,17 @@ object NotificationHelper {
      */
     fun showMessage(message: TdApi.Message) {
         if (message.isOutgoing) return
-        // Suppress heads-up only if the user is currently viewing THIS exact
-        // chat in ChatScreen — they will see the message arrive in-line and a
-        // separate notification would be redundant noise. If the app is open
-        // but they're on another chat / the chat list / settings, we DO want
-        // them to be notified so they don't miss the incoming message.
-        if (com.secondream.cheipgram.AppForegroundState.isInForeground &&
-            com.secondream.cheipgram.AppForegroundState.currentChatId == message.chatId
-        ) return
+        // If the user already has CheipGram open, don't fire a heads-up
+        // notification — they will see the message right there in the
+        // ChatScreen or in the chat list. Posting one anyway is just noise.
+        if (com.secondream.cheipgram.AppForegroundState.isInForeground) return
         val chat = TdClient.getCachedChat(message.chatId)
-        // Is this an @-mention OR a reply to one of my messages? Either
-        // signal puts the notification on a different track: even if the
-        // chat is globally muted, the user explicitly asked to be pinged
-        // for these. The only override is the per-chat
-        // disableMentionNotifications toggle (Telegram's "@mentions"
-        // sub-switch inside notification settings) — when THAT is on,
-        // mentions stay silent.
-        val containsMention = message.containsUnreadMention
-        val isReplyToMe = isReplyToMyMessage(message)
-        val notifySettings = chat?.notificationSettings
-        val mentionsAllowed = notifySettings?.disableMentionNotifications != true
-        val isPersonalPing = (containsMention || isReplyToMe) && mentionsAllowed
-
-        // Skip muted chats (notification settings come from TDLib), unless
-        // this specific message is a personal ping for the user.
-        val muted = notifySettings?.let {
+        // Skip muted chats (notification settings come from TDLib)
+        val muted = chat?.notificationSettings?.let {
             // muteFor > 0 means muted for that many seconds; 0 means active.
             it.muteFor > 0
         } ?: false
-        if (muted && !isPersonalPing) return
+        if (muted) return
 
         val chatTitle = chat?.title?.takeIf { it.isNotBlank() } ?: "CheipGram"
         val isChannel = (chat?.type as? TdApi.ChatTypeSupergroup)?.isChannel == true

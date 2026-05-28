@@ -226,11 +226,6 @@
     <string name="action_forward">Transférer</string>
     <string name="forward_picker_title">Transférer à</string>
     <string name="forward_picker_search_hint">Rechercher</string>
-    <string name="forward_compose_target_prefix">Transférer à</string>
-    <string name="forward_compose_from_prefix">De %1$s</string>
-    <string name="forward_compose_caption_hint">Ajouter une légende (facultatif)</string>
-    <string name="forward_compose_send">Transférer</string>
-    <string name="forward_compose_send_with_caption">Transférer avec légende</string>
     <string name="reactions_who_title">Réactions</string>
     <string name="home_shortcut_search">Rechercher</string>
     <string name="home_shortcut_new_chat">Nouvelle discussion</string>
@@ -240,23 +235,4 @@
     <string name="home_period_morning">Bonjour</string>
     <string name="home_period_afternoon">Bon après-midi</string>
     <string name="home_period_evening">Bonsoir</string>
-    <string name="chat_jump_to_bottom">Aller en bas</string>
-    <string name="action_edit">Modifier</string>
-    <string name="edit_preview_title">Modifier le message</string>
-    <string name="bubble_edited_tag">modifié</string>
-    <string name="chat_pinned_list_title">Messages épinglés</string>
-    <string name="chat_pinned_list_empty">Aucun message épinglé</string>
-    <string name="settings_section_media">Médias</string>
-    <string name="settings_media_autodownload">Téléchargement automatique pendant le défilement</string>
-    <string name="settings_media_autodownload_desc">Désactivé : photos/vidéos/fichiers doivent être téléchargés manuellement avant d'être vus</string>
-    <string name="media_tap_to_download">Toucher pour télécharger</string>
-    <string name="action_save">Enregistrer</string>
-    <string name="media_save_success">Enregistré dans Cheip Gram</string>
-    <string name="media_save_error">Échec de l'enregistrement</string>
-    <string name="settings_section_ai">IA</string>
-    <string name="settings_ai_apikey_label">Clé API Anthropic</string>
-    <string name="settings_ai_apikey_desc">Collez votre clé depuis console.anthropic.com pour activer les actions IA sur les messages. Stockée uniquement sur cet appareil.</string>
-    <string name="settings_ai_apikey_save">Enregistrer</string>
-    <string name="settings_ai_apikey_clear">Supprimer</string>
-    <string name="action_ai">IA</string>
 </resources>

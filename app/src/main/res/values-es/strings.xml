@@ -226,11 +226,6 @@
     <string name="action_forward">Reenviar</string>
     <string name="forward_picker_title">Reenviar a</string>
     <string name="forward_picker_search_hint">Buscar chats</string>
-    <string name="forward_compose_target_prefix">Reenviar a</string>
-    <string name="forward_compose_from_prefix">De %1$s</string>
-    <string name="forward_compose_caption_hint">Añade un comentario (opcional)</string>
-    <string name="forward_compose_send">Reenviar</string>
-    <string name="forward_compose_send_with_caption">Reenviar con comentario</string>
     <string name="reactions_who_title">Reacciones</string>
     <string name="home_shortcut_search">Buscar</string>
     <string name="home_shortcut_new_chat">Nuevo chat</string>
@@ -240,23 +235,4 @@
     <string name="home_period_morning">Buenos días</string>
     <string name="home_period_afternoon">Buenas tardes</string>
     <string name="home_period_evening">Buenas noches</string>
-    <string name="chat_jump_to_bottom">Ir al final</string>
-    <string name="action_edit">Editar</string>
-    <string name="edit_preview_title">Editar mensaje</string>
-    <string name="bubble_edited_tag">editado</string>
-    <string name="chat_pinned_list_title">Mensajes fijados</string>
-    <string name="chat_pinned_list_empty">Sin mensajes fijados</string>
-    <string name="settings_section_media">Medios</string>
-    <string name="settings_media_autodownload">Descarga automática al desplazar</string>
-    <string name="settings_media_autodownload_desc">Si está desactivado, fotos/vídeos/archivos requieren un toque para descargarse antes de verlos</string>
-    <string name="media_tap_to_download">Tocar para descargar</string>
-    <string name="action_save">Guardar</string>
-    <string name="media_save_success">Guardado en Cheip Gram</string>
-    <string name="media_save_error">No se pudo guardar</string>
-    <string name="settings_section_ai">IA</string>
-    <string name="settings_ai_apikey_label">Clave API Anthropic</string>
-    <string name="settings_ai_apikey_desc">Pega tu clave de console.anthropic.com para habilitar las acciones de IA en los mensajes. Guardada solo en este dispositivo.</string>
-    <string name="settings_ai_apikey_save">Guardar</string>
-    <string name="settings_ai_apikey_clear">Quitar</string>
-    <string name="action_ai">IA</string>
 </resources>

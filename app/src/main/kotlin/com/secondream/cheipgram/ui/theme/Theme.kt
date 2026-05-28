@@ -8,7 +8,6 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
@@ -50,45 +49,14 @@ fun CheipGramTheme(
     // the API surface small (one ARGB int) while still producing readable
     // schemes for any color the user picks.
     val accent = if (customAccentArgb != null) {
-        // Tone the picked accent for the active theme so the same colour
-        // reads well in every mode. Eugenio's mental model: "if I pick
-        // orange, on white I want a slightly darker orange (better
-        // contrast); on AMOLED I want a brighter, punchier orange."
-        // We map the raw RGB toward black on light themes and toward
-        // white on AMOLED — keeping the original on standard dark.
-        val raw = Color(customAccentArgb)
-        val toned = when {
-            themeMode == ThemeMode.Amoled -> {
-                // Mix 25% toward white so the colour pops against pure
-                // black. coerceIn guards against fp drift at the edges.
-                Color(
-                    red = (raw.red + (1f - raw.red) * 0.25f).coerceIn(0f, 1f),
-                    green = (raw.green + (1f - raw.green) * 0.25f).coerceIn(0f, 1f),
-                    blue = (raw.blue + (1f - raw.blue) * 0.25f).coerceIn(0f, 1f),
-                    alpha = 1f
-                )
-            }
-            !isDark -> {
-                // Multiply 0.82 toward black so the colour reads with
-                // enough contrast against a light/white background. Plain
-                // orange #FFA500 on white looks washed; 0.82×→ #D18700
-                // is rich without going muddy.
-                Color(
-                    red = (raw.red * 0.82f).coerceIn(0f, 1f),
-                    green = (raw.green * 0.82f).coerceIn(0f, 1f),
-                    blue = (raw.blue * 0.82f).coerceIn(0f, 1f),
-                    alpha = 1f
-                )
-            }
-            else -> raw
-        }
-        val luminance = toned.luminance()
+        val custom = Color(customAccentArgb)
+        val luminance = custom.luminance()
         Accent(
-            primary = toned,
+            primary = custom,
             primaryDeep = Color(
-                red = (toned.red * 0.7f).coerceIn(0f, 1f),
-                green = (toned.green * 0.7f).coerceIn(0f, 1f),
-                blue = (toned.blue * 0.7f).coerceIn(0f, 1f),
+                red = (custom.red * 0.7f).coerceIn(0f, 1f),
+                green = (custom.green * 0.7f).coerceIn(0f, 1f),
+                blue = (custom.blue * 0.7f).coerceIn(0f, 1f),
                 alpha = 1f
             ),
             onPrimary = if (luminance > 0.5f) Color.Black else Color.White

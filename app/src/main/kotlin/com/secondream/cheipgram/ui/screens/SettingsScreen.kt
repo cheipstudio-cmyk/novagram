@@ -114,170 +114,18 @@ fun SettingsScreen(onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // APPEARANCE — unified theme picker. Eugenio's redesign:
-            // the 4 base modes (Sistema/Chiaro/Scuro/AMOLED) and every
-            // saved custom theme live in the SAME list. Exactly one row is
-            // highlighted at any time. The "Crea nuovo / Incolla" actions
-            // sit at the bottom of the list. The accent picker only shows
-            // up when no custom theme is active — a custom theme already
-            // owns its own accent so showing the global one would be
-            // ambiguous.
+            // APPEARANCE
             SectionHeader(stringResource(R.string.settings_section_appearance))
             SectionCard {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        stringResource(R.string.settings_theme),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    val activeCustomId = appearance.activeSavedThemeId
-                    // Base modes — selected only when no custom is active.
-                    BaseModeListRow(
-                        label = stringResource(R.string.settings_theme_system),
-                        selected = activeCustomId == null && appearance.themeMode == ThemeMode.System,
-                        onClick = { scope.launch { AppSettings.setThemeMode(ThemeMode.System) } }
-                    )
-                    BaseModeListRow(
-                        label = stringResource(R.string.settings_theme_light),
-                        selected = activeCustomId == null && appearance.themeMode == ThemeMode.Light,
-                        onClick = { scope.launch { AppSettings.setThemeMode(ThemeMode.Light) } }
-                    )
-                    BaseModeListRow(
-                        label = stringResource(R.string.settings_theme_dark),
-                        selected = activeCustomId == null && appearance.themeMode == ThemeMode.Dark,
-                        onClick = { scope.launch { AppSettings.setThemeMode(ThemeMode.Dark) } }
-                    )
-                    BaseModeListRow(
-                        label = stringResource(R.string.settings_theme_amoled),
-                        selected = activeCustomId == null && appearance.themeMode == ThemeMode.Amoled,
-                        onClick = { scope.launch { AppSettings.setThemeMode(ThemeMode.Amoled) } }
-                    )
-                    // Saved custom themes (if any). Each row uses the
-                    // existing SavedThemeRow composable so the swatch
-                    // preview + overflow menu stay consistent.
-                    if (savedThemes.isNotEmpty()) {
-                        Spacer(Modifier.height(6.dp))
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            for (theme in savedThemes) {
-                                SavedThemeRow(
-                                    theme = theme,
-                                    isActive = theme.id == activeCustomId,
-                                    onApply = {
-                                        scope.launch { AppSettings.activateSavedTheme(theme.id) }
-                                    },
-                                    onEdit = {
-                                        builderTheme = theme
-                                        showThemeBuilder = true
-                                    },
-                                    onShare = {
-                                        // Build a "synthesized" AppearancePrefs from the theme
-                                        // so the share payload imports cleanly on any device.
-                                        val payload = appearance.copy(
-                                            customAccentArgb = theme.accentArgb,
-                                            customMyBubbleArgb = theme.myBubbleArgb,
-                                            customOthersBubbleArgb = theme.othersBubbleArgb,
-                                            customBgArgb = theme.bgArgb,
-                                            customInputBarArgb = theme.inputBarArgb,
-                                            activeSavedThemeId = null
-                                        )
-                                        val json = buildThemeShareJson(payload)
-                                        val encoded = android.util.Base64.encodeToString(
-                                            json.toByteArray(Charsets.UTF_8),
-                                            android.util.Base64.URL_SAFE or
-                                                android.util.Base64.NO_WRAP or
-                                                android.util.Base64.NO_PADDING
-                                        )
-                                        val deeplink = "cheipgram://theme?data=$encoded"
-                                        val message = context.getString(R.string.theme_share_body, deeplink)
-                                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                            type = "text/plain"
-                                            putExtra(android.content.Intent.EXTRA_TEXT, message)
-                                            putExtra(android.content.Intent.EXTRA_SUBJECT, theme.name)
-                                        }
-                                        runCatching {
-                                            context.startActivity(
-                                                android.content.Intent.createChooser(
-                                                    intent,
-                                                    context.getString(R.string.theme_share_chooser)
-                                                )
-                                            )
-                                        }
-                                    },
-                                    onDelete = {
-                                        scope.launch { AppSettings.deleteSavedTheme(theme.id) }
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    // Create / Paste actions live INSIDE this card now, at
-                    // the bottom of the unified list — Eugenio asked for
-                    // the creation card to sit "sotto la lista".
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ThemeActionButton(
-                            label = stringResource(R.string.theme_create_new),
-                            onClick = {
-                                // upsertSavedTheme auto-activates the new
-                                // theme, so by the time the builder commits
-                                // it's already the selected row in the list.
-                                builderTheme = null
-                                showThemeBuilder = true
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                        ThemeActionButton(
-                            label = stringResource(R.string.theme_paste),
-                            onClick = {
-                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-                                    as? android.content.ClipboardManager
-                                val raw = cm?.primaryClip
-                                    ?.takeIf { it.itemCount > 0 }
-                                    ?.getItemAt(0)
-                                    ?.coerceToText(context)
-                                    ?.toString()
-                                val parsed = raw?.let { parseThemeJson(it) }
-                                if (parsed != null) {
-                                    val imported = com.secondream.cheipgram.settings.SavedTheme(
-                                        id = java.util.UUID.randomUUID().toString(),
-                                        name = context.getString(R.string.theme_imported_default_name),
-                                        accentArgb = parsed.customAccentArgb ?: 0xFFD9A85C.toInt(),
-                                        myBubbleArgb = parsed.customMyBubbleArgb ?: 0xFF2A4F7A.toInt(),
-                                        othersBubbleArgb = parsed.customOthersBubbleArgb ?: 0xFF374151.toInt(),
-                                        bgArgb = parsed.customBgArgb ?: 0xFF0F1115.toInt(),
-                                        inputBarArgb = parsed.customInputBarArgb ?: 0xFF1A1D24.toInt()
-                                    )
-                                    scope.launch { AppSettings.upsertSavedTheme(imported) }
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        context.getString(R.string.theme_paste_success),
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                } else {
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        context.getString(R.string.theme_paste_error),
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                            outline = true
-                        )
-                    }
-                }
-                // Accent picker only when a base mode is active. A custom
-                // theme already carries its own accentArgb so exposing the
-                // global preset selector while one is selected would be
-                // confusing (the row would visibly do nothing).
-                if (appearance.activeSavedThemeId == null) {
-                    Divider()
-                    AccentRow(
-                        current = appearance.accentColor,
-                        onPick = { color -> scope.launch { AppSettings.setAccentColor(color) } }
-                    )
-                }
+                ThemeRow(
+                    current = appearance.themeMode,
+                    onPick = { mode -> scope.launch { AppSettings.setThemeMode(mode) } }
+                )
+                Divider()
+                AccentRow(
+                    current = appearance.accentColor,
+                    onPick = { color -> scope.launch { AppSettings.setAccentColor(color) } }
+                )
             }
 
             Spacer(Modifier.height(20.dp))
@@ -350,102 +198,105 @@ fun SettingsScreen(onBack: () -> Unit) {
             // automatically from the active theme + accent preset to keep
             // the 4×4 combo matrix readable in every mode.)
 
-            // (Custom themes used to live in their own section here. They
-            // moved into the unified APPEARANCE list above so the user
-            // sees one continuous list of selectable themes, base + saved
-            // together, with the Crea/Incolla actions sitting right under
-            // them. The single state of truth is `activeSavedThemeId`:
-            // null means a base mode row is selected, non-null means a
-            // saved-theme row is.)
-
-            Spacer(Modifier.height(20.dp))
-
-            // MEDIA — controls how aggressively TDLib pulls media files
-            // while the user scrolls a chat. Off = nothing downloads
-            // until the user taps the placeholder; useful on metered
-            // networks and for "just skimming" workflows.
-            SectionHeader(stringResource(R.string.settings_section_media))
+            // CUSTOM THEME
+            SectionHeader(stringResource(R.string.settings_section_custom_theme))
             SectionCard {
-                PrivacyToggleRow(
-                    label = stringResource(R.string.settings_media_autodownload),
-                    description = stringResource(R.string.settings_media_autodownload_desc),
-                    checked = appearance.autoDownloadMedia,
-                    onToggle = { enabled ->
-                        scope.launch { AppSettings.setAutoDownloadMedia(enabled) }
-                    }
-                )
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // AI — the user pastes their Anthropic API key here. Without
-            // one the AI tile in the message actions sheet stays hidden.
-            // Key is stored locally and only ever sent to api.anthropic.com.
-            SectionHeader(stringResource(R.string.settings_section_ai))
-            SectionCard {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        stringResource(R.string.settings_ai_apikey_label),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        stringResource(R.string.settings_ai_apikey_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    var apiKeyDraft by remember(appearance.anthropicApiKey) {
-                        mutableStateOf(appearance.anthropicApiKey.orEmpty())
-                    }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                    ) {
-                        if (apiKeyDraft.isEmpty()) {
-                            Text(
-                                "sk-ant-...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                SavedThemesSection(
+                    savedThemes = savedThemes,
+                    activeId = appearance.activeSavedThemeId,
+                    onCreate = {
+                        // builderTheme is set later in this function. Read
+                        // setBuilderTheme via the parent state setter — we
+                        // reach it through showThemeBuilder which is in the
+                        // outer SettingsScreen scope.
+                        builderTheme = null
+                        showThemeBuilder = true
+                    },
+                    onApply = { theme ->
+                        scope.launch { AppSettings.activateSavedTheme(theme.id) }
+                    },
+                    onEdit = { theme ->
+                        builderTheme = theme
+                        showThemeBuilder = true
+                    },
+                    onDelete = { theme ->
+                        scope.launch { AppSettings.deleteSavedTheme(theme.id) }
+                    },
+                    onShare = { theme ->
+                        // Build a "synthesized" AppearancePrefs from the theme
+                        // (current language + theme mode + saved colors) so
+                        // the share payload imports cleanly on any device.
+                        val payload = appearance.copy(
+                            customAccentArgb = theme.accentArgb,
+                            customMyBubbleArgb = theme.myBubbleArgb,
+                            customOthersBubbleArgb = theme.othersBubbleArgb,
+                            customBgArgb = theme.bgArgb,
+                            customInputBarArgb = theme.inputBarArgb,
+                            activeSavedThemeId = null  // recipient picks a new id
+                        )
+                        val json = buildThemeShareJson(payload)
+                        val encoded = android.util.Base64.encodeToString(
+                            json.toByteArray(Charsets.UTF_8),
+                            android.util.Base64.URL_SAFE or
+                                android.util.Base64.NO_WRAP or
+                                android.util.Base64.NO_PADDING
+                        )
+                        val deeplink = "cheipgram://theme?data=$encoded"
+                        val message = context.getString(R.string.theme_share_body, deeplink)
+                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(android.content.Intent.EXTRA_TEXT, message)
+                            putExtra(android.content.Intent.EXTRA_SUBJECT, theme.name)
+                        }
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent.createChooser(
+                                    intent,
+                                    context.getString(R.string.theme_share_chooser)
+                                )
                             )
                         }
-                        androidx.compose.foundation.text.BasicTextField(
-                            value = apiKeyDraft,
-                            onValueChange = { apiKeyDraft = it },
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                                color = MaterialTheme.colorScheme.onSurface
-                            ),
-                            cursorBrush = androidx.compose.ui.graphics.SolidColor(
-                                MaterialTheme.colorScheme.primary
-                            ),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        androidx.compose.material3.TextButton(
-                            onClick = {
-                                scope.launch { AppSettings.setAnthropicApiKey(apiKeyDraft) }
-                            }
-                        ) {
-                            Text(stringResource(R.string.settings_ai_apikey_save))
+                    },
+                    onResetToBase = {
+                        scope.launch { AppSettings.resetCustomOverrides() }
+                    },
+                    onPaste = {
+                        val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            as? android.content.ClipboardManager
+                        val raw = cm?.primaryClip
+                            ?.takeIf { it.itemCount > 0 }
+                            ?.getItemAt(0)
+                            ?.coerceToText(context)
+                            ?.toString()
+                        val parsed = raw?.let { parseThemeJson(it) }
+                        if (parsed != null) {
+                            // Imported themes are saved as a fresh entry in
+                            // the user's library so they can be re-edited
+                            // later, not just blasted into the custom slots.
+                            val imported = com.secondream.cheipgram.settings.SavedTheme(
+                                id = java.util.UUID.randomUUID().toString(),
+                                name = context.getString(R.string.theme_imported_default_name),
+                                accentArgb = parsed.customAccentArgb ?: 0xFFD9A85C.toInt(),
+                                myBubbleArgb = parsed.customMyBubbleArgb ?: 0xFF2A4F7A.toInt(),
+                                othersBubbleArgb = parsed.customOthersBubbleArgb ?: 0xFF374151.toInt(),
+                                bgArgb = parsed.customBgArgb ?: 0xFF0F1115.toInt(),
+                                inputBarArgb = parsed.customInputBarArgb ?: 0xFF1A1D24.toInt()
+                            )
+                            scope.launch { AppSettings.upsertSavedTheme(imported) }
+                            android.widget.Toast.makeText(
+                                context,
+                                context.getString(R.string.theme_paste_success),
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            android.widget.Toast.makeText(
+                                context,
+                                context.getString(R.string.theme_paste_error),
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
                         }
-                        if (appearance.anthropicApiKey != null) {
-                            androidx.compose.material3.TextButton(
-                                onClick = {
-                                    scope.launch { AppSettings.setAnthropicApiKey("") }
-                                    apiKeyDraft = ""
-                                }
-                            ) {
-                                Text(stringResource(R.string.settings_ai_apikey_clear))
-                            }
-                        }
                     }
-                }
+                )
             }
 
             Spacer(Modifier.height(20.dp))
@@ -1347,52 +1198,4 @@ private fun ThemeBuilderDialog(
             }
         }
     )
-}
-
-/**
- * One row in the unified theme list — used for the 4 base modes
- * (Sistema/Chiaro/Scuro/AMOLED). Visually it's the same shape as
- * [SavedThemeRow] so the eye reads the whole list as one continuous set
- * of selectable themes, without a visual seam between "built-in" and
- * "custom". A check icon on the right marks the currently active row.
- *
- * Selected state is computed in the parent and passed in — the parent
- * already knows whether to highlight a base row (no custom active) or a
- * saved-theme row (custom active), so this composable just renders.
- */
-@androidx.compose.runtime.Composable
-private fun BaseModeListRow(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(
-                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            modifier = Modifier.weight(1f)
-        )
-        if (selected) {
-            Icon(
-                Icons.Outlined.Check,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-    }
 }

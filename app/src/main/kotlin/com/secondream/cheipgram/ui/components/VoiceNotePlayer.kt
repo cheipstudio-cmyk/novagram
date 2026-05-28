@@ -75,20 +75,13 @@ fun VoiceNotePlayer(
     var ready by remember(voiceNote.voice.id) { mutableStateOf(file.local.isDownloadingCompleted) }
 
     LaunchedEffect(voiceNote.voice.id) {
-        // Snapshot the live state on (re-)entry. TDLib mutates File objects
-        // in place but Compose doesn't observe field-level changes, so
-        // without an explicit re-read a voice note that downloaded while
-        // the bubble was scrolled off-screen would come back with the
-        // stale (empty) path and the Play button stuck disabled.
-        runCatching { TdClient.getFile(voiceNote.voice.id) }.onSuccess { latest ->
-            file = latest
-            if (latest.local.isDownloadingCompleted) ready = true
-        }
+        // Kick off download if we don't have the file yet. Voice notes are
+        // tiny so we don't bother with priority tuning.
         if (!file.local.isDownloadingCompleted) {
             runCatching { TdClient.downloadFile(file.id) }
         }
         TdClient.fileUpdates.collect { upd ->
-            if (upd.id == voiceNote.voice.id) {
+            if (upd.id == file.id) {
                 file = upd
                 if (upd.local.isDownloadingCompleted) ready = true
             }
@@ -138,10 +131,8 @@ fun VoiceNotePlayer(
                 .clip(CircleShape)
                 .background(accent)
                 .clickable(enabled = ready) {
-                    val path = file.local.path
-                    if (path.isNullOrBlank()) return@clickable
                     val p = player ?: ExoPlayer.Builder(ctx).build().also {
-                        it.setMediaItem(MediaItem.fromUri(path))
+                        it.setMediaItem(MediaItem.fromUri(file.local.path))
                         it.prepare()
                         player = it
                     }

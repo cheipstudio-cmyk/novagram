@@ -13,13 +13,10 @@ import com.secondream.cheipgram.td.TdClient
 
 /**
  * Global flag indicating whether the app is currently visible to the user.
- * NotificationHelper consults this together with [currentChatId] to decide
- * whether to post a heads-up notification:
- *  - app in background → always notify (no chat in view)
- *  - app in foreground but user is on a DIFFERENT chat → notify (so they
- *    see the message arriving in another chat)
- *  - app in foreground AND user is on the same chat the message arrived in
- *    → suppress, the message is already visible in ChatScreen
+ * NotificationHelper consults this before posting a heads-up notification:
+ * if the user already has the app open, there is no point waking the
+ * notification shade — they will see the message directly in ChatScreen or
+ * the ChatList and the notification would just create noise.
  *
  * Updated by App.onCreate via ProcessLifecycleOwner. Volatile because the
  * notification path runs on a background coroutine while lifecycle callbacks
@@ -27,12 +24,6 @@ import com.secondream.cheipgram.td.TdClient
  */
 object AppForegroundState {
     @Volatile var isInForeground: Boolean = false
-    /**
-     * Id of the chat the user is currently viewing in ChatScreen, or 0L if
-     * they aren't in any chat. ChatScreen sets this on enter and clears it
-     * on dispose via DisposableEffect.
-     */
-    @Volatile var currentChatId: Long = 0L
 }
 
 class App : Application() {

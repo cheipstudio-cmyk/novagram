@@ -226,11 +226,6 @@
     <string name="action_forward">Weiterleiten</string>
     <string name="forward_picker_title">Weiterleiten an</string>
     <string name="forward_picker_search_hint">Chats suchen</string>
-    <string name="forward_compose_target_prefix">Weiterleiten an</string>
-    <string name="forward_compose_from_prefix">Von %1$s</string>
-    <string name="forward_compose_caption_hint">Beschriftung hinzufügen (optional)</string>
-    <string name="forward_compose_send">Weiterleiten</string>
-    <string name="forward_compose_send_with_caption">Mit Beschriftung weiterleiten</string>
     <string name="reactions_who_title">Reaktionen</string>
     <string name="home_shortcut_search">Suchen</string>
     <string name="home_shortcut_new_chat">Neuer Chat</string>
@@ -240,23 +235,4 @@
     <string name="home_period_morning">Guten Morgen</string>
     <string name="home_period_afternoon">Guten Tag</string>
     <string name="home_period_evening">Guten Abend</string>
-    <string name="chat_jump_to_bottom">Nach unten</string>
-    <string name="action_edit">Bearbeiten</string>
-    <string name="edit_preview_title">Nachricht bearbeiten</string>
-    <string name="bubble_edited_tag">bearbeitet</string>
-    <string name="chat_pinned_list_title">Angeheftete Nachrichten</string>
-    <string name="chat_pinned_list_empty">Keine angehefteten Nachrichten</string>
-    <string name="settings_section_media">Medien</string>
-    <string name="settings_media_autodownload">Automatischer Download beim Scrollen</string>
-    <string name="settings_media_autodownload_desc">Wenn aus, müssen Fotos/Videos/Dateien vor dem Ansehen manuell heruntergeladen werden</string>
-    <string name="media_tap_to_download">Zum Herunterladen tippen</string>
-    <string name="action_save">Speichern</string>
-    <string name="media_save_success">In Cheip Gram gespeichert</string>
-    <string name="media_save_error">Speichern fehlgeschlagen</string>
-    <string name="settings_section_ai">KI</string>
-    <string name="settings_ai_apikey_label">Anthropic-API-Schlüssel</string>
-    <string name="settings_ai_apikey_desc">Fügen Sie Ihren Schlüssel von console.anthropic.com ein, um KI-Aktionen für Nachrichten zu aktivieren. Wird nur auf diesem Gerät gespeichert.</string>
-    <string name="settings_ai_apikey_save">Speichern</string>
-    <string name="settings_ai_apikey_clear">Entfernen</string>
-    <string name="action_ai">KI</string>
 </resources>

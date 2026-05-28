@@ -50,14 +50,6 @@ import com.secondream.cheipgram.R
  */
 @Composable
 fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
-    // Branch: ExoPlayer for video, the existing AsyncImage zoomer for
-    // photos. We read the flag from the holder rather than from
-    // path-extension sniffing because some TDLib downloads land without
-    // a recognisable extension.
-    if (MediaViewerHolder.isVideo) {
-        VideoViewer(filePath, onClose)
-        return
-    }
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
@@ -145,76 +137,8 @@ fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
 /**
  * Tiny global holder so the chat screen can hand the file path to the viewer
  * without serialising it into a navigation argument. The viewer reads
- * `currentPath` on composition and resets it on close. `isVideo` flips the
- * viewer into the embedded ExoPlayer renderer for .mp4/.mov media —
- * previously videos went through the system Intent which felt jarring
- * (user briefly leaves CheipGram).
+ * `currentPath` on composition and resets it on close.
  */
 object MediaViewerHolder {
     var currentPath: String? = null
-    var isVideo: Boolean = false
-}
-
-/**
- * Embedded full-screen video player. Built on AndroidView wrapping
- * androidx.media3 PlayerView with default controls — gives us
- * play/pause, seek bar, current/total time, and fullscreen aspect
- * handling for free, on top of an ExoPlayer that's owned by this
- * composable's lifecycle.
- *
- * Release is critical: leaking ExoPlayer instances holds audio focus
- * and the codec until GC, so DisposableEffect calls .release() on
- * dispose. autoPlay=true reflects what the user expects when tapping
- * a video bubble — they wanted to watch it.
- */
-@androidx.compose.runtime.Composable
-private fun VideoViewer(filePath: String, onClose: () -> Unit) {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    val player = androidx.compose.runtime.remember(filePath) {
-        androidx.media3.exoplayer.ExoPlayer.Builder(ctx).build().apply {
-            setMediaItem(androidx.media3.common.MediaItem.fromUri(filePath))
-            prepare()
-            playWhenReady = true
-        }
-    }
-    androidx.compose.runtime.DisposableEffect(player) {
-        onDispose { player.release() }
-    }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
-        androidx.compose.ui.viewinterop.AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { c ->
-                androidx.media3.ui.PlayerView(c).apply {
-                    this.player = player
-                    useController = true
-                    controllerShowTimeoutMs = 2500
-                    setShowBuffering(androidx.media3.ui.PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-                    // Fit so vertical videos don't get cropped — letterbox
-                    // is the standard expectation.
-                    resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-                }
-            }
-        )
-        IconButton(
-            onClick = onClose,
-            colors = IconButtonDefaults.iconButtonColors(
-                containerColor = Color.Black.copy(alpha = 0.45f)
-            ),
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                .padding(start = 12.dp, top = 8.dp)
-        ) {
-            Icon(
-                Icons.Outlined.Close,
-                contentDescription = stringResource(R.string.media_viewer_close),
-                tint = Color.White,
-                modifier = Modifier.size(24.dp)
-            )
-        }
-    }
 }
