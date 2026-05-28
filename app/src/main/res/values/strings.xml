@@ -273,4 +273,10 @@
     <string name="settings_ai_apikey_save">Salva</string>
     <string name="settings_ai_apikey_clear">Rimuovi</string>
     <string name="action_ai">AI</string>
+    <string name="action_pin">Fissa</string>
+    <string name="action_unpin">Rimuovi pin</string>
+    <string name="tab_archived">Archiviati</string>
+    <string name="empty_archived">Nessuna chat archiviata</string>
+    <string name="settings_archived_tab">Tab Archiviati</string>
+    <string name="settings_archived_tab_desc">Mostra una quarta scheda con le chat archiviate</string>
 </resources>

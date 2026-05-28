@@ -86,14 +86,24 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private data class TabSpec(val kind: ChatKind?, val labelRes: Int, val isHome: Boolean = false)
-
-private val TAB_SPECS = listOf(
-    TabSpec(kind = null, labelRes = R.string.tab_home, isHome = true),
-    TabSpec(ChatKind.Private, R.string.tab_chats),
-    TabSpec(ChatKind.Group, R.string.tab_groups),
-    TabSpec(ChatKind.Channel, R.string.tab_channels)
+private data class TabSpec(
+    val kind: ChatKind?,
+    val labelRes: Int,
+    val isArchive: Boolean = false
 )
+
+/**
+ * The chat-list tabs. Home was removed — the list opens straight on Chat.
+ * Saved Messages is pinned at the top of the Chat tab instead of living
+ * behind a Home digest. The Archiviati tab is appended only when the user
+ * enables it in Settings.
+ */
+private fun buildTabs(showArchive: Boolean): List<TabSpec> = buildList {
+    add(TabSpec(ChatKind.Private, R.string.tab_chats))
+    add(TabSpec(ChatKind.Group, R.string.tab_groups))
+    add(TabSpec(ChatKind.Channel, R.string.tab_channels))
+    if (showArchive) add(TabSpec(null, R.string.tab_archived, isArchive = true))
+}
 
 @Composable
 fun ChatListScreen(
@@ -104,6 +114,11 @@ fun ChatListScreen(
 ) {
     val allChats by TdClient.chats.collectAsState()
     val scope = rememberCoroutineScope()
+    val appearance by com.secondream.cheipgram.settings.AppSettings.appearance
+        .collectAsState(initial = com.secondream.cheipgram.settings.AppearancePrefs())
+    // Tabs are dynamic now: Chat/Gruppi/Canali, plus Archiviati when the
+    // user turns it on in Settings.
+    val tabs = remember(appearance.showArchivedTab) { buildTabs(appearance.showArchivedTab) }
 
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var searchOpen by remember { mutableStateOf(false) }
@@ -157,50 +172,20 @@ fun ChatListScreen(
                                 onValueChange = { searchQuery = it }
                             )
                         } else {
-                            // Title swaps per tab. On Home we surface the
-                            // personalised greeting where the brand name used
-                            // to be — same italic SemiBold treatment so it
-                            // still reads like a heading, not body copy. On
-                            // the other tabs we just show the tab name
-                            // ("Chat" / "Gruppi" / "Canali") so the user
-                            // always knows where they are without scrolling.
-                            val spec = TAB_SPECS[selectedTab]
-                            if (spec.isHome) {
-                                Text(
-                                    text = myFirstName?.let {
-                                        stringResource(R.string.home_greeting, it)
-                                    } ?: stringResource(R.string.home_greeting_anon),
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    fontStyle = FontStyle.Italic,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            } else {
-                                Text(
-                                    stringResource(spec.labelRes),
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
+                            val safeTab = selectedTab.coerceIn(0, tabs.lastIndex)
+                            val spec = tabs[safeTab]
+                            Text(
+                                stringResource(spec.labelRes),
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontStyle = FontStyle.Italic,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     },
                     actions = {
-                        // Home is a digest, not a search target — hide the
-                        // magnifier there entirely. On the other tabs we
-                        // keep the icon (or the live search field when
-                        // open). We also auto-close any active search if
-                        // the user swipes back to Home so the bar doesn't
-                        // linger past its usefulness.
-                        val onHome = TAB_SPECS[selectedTab].isHome
-                        LaunchedEffect(onHome) {
-                            if (onHome && searchOpen) {
-                                searchOpen = false
-                                searchQuery = ""
-                            }
-                        }
+                        // Search is available on every tab now (no Home).
                         if (searchOpen) {
                             IconButton(onClick = {
                                 searchOpen = false
@@ -212,13 +197,11 @@ fun ChatListScreen(
                                 )
                             }
                         } else {
-                            if (!onHome) {
-                                IconButton(onClick = { searchOpen = true }) {
-                                    Icon(
-                                        Icons.Outlined.Search,
-                                        contentDescription = stringResource(R.string.search_action)
-                                    )
-                                }
+                            IconButton(onClick = { searchOpen = true }) {
+                                Icon(
+                                    Icons.Outlined.Search,
+                                    contentDescription = stringResource(R.string.search_action)
+                                )
                             }
                             IconButton(onClick = onOpenProfile) {
                                 Avatar(
@@ -241,28 +224,38 @@ fun ChatListScreen(
                         titleContentColor = MaterialTheme.colorScheme.onBackground
                     )
                 )
+                // Per-tab unread totals (sum of unread across chats in
+                // that category). Archive sums archived chats; the others
+                // sum their kind among non-archived chats.
+                val tabBadges = remember(allChats, tabs) {
+                    tabs.map { spec ->
+                        if (spec.isArchive) allChats.filter { it.isArchived }.sumOf { it.unread }
+                        else allChats.filter { !it.isArchived && it.kind == spec.kind }.sumOf { it.unread }
+                    }
+                }
                 PillTabs(
-                    titles = TAB_SPECS.map { stringResource(it.labelRes) },
-                    selected = selectedTab,
+                    titles = tabs.map { stringResource(it.labelRes) },
+                    badges = tabBadges,
+                    selected = selectedTab.coerceIn(0, tabs.lastIndex),
                     onSelect = { selectedTab = it }
                 )
             }
         }
     ) { padding ->
+        // Keep selectedTab valid if the archive tab was toggled off while
+        // it was selected.
+        LaunchedEffect(tabs.size) {
+            if (selectedTab > tabs.lastIndex) selectedTab = tabs.lastIndex
+        }
         val pagerState = androidx.compose.foundation.pager.rememberPagerState(
-            initialPage = selectedTab,
-            pageCount = { TAB_SPECS.size }
+            initialPage = selectedTab.coerceIn(0, tabs.lastIndex),
+            pageCount = { tabs.size }
         )
-        // Tap on a pill -> animate the pager to that page.
         LaunchedEffect(selectedTab) {
             if (pagerState.currentPage != selectedTab && pagerState.targetPage != selectedTab) {
-                pagerState.animateScrollToPage(selectedTab)
+                runCatching { pagerState.animateScrollToPage(selectedTab.coerceIn(0, tabs.lastIndex)) }
             }
         }
-        // Swipe gesture -> sync the pill highlight without a 200ms lag.
-        // pagerState.targetPage flips to the destination as soon as the
-        // gesture passes the threshold (well before currentPage updates),
-        // so the highlight follows the user's finger instead of trailing it.
         LaunchedEffect(pagerState) {
             snapshotFlow { pagerState.targetPage }.collect { target ->
                 if (selectedTab != target) selectedTab = target
@@ -272,30 +265,29 @@ fun ChatListScreen(
             state = pagerState,
             modifier = Modifier.fillMaxSize().padding(padding)
         ) { page ->
-            val spec = TAB_SPECS[page]
-            if (spec.isHome) {
-                HomePage(
-                    allChats = allChats,
-                    onChatClick = onChatClick,
-                    onNewChat = onNewChat
-                )
-                return@HorizontalPager
-            }
-            val pageKind = spec.kind!!
-            val pageChats = remember(allChats, page, searchQuery, myUserId) {
+            val spec = tabs[page.coerceIn(0, tabs.lastIndex)]
+            val pageChats = remember(allChats, page, searchQuery, myUserId, spec) {
                 val q = searchQuery.trim()
-                allChats
-                    .filter { it.kind == pageKind }
-                    // Saved Messages is the user's chat with themself — TDLib
-                    // exposes it like any other private chat. We hide it from
-                    // the Chats tab because it lives on the home page already
-                    // (the Storage shortcut). Comparing against 0L is a no-op
-                    // while myUserId is still being fetched on first launch.
-                    .filter { myUserId == 0L || it.id != myUserId }
-                    .let { list ->
-                        if (q.isBlank()) list
-                        else list.filter { it.title.contains(q, ignoreCase = true) }
-                    }
+                val base = if (spec.isArchive) {
+                    // Archive tab: every archived chat regardless of kind.
+                    allChats.filter { it.isArchived }
+                } else {
+                    allChats
+                        .filter { !it.isArchived && it.kind == spec.kind }
+                        // Saved Messages (chat with self) is pinned to the
+                        // TOP of the Chat tab instead of being hidden — so
+                        // we DON'T filter it out here for Private; we lift
+                        // it to the front below.
+                        .let { list ->
+                            if (spec.kind == ChatKind.Private && myUserId != 0L) {
+                                val saved = list.filter { it.id == myUserId }
+                                val rest = list.filter { it.id != myUserId }
+                                saved + rest
+                            } else list
+                        }
+                }
+                if (q.isBlank()) base
+                else base.filter { it.title.contains(q, ignoreCase = true) }
             }
             if (pageChats.isEmpty()) {
                 Box(
@@ -306,8 +298,9 @@ fun ChatListScreen(
                         when {
                             searchQuery.isNotBlank() ->
                                 stringResource(R.string.empty_search_results, searchQuery.trim())
-                            pageKind == ChatKind.Group -> stringResource(R.string.empty_groups)
-                            pageKind == ChatKind.Channel -> stringResource(R.string.empty_channels)
+                            spec.isArchive -> stringResource(R.string.empty_archived)
+                            spec.kind == ChatKind.Group -> stringResource(R.string.empty_groups)
+                            spec.kind == ChatKind.Channel -> stringResource(R.string.empty_channels)
                             else -> stringResource(R.string.empty_chats)
                         },
                         style = MaterialTheme.typography.bodyMedium,
@@ -537,7 +530,8 @@ private fun ChatActionRow(
 private fun PillTabs(
     titles: List<String>,
     selected: Int,
-    onSelect: (Int) -> Unit
+    onSelect: (Int) -> Unit,
+    badges: List<Int> = emptyList()
 ) {
     // Sliding-pill tabs: instead of recoloring each tab on selection (which
     // pops abruptly and reads as a flicker during HorizontalPager swipes),
@@ -589,24 +583,42 @@ private fun PillTabs(
                         .weight(1f)
                         .height(tabHeight)
                         .clickable(
-                            // Use indication=null so tapping a tab doesn't
-                            // show a ripple ON TOP of the moving pill —
-                            // looks much cleaner with the slide animation.
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                             indication = null
                         ) { onSelect(i) },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = textColor,
-                        fontWeight = if (i == selected) FontWeight.SemiBold else FontWeight.Medium,
-                        // Italic across the board so the tabs match the
-                        // italic top-bar greeting on Home.
-                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                        maxLines = 1
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            title,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = textColor,
+                            fontWeight = if (i == selected) FontWeight.SemiBold else FontWeight.Medium,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                            maxLines = 1
+                        )
+                        // Unread badge for this category. Hidden at zero.
+                        val badge = badges.getOrNull(i) ?: 0
+                        if (badge > 0) {
+                            Spacer(Modifier.width(5.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(9.dp))
+                                    .background(
+                                        if (i == selected) onPrimary.copy(alpha = 0.25f)
+                                        else primary
+                                    )
+                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    if (badge > 99) "99+" else badge.toString(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (i == selected) onPrimary else onPrimary,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

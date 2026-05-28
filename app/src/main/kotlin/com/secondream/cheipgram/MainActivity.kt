@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -60,6 +61,14 @@ class MainActivity : ComponentActivity() {
         // the process lifetime so the persistent panel can stay current
         // across screen changes.
         com.secondream.cheipgram.transfer.TransferTracker.start()
+        // Push the stored auto-download preference down to TDLib so its
+        // own background auto-download honors the user's toggle (our
+        // per-bubble gating alone can't stop TDLib's internal presets).
+        kotlinx.coroutines.GlobalScope.launch {
+            val pref = com.secondream.cheipgram.settings.AppSettings.appearance
+                .first().autoDownloadMedia
+            runCatching { com.secondream.cheipgram.td.TdClient.applyAutoDownloadSetting(pref) }
+        }
         pendingChatId.value = intent?.getLongExtra("chatId", 0L)?.takeIf { it != 0L }
         handleThemeDeeplink(intent)
         handleTmeDeeplink(intent)
@@ -92,8 +101,11 @@ class MainActivity : ComponentActivity() {
                             pendingChatId = chatToOpen,
                             onChatOpened = { pendingChatId.value = null }
                         )
+                        // Anchored to the TOP (notification-banner style) so
+                        // it never overlaps the message input bar / send
+                        // button at the bottom of a chat.
                         com.secondream.cheipgram.transfer.TransferPanel(
-                            modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+                            modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter)
                         )
                     }
                 }

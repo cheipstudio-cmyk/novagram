@@ -75,17 +75,21 @@ fun VoiceNotePlayer(
     var ready by remember(voiceNote.voice.id) { mutableStateOf(file.local.isDownloadingCompleted) }
 
     LaunchedEffect(voiceNote.voice.id) {
-        // Snapshot the live state on (re-)entry. TDLib mutates File objects
-        // in place but Compose doesn't observe field-level changes, so
-        // without an explicit re-read a voice note that downloaded while
-        // the bubble was scrolled off-screen would come back with the
-        // stale (empty) path and the Play button stuck disabled.
+        // Snapshot live state on entry (TDLib mutates File in place; Compose
+        // doesn't observe field changes).
         runCatching { TdClient.getFile(voiceNote.voice.id) }.onSuccess { latest ->
             file = latest
             if (latest.local.isDownloadingCompleted) ready = true
         }
         if (!file.local.isDownloadingCompleted) {
-            runCatching { TdClient.downloadFile(file.id) }
+            // downloadFile is synchronous (returns the completed File), so
+            // we use its result directly — relying only on fileUpdates had
+            // a race where the completion emission fired before we started
+            // collecting, leaving `ready` stuck false and the button dead.
+            runCatching { TdClient.downloadFile(file.id) }.onSuccess { done ->
+                file = done
+                if (done.local.isDownloadingCompleted) ready = true
+            }
         }
         TdClient.fileUpdates.collect { upd ->
             if (upd.id == voiceNote.voice.id) {
@@ -141,7 +145,11 @@ fun VoiceNotePlayer(
                     val path = file.local.path
                     if (path.isNullOrBlank()) return@clickable
                     val p = player ?: ExoPlayer.Builder(ctx).build().also {
-                        it.setMediaItem(MediaItem.fromUri(path))
+                        // Wrap the raw filesystem path in a proper file://
+                        // URI — ExoPlayer can choke on a schemeless absolute
+                        // path depending on the data-source resolver.
+                        val uri = android.net.Uri.fromFile(java.io.File(path))
+                        it.setMediaItem(MediaItem.fromUri(uri))
                         it.prepare()
                         player = it
                     }

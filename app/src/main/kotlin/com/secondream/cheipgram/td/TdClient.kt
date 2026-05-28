@@ -263,7 +263,11 @@ object TdClient {
         val rev = ++refreshRevision
         val list = chatCache.values
             .mapNotNull { chat ->
-                val pos = chat.positions.firstOrNull { it.list is TdApi.ChatListMain }
+                val mainPos = chat.positions.firstOrNull { it.list is TdApi.ChatListMain }
+                val archivePos = chat.positions.firstOrNull { it.list is TdApi.ChatListArchive }
+                // Prefer the Main list position; fall back to Archive so
+                // archived chats still surface (in the Archiviati tab).
+                val pos = mainPos?.takeIf { it.order != 0L } ?: archivePos
                 if (pos == null || pos.order == 0L) null
                 else ChatSummary(
                     id = chat.id,
@@ -274,6 +278,7 @@ object TdClient {
                     lastMessageTimestamp = chat.lastMessage?.date?.toLong()?.times(1000) ?: 0L,
                     kind = resolveKind(chat),
                     chat = chat,
+                    isArchived = (mainPos == null || mainPos.order == 0L) && archivePos != null,
                     revision = rev
                 )
             }
@@ -424,6 +429,10 @@ object TdClient {
     suspend fun loadChats(limit: Int) {
         try { send(TdApi.LoadChats(TdApi.ChatListMain(), limit)) }
         catch (e: TdException) { Log.w(TAG, "loadChats: ${e.message}") }
+        // Also pull the archive so the Archiviati tab (when enabled) has
+        // data. Failures are non-fatal — archive is a secondary surface.
+        try { send(TdApi.LoadChats(TdApi.ChatListArchive(), limit)) }
+        catch (e: TdException) { Log.w(TAG, "loadChats(archive): ${e.message}") }
     }
 
     suspend fun openChat(chatId: Long) { send(TdApi.OpenChat(chatId)) }
@@ -723,6 +732,82 @@ object TdClient {
      */
     suspend fun getMyChatMember(chatId: Long, myUserId: Long): TdApi.ChatMember =
         send(TdApi.GetChatMember(chatId, TdApi.MessageSenderUser(myUserId)))
+
+    /**
+     * Fetch any user's membership in a chat. Used by the message actions
+     * sheet to detect whether the sender is the group CREATOR — admins
+     * must not see ban/mute options against the owner. Returns null on
+     * any error (e.g. user left the group) so callers fail safe to
+     * "not owner" rather than crashing.
+     */
+    suspend fun getChatMemberStatus(chatId: Long, userId: Long): TdApi.ChatMemberStatus? =
+        runCatching {
+            send(TdApi.GetChatMember(chatId, TdApi.MessageSenderUser(userId))).status
+        }.getOrNull()
+
+    /**
+     * Pin a message in a chat. `disableNotification=true` keeps it quiet
+     * (no "pinned a message" service ping), `onlyForSelf` pins it only on
+     * the current account (allowed in private chats). TDLib enforces the
+     * permission server-side; we surface failures via runCatching upstream.
+     */
+    suspend fun pinChatMessage(
+        chatId: Long,
+        messageId: Long,
+        disableNotification: Boolean = false,
+        onlyForSelf: Boolean = false
+    ) {
+        send(TdApi.PinChatMessage(chatId, messageId, disableNotification, onlyForSelf))
+    }
+
+    suspend fun unpinChatMessage(chatId: Long, messageId: Long) {
+        send(TdApi.UnpinChatMessage(chatId, messageId))
+    }
+
+    /**
+     * Configure TDLib's OWN auto-download presets across all network
+     * types. This is separate from our per-bubble gating: TDLib will
+     * eagerly pull photos/small files in the background according to its
+     * presets regardless of what our UI does, so to truly honor the
+     * "auto-download off" toggle we must disable it at the TDLib level
+     * too. A no-arg AutoDownloadSettings is all-disabled; when enabled we
+     * set generous caps so normal media still flows.
+     */
+    suspend fun applyAutoDownloadSetting(enabled: Boolean) {
+        val s = TdApi.AutoDownloadSettings()
+        s.isAutoDownloadEnabled = enabled
+        if (enabled) {
+            s.maxPhotoFileSize = 10 * 1024 * 1024
+            s.maxVideoFileSize = 50L * 1024 * 1024
+            s.maxOtherFileSize = 50L * 1024 * 1024
+        }
+        val types = listOf(
+            TdApi.NetworkTypeWiFi(),
+            TdApi.NetworkTypeMobile(),
+            TdApi.NetworkTypeMobileRoaming(),
+            TdApi.NetworkTypeOther()
+        )
+        for (t in types) {
+            runCatching { send(TdApi.SetAutoDownloadSettings(s, t)) }
+        }
+    }
+
+    /**
+     * Whether the current user can pin messages in this chat. Private
+     * chats always allow it (pin-for-self). Groups/channels require the
+     * member to be creator or an admin whose rights include canPinMessages.
+     */
+    suspend fun canPinMessages(chatId: Long): Boolean {
+        val chat = getCachedChat(chatId) ?: return false
+        if (chat.type is TdApi.ChatTypePrivate || chat.type is TdApi.ChatTypeSecret) return true
+        val me = runCatching { getMe().id }.getOrNull() ?: return false
+        val status = getChatMemberStatus(chatId, me)
+        return when (status) {
+            is TdApi.ChatMemberStatusCreator -> true
+            is TdApi.ChatMemberStatusAdministrator -> status.rights?.canPinMessages == true
+            else -> false
+        }
+    }
 
     /**
      * Kick a user from a group: ban with bannedUntilDate=0 means permanent.
@@ -1043,6 +1128,7 @@ data class ChatSummary(
     val lastMessageTimestamp: Long,
     val kind: ChatKind,
     val chat: TdApi.Chat,
+    val isArchived: Boolean = false,
     val revision: Long = 0L
 )
 

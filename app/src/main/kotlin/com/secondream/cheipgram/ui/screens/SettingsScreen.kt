@@ -371,7 +371,19 @@ fun SettingsScreen(onBack: () -> Unit) {
                     description = stringResource(R.string.settings_media_autodownload_desc),
                     checked = appearance.autoDownloadMedia,
                     onToggle = { enabled ->
-                        scope.launch { AppSettings.setAutoDownloadMedia(enabled) }
+                        scope.launch {
+                            AppSettings.setAutoDownloadMedia(enabled)
+                            // Mirror the choice into TDLib's own presets.
+                            runCatching { com.secondream.cheipgram.td.TdClient.applyAutoDownloadSetting(enabled) }
+                        }
+                    }
+                )
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_archived_tab),
+                    description = stringResource(R.string.settings_archived_tab_desc),
+                    checked = appearance.showArchivedTab,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setShowArchivedTab(enabled) }
                     }
                 )
             }

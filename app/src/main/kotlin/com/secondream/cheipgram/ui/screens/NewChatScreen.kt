@@ -38,6 +38,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.offset
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -265,34 +266,65 @@ private fun PillTabs(
     selected: Int,
     onSelect: (Int) -> Unit
 ) {
+    // Same sliding-pill treatment as the main chat-list tabs: one accent
+    // pill animates its position between cells, text colour cross-fades,
+    // labels are italic. Keeps the two tab strips visually identical.
     val primary = MaterialTheme.colorScheme.primary
     val onPrimary = MaterialTheme.colorScheme.onPrimary
     val onMuted = MaterialTheme.colorScheme.onSurfaceVariant
-    Row(
+    val animatedSelected by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = selected.toFloat(),
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioLowBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+        ),
+        label = "newchat-tab-slide"
+    )
+    androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(4.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(4.dp)
     ) {
-        titles.forEachIndexed { i, title ->
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
-                    .background(if (selected == i) primary else androidx.compose.ui.graphics.Color.Transparent)
-                    .clickable { onSelect(i) }
-                    .padding(vertical = 10.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (selected == i) onPrimary else onMuted,
-                    fontWeight = if (selected == i) FontWeight.SemiBold else FontWeight.Medium
-                )
+        val tabCount = titles.size.coerceAtLeast(1)
+        val tabWidth = this.maxWidth / tabCount
+        val tabHeight = 44.dp
+        Box(
+            modifier = Modifier
+                .offset(x = tabWidth * animatedSelected)
+                .width(tabWidth)
+                .height(tabHeight)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                .background(primary)
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().height(tabHeight),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            titles.forEachIndexed { i, title ->
+                val distance = kotlin.math.abs(animatedSelected - i).coerceIn(0f, 1f)
+                val textColor = androidx.compose.ui.graphics.lerp(onPrimary, onMuted, distance)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(tabHeight)
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null
+                        ) { onSelect(i) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = textColor,
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                        fontWeight = if (i == selected) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }

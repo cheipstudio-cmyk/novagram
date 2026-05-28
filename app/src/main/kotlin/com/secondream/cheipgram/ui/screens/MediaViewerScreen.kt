@@ -172,7 +172,9 @@ private fun VideoViewer(filePath: String, onClose: () -> Unit) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val player = androidx.compose.runtime.remember(filePath) {
         androidx.media3.exoplayer.ExoPlayer.Builder(ctx).build().apply {
-            setMediaItem(androidx.media3.common.MediaItem.fromUri(filePath))
+            setMediaItem(androidx.media3.common.MediaItem.fromUri(
+                android.net.Uri.fromFile(java.io.File(filePath))
+            ))
             prepare()
             playWhenReady = true
         }

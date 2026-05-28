@@ -259,4 +259,10 @@
     <string name="settings_ai_apikey_save">Guardar</string>
     <string name="settings_ai_apikey_clear">Quitar</string>
     <string name="action_ai">IA</string>
+    <string name="action_pin">Fijar</string>
+    <string name="action_unpin">Quitar</string>
+    <string name="tab_archived">Archivados</string>
+    <string name="empty_archived">Sin chats archivados</string>
+    <string name="settings_archived_tab">Pestaña Archivados</string>
+    <string name="settings_archived_tab_desc">Muestra una cuarta pestaña con los chats archivados</string>
 </resources>

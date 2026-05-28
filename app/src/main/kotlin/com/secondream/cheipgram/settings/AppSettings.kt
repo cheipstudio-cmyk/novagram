@@ -77,7 +77,9 @@ data class AppearancePrefs(
      * all. Stored locally only, never leaves the device except as the
      * Authorization header to api.anthropic.com.
      */
-    val anthropicApiKey: String? = null
+    val anthropicApiKey: String? = null,
+    /** When true, a 4th "Archiviati" tab appears in the chat list. */
+    val showArchivedTab: Boolean = false
 )
 
 /**
@@ -119,6 +121,7 @@ object AppSettings {
     private val TEXT_SCALE = androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
     private val AUTO_DOWNLOAD_MEDIA = androidx.datastore.preferences.core.booleanPreferencesKey("auto_download_media")
     private val ANTHROPIC_API_KEY = androidx.datastore.preferences.core.stringPreferencesKey("anthropic_api_key")
+    private val SHOW_ARCHIVED_TAB = androidx.datastore.preferences.core.booleanPreferencesKey("show_archived_tab")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -159,9 +162,14 @@ object AppSettings {
                 activeSavedThemeId = prefs[ACTIVE_SAVED_THEME_ID],
                 textScale = (prefs[TEXT_SCALE] ?: 1.0f).coerceIn(0.85f, 1.35f),
                 autoDownloadMedia = prefs[AUTO_DOWNLOAD_MEDIA] ?: true,
-                anthropicApiKey = prefs[ANTHROPIC_API_KEY]?.takeIf { it.isNotBlank() }
+                anthropicApiKey = prefs[ANTHROPIC_API_KEY]?.takeIf { it.isNotBlank() },
+                showArchivedTab = prefs[SHOW_ARCHIVED_TAB] ?: false
             )
         }
+
+    suspend fun setShowArchivedTab(enabled: Boolean) {
+        appContext.dataStore.edit { it[SHOW_ARCHIVED_TAB] = enabled }
+    }
 
     suspend fun setAutoDownloadMedia(enabled: Boolean) {
         appContext.dataStore.edit { it[AUTO_DOWNLOAD_MEDIA] = enabled }

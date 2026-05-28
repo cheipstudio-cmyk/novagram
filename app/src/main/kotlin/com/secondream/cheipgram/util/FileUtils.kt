@@ -146,4 +146,55 @@ object FileUtils {
     }
 
     enum class SaveCategory { Media, File }
+
+    /**
+     * Downscale + re-encode an image for chat upload. Decodes bounds
+     * first to compute an integer sample size (cheap, avoids decoding the
+     * full bitmap into memory), loads the downsampled bitmap, scales it
+     * so the longest edge is <= [maxEdge], and writes JPEG at [quality]
+     * to a new cache file. Returns the compressed file, or null on any
+     * failure so the caller can fall back to the original.
+     */
+    fun compressImageForUpload(
+        source: java.io.File,
+        maxEdge: Int = 1600,
+        quality: Int = 82
+    ): java.io.File? = runCatching {
+        val path = source.absolutePath
+        // Pass 1: bounds only.
+        val bounds = android.graphics.BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        android.graphics.BitmapFactory.decodeFile(path, bounds)
+        val (w, h) = bounds.outWidth to bounds.outHeight
+        if (w <= 0 || h <= 0) return@runCatching null
+        // Compute power-of-two sample size to get near maxEdge.
+        var sample = 1
+        val longest = maxOf(w, h)
+        while (longest / (sample * 2) >= maxEdge) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply {
+            inSampleSize = sample
+        }
+        val decoded = android.graphics.BitmapFactory.decodeFile(path, opts)
+            ?: return@runCatching null
+        // Fine scale to exactly fit maxEdge if still larger.
+        val scale = maxEdge.toFloat() / maxOf(decoded.width, decoded.height)
+        val scaled = if (scale < 1f) {
+            android.graphics.Bitmap.createScaledBitmap(
+                decoded,
+                (decoded.width * scale).toInt().coerceAtLeast(1),
+                (decoded.height * scale).toInt().coerceAtLeast(1),
+                true
+            ).also { if (it != decoded) decoded.recycle() }
+        } else decoded
+        val out = java.io.File(
+            source.parentFile,
+            "cmp_${System.currentTimeMillis()}.jpg"
+        )
+        java.io.FileOutputStream(out).use { fos ->
+            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, fos)
+        }
+        scaled.recycle()
+        if (out.exists() && out.length() > 0) out else null
+    }.getOrNull()
 }

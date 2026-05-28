@@ -259,4 +259,10 @@
     <string name="settings_ai_apikey_save">Save</string>
     <string name="settings_ai_apikey_clear">Remove</string>
     <string name="action_ai">AI</string>
+    <string name="action_pin">Pin</string>
+    <string name="action_unpin">Unpin</string>
+    <string name="tab_archived">Archived</string>
+    <string name="empty_archived">No archived chats</string>
+    <string name="settings_archived_tab">Archived tab</string>
+    <string name="settings_archived_tab_desc">Show a fourth tab with archived chats</string>
 </resources>

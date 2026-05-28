@@ -88,6 +88,11 @@ fun MessageBubble(
      *  in-memory window), false to let the default Intent flow handle
      *  it as a fallback. */
     onJumpToMessage: (Long) -> Boolean = { false },
+    /** Fired when the user taps a Telegram (t.me / telegram.me / tg:)
+     *  link that does NOT point into the current chat. The caller
+     *  resolves the username/invite via TDLib and opens the target chat
+     *  INSIDE CheipGram — never bouncing out to a browser. */
+    onOpenTelegramLink: (android.net.Uri) -> Unit = {},
     /**
      * Bumped by the parent each time TDLib pushes a new InteractionInfo
      * for this message. Reading it here pulls this composable into the
@@ -280,13 +285,17 @@ fun MessageBubble(
                                         .getOrNull() ?: biggest
                                     val path = latest.local?.path
                                     if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = false
                                         onMediaTap(path)
                                     } else {
                                         runCatching { TdClient.downloadFile(latest.id) }
                                             .onSuccess { done ->
                                                 done.local?.path?.takeIf {
                                                     done.local.isDownloadingCompleted && it.isNotBlank()
-                                                }?.let(onMediaTap)
+                                                }?.let { p ->
+                                                    com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = false
+                                                    onMediaTap(p)
+                                                }
                                             }
                                     }
                                 }
@@ -1090,25 +1099,20 @@ private fun FormattedTextRendering(
                         }
                     }
 
+                    // Any other Telegram link: resolve + open the chat
+                    // INSIDE CheipGram. We hand the Uri to the caller
+                    // (ChatScreen) which uses TDLib to look up the
+                    // username / invite and navigates in-app. Never an
+                    // Intent, never the browser.
+                    if (isTelegramLink) {
+                        onOpenTelegramLink(uri)
+                        return@ClickableText
+                    }
+
+                    // Non-Telegram URL: hand off to the system as before.
                     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
                         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    // For t.me / telegram.me / telegram.dog links we force
-                    // the intent to resolve inside CheipGram by setting the
-                    // package — MainActivity's handleTmeDeeplink then opens
-                    // the chat natively instead of bouncing to the system
-                    // chooser (which would offer Telegram nativo + browser).
-                    if (isTelegramLink) {
-                        intent.setPackage(ctx.packageName)
-                    }
-                    runCatching { ctx.startActivity(intent) }.recoverCatching {
-                        // Fallback: if for any reason our own activity refused
-                        // (e.g. unusual t.me sub-path), drop setPackage and
-                        // let the system chooser handle it instead of failing.
-                        ctx.startActivity(
-                            android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
-                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                        )
-                    }
+                    runCatching { ctx.startActivity(intent) }
                 }
                 return@ClickableText
             }

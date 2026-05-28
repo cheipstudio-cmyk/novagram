@@ -259,4 +259,10 @@
     <string name="settings_ai_apikey_save">Enregistrer</string>
     <string name="settings_ai_apikey_clear">Supprimer</string>
     <string name="action_ai">IA</string>
+    <string name="action_pin">Épingler</string>
+    <string name="action_unpin">Détacher</string>
+    <string name="tab_archived">Archivés</string>
+    <string name="empty_archived">Aucune discussion archivée</string>
+    <string name="settings_archived_tab">Onglet Archivés</string>
+    <string name="settings_archived_tab_desc">Afficher un quatrième onglet avec les discussions archivées</string>
 </resources>

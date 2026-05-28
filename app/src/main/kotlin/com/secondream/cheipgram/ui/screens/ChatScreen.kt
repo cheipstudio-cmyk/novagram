@@ -174,6 +174,16 @@ fun ChatScreen(
     // sheet itself takes the message body + context and routes preset
     // prompts through Anthropic. Cleared on dismiss.
     var aiTarget by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
+    // Whether the current user may pin in this chat (private/secret always;
+    // groups/channels require creator or admin-with-canPinMessages).
+    var canPinHere by remember(chatId) { mutableStateOf(false) }
+    LaunchedEffect(chatId) {
+        canPinHere = runCatching { TdClient.canPinMessages(chatId) }.getOrDefault(false)
+    }
+    // Tracks the most-recently pinned message id so the actions tile can
+    // flip between "Fissa"/"Rimuovi pin". Updated optimistically on the
+    // user's own pin/unpin; the common single-pin case stays correct.
+    var pinnedMessageId by remember(chatId) { mutableStateOf(0L) }
     val appearance by com.secondream.cheipgram.settings.AppSettings.appearance
         .collectAsState(initial = com.secondream.cheipgram.settings.AppearancePrefs())
     // Cached list of chat members for the @-mention picker. Loaded lazily
@@ -261,10 +271,18 @@ fun ChatScreen(
             scope.launch(Dispatchers.IO) {
                 val file = FileUtils.copyUriToCache(context, picked) ?: return@launch
                 val isVideo = isVideoFile(file.name)
+                // Compress photos before upload — a 12MP camera shot is
+                // several MB and uploads slowly at full size. We downscale
+                // to max 1600px and re-encode JPEG ~82%, which is visually
+                // indistinguishable in chat but uploads in a fraction of
+                // the time. Videos are left as-is (handled by TDLib).
+                val finalFile = if (!isVideo) {
+                    FileUtils.compressImageForUpload(file) ?: file
+                } else file
                 pendingMedia = PendingMediaItem(
-                    file = file,
+                    file = finalFile,
                     kind = if (isVideo) PendingMediaKind.Video else PendingMediaKind.Photo,
-                    displayName = file.name
+                    displayName = finalFile.name
                 )
             }
         }
@@ -528,10 +546,72 @@ fun ChatScreen(
             }
     }
 
-    var menuOpen by remember { mutableStateOf(false) }
-    var infoOpen by remember { mutableStateOf(false) }
-    var deleteOpen by remember { mutableStateOf(false) }
-    var leaveOpen by remember { mutableStateOf(false) }
+    // Jump to a message by id, loading older history in bounded batches
+    // if it isn't in the in-memory window yet (used by same-chat link
+    // taps AND the pinned-messages list). Without the load loop, tapping
+    // a pinned message older than the loaded window did nothing.
+    val jumpToMessage: (Long) -> Unit = { targetId ->
+        scope.launch {
+            var idx = messages.indexOfFirst { it.id == targetId }
+            var guard = 0
+            while (idx < 0 && !noMore && guard < 8) {
+                guard++
+                val oldest = messages.lastOrNull()?.id ?: break
+                val res = runCatching { TdClient.getChatHistory(chatId, oldest, 50) }.getOrNull()
+                if (res == null || res.messages.isEmpty()) { noMore = true; break }
+                messages.addAll(res.messages.toList())
+                idx = messages.indexOfFirst { it.id == targetId }
+            }
+            if (idx >= 0) listState.animateScrollToItem(idx)
+        }
+    }
+
+    // Resolve a tapped Telegram link to a chat and open it INSIDE the app.
+    // Mirrors MainActivity.handleTmeDeeplink's parsing but navigates via
+    // onOpenChat instead of an Intent, so a t.me link in a message never
+    // bounces the user out to a browser.
+    val openTelegramLink: (android.net.Uri) -> Unit = { uri ->
+        scope.launch {
+            val scheme = uri.scheme.orEmpty()
+            val host = uri.host.orEmpty()
+            var username: String? = null
+            var invite: String? = null
+            if (scheme == "tg") {
+                when (host) {
+                    "resolve" -> username = uri.getQueryParameter("domain")
+                    "join" -> uri.getQueryParameter("invite")?.let { invite = "https://t.me/+$it" }
+                }
+            } else {
+                val segs = uri.pathSegments.orEmpty()
+                val first = segs.firstOrNull()
+                when {
+                    first.isNullOrBlank() -> {}
+                    first == "joinchat" && segs.size >= 2 -> invite = "https://t.me/joinchat/${segs[1]}"
+                    first.startsWith("+") -> invite = "https://t.me/$first"
+                    else -> username = first
+                }
+            }
+            val resolvedId = runCatching {
+                when {
+                    invite != null -> TdClient.joinChatByInviteLink(invite!!).id
+                    username != null -> TdClient.searchPublicChat(username!!).id
+                    else -> null
+                }
+            }.getOrNull()
+            if (resolvedId != null && resolvedId != 0L) {
+                onOpenChat(resolvedId)
+            } else {
+                // Couldn't resolve as a chat (sticker set, settings link,
+                // etc.) — fall back to the system so it's not a dead tap.
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            }
+        }
+    }
     val cachedChatLive = TdClient.getCachedChat(chatId)
     val isMuted = (cachedChatLive?.notificationSettings?.muteFor ?: 0) > 0
 
@@ -795,19 +875,15 @@ fun ChatScreen(
                                 onSwipeReply = { replyTarget = it },
                                 onAvatarClick = { uid -> profileSheetUserId = uid },
                                 onJumpToMessage = { targetId ->
-                                    // Same-chat link tapped — try to scroll to
-                                    // it in the in-memory window. We claim
-                                    // success even when the message isn't
-                                    // loaded yet: the alternative is the
-                                    // default Intent flow which causes the
-                                    // chat-relaunch loop Eugenio reported.
-                                    // Better silent than stacking duplicates.
-                                    val idx = messages.indexOfFirst { it.id == targetId }
-                                    if (idx >= 0) {
-                                        scope.launch { listState.animateScrollToItem(idx) }
-                                    }
+                                    // Scroll to the same-chat target, loading
+                                    // older history if needed (jumpToMessage
+                                    // handles the not-in-window case). We
+                                    // claim success so the link never falls
+                                    // back to an Intent / browser.
+                                    jumpToMessage(targetId)
                                     true
                                 },
+                                onOpenTelegramLink = openTelegramLink,
                                 interactionRevision = interactionRevisions[msg.id] ?: 0
                             )
                         }
@@ -1119,10 +1195,7 @@ fun ChatScreen(
             onDismiss = { pinnedSheetOpen = false },
             onJumpToMessage = { targetId ->
                 pinnedSheetOpen = false
-                val idx = messages.indexOfFirst { it.id == targetId }
-                if (idx >= 0) {
-                    scope.launch { listState.animateScrollToItem(idx) }
-                }
+                jumpToMessage(targetId)
             }
         )
     }
@@ -1328,6 +1401,20 @@ fun ChatScreen(
                     deleteTarget = null
                 }
             } else null,
+            onTogglePin = if (canPinHere) {
+                {
+                    val wasPinned = msg.id == pinnedMessageId
+                    scope.launch {
+                        runCatching {
+                            if (wasPinned) TdClient.unpinChatMessage(chatId, msg.id)
+                            else TdClient.pinChatMessage(chatId, msg.id)
+                        }
+                    }
+                    pinnedMessageId = if (wasPinned) 0L else msg.id
+                    deleteTarget = null
+                }
+            } else null,
+            isPinned = msg.id == pinnedMessageId,
             onReact = { emoji ->
                 val chosenSame = msg.interactionInfo?.reactions?.reactions?.any {
                     it.isChosen && (it.type as? TdApi.ReactionTypeEmoji)?.emoji == emoji
@@ -1893,30 +1980,70 @@ private fun AttachSheet(
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(Modifier.height(16.dp))
-            AttachOption(stringResource(R.string.attach_photo_or_video), Icons.Outlined.Image, onPickPhoto)
-            Spacer(Modifier.height(4.dp))
-            AttachOption(stringResource(R.string.attach_document_or_file), Icons.Outlined.Description, onPickDocument)
-            Spacer(Modifier.height(4.dp))
-            AttachOption(stringResource(R.string.attach_sticker), Icons.Outlined.Mood, onPickSticker)
+            // 3 equal tiles in a row — same visual language as the message
+            // actions grid (icon over label, soft rounded square, press
+            // animation). Eugenio wanted these to match.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                AttachTile(
+                    label = stringResource(R.string.attach_photo_or_video),
+                    icon = Icons.Outlined.Image,
+                    onClick = onPickPhoto,
+                    modifier = Modifier.weight(1f)
+                )
+                AttachTile(
+                    label = stringResource(R.string.attach_document_or_file),
+                    icon = Icons.Outlined.Description,
+                    onClick = onPickDocument,
+                    modifier = Modifier.weight(1f)
+                )
+                AttachTile(
+                    label = stringResource(R.string.attach_sticker),
+                    icon = Icons.Outlined.Mood,
+                    onClick = onPickSticker,
+                    modifier = Modifier.weight(1f)
+                )
+            }
             Spacer(Modifier.height(8.dp))
         }
     }
 }
 
 @Composable
-private fun AttachOption(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+private fun AttachTile(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (pressed) 0.92f else 1f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessHigh
+        ),
+        label = "attach-tile-press"
+    )
+    Column(
+        modifier = modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(18.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick
+            )
+            .padding(vertical = 20.dp, horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
+                .size(48.dp)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.surface),
             contentAlignment = Alignment.Center
@@ -1924,24 +2051,17 @@ private fun AttachOption(label: String, icon: androidx.compose.ui.graphics.vecto
             Icon(
                 icon, null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(26.dp)
             )
         }
-        Spacer(Modifier.width(14.dp))
+        Spacer(Modifier.height(10.dp))
         Text(
             label,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Spacer(Modifier.weight(1f))
-        // The TextButton was redundant — the whole row is now clickable.
-        // We keep an arrow-style label so the affordance is still visible
-        // without doubling up on tap targets.
-        Text(
-            stringResource(R.string.action_open),
-            color = MaterialTheme.colorScheme.primary,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2
         )
     }
 }
@@ -1965,6 +2085,10 @@ private fun MessageActionsSheet(
     /** Open the AI actions sheet for this message. null hides the AI tile
      *  (e.g. user hasn't configured an Anthropic API key in settings). */
     onAi: (() -> Unit)?,
+    /** Pin/unpin this message. null hides the pin tile (no permission). */
+    onTogglePin: (() -> Unit)?,
+    /** Whether this message is currently pinned (controls tile label/icon). */
+    isPinned: Boolean,
     onReact: (String) -> Unit,
     onDeleteForMe: () -> Unit,
     onDeleteForEveryone: () -> Unit,
@@ -1999,17 +2123,31 @@ private fun MessageActionsSheet(
     // Admin actions are only meaningful in groups, only against someone
     // who isn't you and isn't yourself the sender. We hide the entire
     // block otherwise to keep the sheet uncluttered.
+    // Detect whether the sender is the group CREATOR. Admins must never
+    // see ban/mute against the owner — TDLib would reject it anyway, but
+    // showing the option is confusing. Fetched lazily on sheet open; until
+    // it resolves we assume "not owner" so the (rare) race just briefly
+    // shows the actions, never hides them incorrectly for normal members.
+    var senderIsOwner by remember(message.id) { mutableStateOf(false) }
+    LaunchedEffect(message.id, senderUserId) {
+        val uid = senderUserId
+        if (uid != null && cachedChat?.type !is TdApi.ChatTypePrivate) {
+            val status = TdClient.getChatMemberStatus(message.chatId, uid)
+            senderIsOwner = status is TdApi.ChatMemberStatusCreator
+        }
+    }
     val showAdminActions = isAdmin &&
         cachedChat?.type !is TdApi.ChatTypePrivate &&
         senderUserId != null &&
-        senderUserId != myUserId
+        senderUserId != myUserId &&
+        !senderIsOwner
 
     val quickReactions = listOf("👍", "❤️", "😂", "😮", "😢", "🔥")
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = state,
-        containerColor = Ink.Surface
+        containerColor = MaterialTheme.colorScheme.surface
     ) {
         Column(modifier = Modifier.padding(20.dp).navigationBarsPadding()) {
             // Quick reactions bar at the top. The 6 most universally used
@@ -2020,7 +2158,7 @@ private fun MessageActionsSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(24.dp))
-                    .background(Ink.SurfaceHi)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
                     .padding(horizontal = 8.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -2058,6 +2196,13 @@ private fun MessageActionsSheet(
                     ))
                 }
                 add(ActionTile(stringResource(R.string.action_reply), Icons.Outlined.Reply, onReply))
+                if (onTogglePin != null) {
+                    add(ActionTile(
+                        stringResource(if (isPinned) R.string.action_unpin else R.string.action_pin),
+                        Icons.Outlined.PushPin,
+                        onTogglePin
+                    ))
+                }
                 if (onEdit != null && editAllowed) {
                     add(ActionTile(stringResource(R.string.action_edit), Icons.Outlined.Edit, onEdit))
                 }

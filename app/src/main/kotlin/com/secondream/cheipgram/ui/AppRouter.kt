@@ -143,18 +143,19 @@ fun AppRouter(
             )
         }
         composable(Routes.MEDIA_VIEWER) {
-            val path = MediaViewerHolder.currentPath
+            // Capture the path ONCE. Previously onClose nulled
+            // MediaViewerHolder.currentPath, which recomposed this block
+            // with path==null and fired the else-branch popBackStack — a
+            // SECOND pop on top of onClose's, kicking the user all the way
+            // out of the chat. Remembering the path means the holder reset
+            // can't change what we render, so onClose pops exactly once.
+            val path = remember { MediaViewerHolder.currentPath }
             if (path != null) {
                 MediaViewerScreen(
                     filePath = path,
-                    onClose = {
-                        MediaViewerHolder.currentPath = null
-                        MediaViewerHolder.isVideo = false
-                        nav.popBackStack()
-                    }
+                    onClose = { nav.popBackStack() }
                 )
             } else {
-                // Path was lost (process death etc) — just go back.
                 androidx.compose.runtime.LaunchedEffect(Unit) { nav.popBackStack() }
             }
         }
