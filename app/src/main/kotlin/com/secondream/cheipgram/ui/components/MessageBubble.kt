@@ -287,14 +287,14 @@ fun MessageBubble(
                                     val latest = runCatching { TdClient.getFile(biggest.id) }
                                         .getOrNull() ?: biggest
                                     val path = latest.local?.path
-                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { java.io.File(path).exists() }.getOrDefault(false))) {
                                         com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = false
                                         onMediaTap(path)
                                     } else {
                                         runCatching { TdClient.downloadFile(latest.id) }
                                             .onSuccess { done ->
                                                 done.local?.path?.takeIf {
-                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                    it.isNotBlank() && (done.local.isDownloadingCompleted || runCatching { java.io.File(it).exists() }.getOrDefault(false))
                                                 }?.let { p ->
                                                     com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = false
                                                     onMediaTap(p)
@@ -307,7 +307,7 @@ fun MessageBubble(
                                     val latest = runCatching { TdClient.getFile(f.id) }
                                         .getOrNull() ?: f
                                     val path = latest.local?.path
-                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { java.io.File(path).exists() }.getOrDefault(false))) {
                                         // Open in the embedded ExoPlayer-backed
                                         // viewer rather than firing an external
                                         // Intent — keeps the user inside the app.
@@ -317,7 +317,7 @@ fun MessageBubble(
                                         runCatching { TdClient.downloadFile(latest.id) }
                                             .onSuccess { done ->
                                                 done.local?.path?.takeIf {
-                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                    it.isNotBlank() && (done.local.isDownloadingCompleted || runCatching { java.io.File(it).exists() }.getOrDefault(false))
                                                 }?.let { p ->
                                                     com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = true
                                                     onMediaTap(p)
@@ -330,14 +330,14 @@ fun MessageBubble(
                                     val latest = runCatching { TdClient.getFile(f.id) }
                                         .getOrNull() ?: f
                                     val path = latest.local?.path
-                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { java.io.File(path).exists() }.getOrDefault(false))) {
                                         com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = true
                                         onMediaTap(path)
                                     } else {
                                         runCatching { TdClient.downloadFile(latest.id) }
                                             .onSuccess { done ->
                                                 done.local?.path?.takeIf {
-                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                    it.isNotBlank() && (done.local.isDownloadingCompleted || runCatching { java.io.File(it).exists() }.getOrDefault(false))
                                                 }?.let { p ->
                                                     com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = true
                                                     onMediaTap(p)
@@ -355,13 +355,13 @@ fun MessageBubble(
                                             ctx, p, c.document.mimeType, c.document.fileName
                                         )
                                     }
-                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { java.io.File(path).exists() }.getOrDefault(false))) {
                                         open(path)
                                     } else {
                                         runCatching { TdClient.downloadFile(latest.id) }
                                             .onSuccess { done ->
                                                 done.local?.path?.takeIf {
-                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                    it.isNotBlank() && (done.local.isDownloadingCompleted || runCatching { java.io.File(it).exists() }.getOrDefault(false))
                                                 }?.let(open)
                                             }
                                     }
@@ -371,7 +371,7 @@ fun MessageBubble(
                                     val latest = runCatching { TdClient.getFile(f.id) }
                                         .getOrNull() ?: f
                                     val path = latest.local?.path
-                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { java.io.File(path).exists() }.getOrDefault(false))) {
                                         com.secondream.cheipgram.util.FileUtils.openDocument(
                                             ctx, path, c.audio.mimeType, c.audio.fileName
                                         )
@@ -379,7 +379,7 @@ fun MessageBubble(
                                         runCatching { TdClient.downloadFile(latest.id) }
                                             .onSuccess { done ->
                                                 done.local?.path?.takeIf {
-                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                    it.isNotBlank() && (done.local.isDownloadingCompleted || runCatching { java.io.File(it).exists() }.getOrDefault(false))
                                                 }?.let { p ->
                                                     com.secondream.cheipgram.util.FileUtils.openDocument(
                                                         ctx, p, c.audio.mimeType, c.audio.fileName
@@ -576,9 +576,16 @@ private fun MessageContent(
                     placeholderIcon = { Icon(Icons.Outlined.PlayArrow, null, tint = Ink.Cream) },
                     placeholderLabel = stringResource(R.string.media_video)
                 )
-                // Overlay state-aware progress / play / download icon
+                // Overlay state-aware progress / play / download icon.
+                // We treat the video as ready-to-play when TDLib reports it
+                // downloaded OR when the local path exists on disk — the
+                // latter covers our own freshly-uploaded videos (not
+                // "downloaded" but available locally).
+                val vidPath = liveFile.local?.path
+                val vidOnDisk = !vidPath.isNullOrBlank() &&
+                    runCatching { java.io.File(vidPath).exists() }.getOrDefault(false)
                 when {
-                    liveFile.local.isDownloadingCompleted -> {
+                    liveFile.local.isDownloadingCompleted || vidOnDisk -> {
                         Box(
                             modifier = Modifier
                                 .size(56.dp)
@@ -783,12 +790,19 @@ private fun InlineGifPlayer(
     val appearance by com.secondream.cheipgram.settings.AppSettings.appearance
         .collectAsState(initial = com.secondream.cheipgram.settings.AppearancePrefs(autoDownloadMedia = false))
     var localPath by remember(animationFile.id) {
-        mutableStateOf(animationFile.local?.path?.takeIf { it.isNotBlank() && animationFile.local.isDownloadingCompleted })
+        mutableStateOf(
+            animationFile.local?.path?.takeIf { p ->
+                p.isNotBlank() && (
+                    animationFile.local.isDownloadingCompleted ||
+                    runCatching { java.io.File(p).exists() }.getOrDefault(false)
+                )
+            }
+        )
     }
     var requested by remember(animationFile.id) { mutableStateOf(false) }
     val aspect = if (width > 0 && height > 0) width.toFloat() / height.toFloat() else 1.5f
 
-    // Trigger download (auto, or after a tap).
+    // Trigger download only if we don't already have the file locally.
     LaunchedEffect(animationFile.id, requested, appearance.autoDownloadMedia) {
         if (localPath == null && (appearance.autoDownloadMedia || requested)) {
             val f = runCatching { TdClient.downloadFile(animationFile.id) }.getOrNull()
@@ -917,15 +931,26 @@ private fun DownloadingImage(
     // tap from the placeholder triggers TDLib immediately.
     LaunchedEffect(initialFile.id, autoDownload, userRequested) {
         val current = file
+        val pathNow = current.local?.path
+        val alreadyOnDisk = !pathNow.isNullOrBlank() &&
+            runCatching { java.io.File(pathNow).exists() }.getOrDefault(false)
         if ((autoDownload || userRequested) &&
             !current.local.isDownloadingCompleted &&
-            !current.local.isDownloadingActive) {
+            !current.local.isDownloadingActive &&
+            !alreadyOnDisk) {
             runCatching { TdClient.downloadFile(current.id) }
         }
     }
 
     val path = file.local?.path
-    val completed = file.local.isDownloadingCompleted
+    // A file is viewable if TDLib finished downloading it OR if the local
+    // path exists on disk — which covers our own freshly-uploaded media
+    // (sent photos/videos): the local copy is still on disk, but
+    // isDownloadingCompleted is false because we didn't download, we
+    // uploaded. Previously these were shown with a "tap to download"
+    // placeholder even though the file was sitting right there.
+    val locallyAvailable = !path.isNullOrBlank() && runCatching { java.io.File(path).exists() }.getOrDefault(false)
+    val completed = file.local.isDownloadingCompleted || locallyAvailable
     val downloading = file.local.isDownloadingActive
     when {
         !path.isNullOrBlank() && completed -> {

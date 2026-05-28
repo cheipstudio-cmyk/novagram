@@ -1342,18 +1342,28 @@ fun ChatScreen(
         data class SaveSpec(val path: String, val name: String, val mime: String,
                             val category: com.secondream.cheipgram.util.FileUtils.SaveCategory)
         val saveSpec: SaveSpec? = run {
+            // A file is "available to save" if TDLib finished downloading
+            // it OR the local path exists on disk (covers our own sent
+            // media: not downloaded but right there locally).
+            fun TdApi.File.availableLocally(): Boolean {
+                val p = local?.path
+                return !p.isNullOrBlank() && (
+                    local.isDownloadingCompleted ||
+                    runCatching { java.io.File(p).exists() }.getOrDefault(false)
+                )
+            }
             when (val c = msg.content) {
                 is TdApi.MessagePhoto -> {
                     val biggest = c.photo.sizes.maxByOrNull { it.photo.size }
                     val p = biggest?.photo?.local?.path
-                    if (!p.isNullOrBlank() && biggest.photo.local.isDownloadingCompleted)
+                    if (!p.isNullOrBlank() && biggest.photo.availableLocally())
                         SaveSpec(p, "photo_${msg.id}.jpg", "image/jpeg",
                             com.secondream.cheipgram.util.FileUtils.SaveCategory.Media)
                     else null
                 }
                 is TdApi.MessageVideo -> {
                     val p = c.video.video.local?.path
-                    if (!p.isNullOrBlank() && c.video.video.local.isDownloadingCompleted)
+                    if (!p.isNullOrBlank() && c.video.video.availableLocally())
                         SaveSpec(p, c.video.fileName.ifBlank { "video_${msg.id}.mp4" },
                             c.video.mimeType.ifBlank { "video/mp4" },
                             com.secondream.cheipgram.util.FileUtils.SaveCategory.Media)
@@ -1361,7 +1371,7 @@ fun ChatScreen(
                 }
                 is TdApi.MessageAnimation -> {
                     val p = c.animation.animation.local?.path
-                    if (!p.isNullOrBlank() && c.animation.animation.local.isDownloadingCompleted)
+                    if (!p.isNullOrBlank() && c.animation.animation.availableLocally())
                         SaveSpec(p, c.animation.fileName.ifBlank { "anim_${msg.id}.mp4" },
                             c.animation.mimeType.ifBlank { "video/mp4" },
                             com.secondream.cheipgram.util.FileUtils.SaveCategory.Media)
@@ -1369,7 +1379,7 @@ fun ChatScreen(
                 }
                 is TdApi.MessageDocument -> {
                     val p = c.document.document.local?.path
-                    if (!p.isNullOrBlank() && c.document.document.local.isDownloadingCompleted)
+                    if (!p.isNullOrBlank() && c.document.document.availableLocally())
                         SaveSpec(p, c.document.fileName.ifBlank { "file_${msg.id}" },
                             c.document.mimeType.ifBlank { "application/octet-stream" },
                             com.secondream.cheipgram.util.FileUtils.SaveCategory.File)
@@ -1377,7 +1387,7 @@ fun ChatScreen(
                 }
                 is TdApi.MessageAudio -> {
                     val p = c.audio.audio.local?.path
-                    if (!p.isNullOrBlank() && c.audio.audio.local.isDownloadingCompleted)
+                    if (!p.isNullOrBlank() && c.audio.audio.availableLocally())
                         SaveSpec(p, c.audio.fileName.ifBlank { "audio_${msg.id}.mp3" },
                             c.audio.mimeType.ifBlank { "audio/mpeg" },
                             com.secondream.cheipgram.util.FileUtils.SaveCategory.File)
