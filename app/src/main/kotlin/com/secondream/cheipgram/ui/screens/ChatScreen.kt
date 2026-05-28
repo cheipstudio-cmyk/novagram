@@ -184,6 +184,13 @@ fun ChatScreen(
     // flip between "Fissa"/"Rimuovi pin". Updated optimistically on the
     // user's own pin/unpin; the common single-pin case stays correct.
     var pinnedMessageId by remember(chatId) { mutableStateOf(0L) }
+    // The message shown in the pinned banner at the top of the chat.
+    // Lifted to screen scope (was local to the Scaffold content) so the
+    // pin/unpin action can update it OPTIMISTICALLY and in real time —
+    // previously the banner only refreshed on chatUpdates, which doesn't
+    // fire for a pin, so a freshly pinned message appeared only after
+    // leaving and re-entering the chat.
+    var pinned by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
     val appearance by com.secondream.cheipgram.settings.AppSettings.appearance
         .collectAsState(initial = com.secondream.cheipgram.settings.AppearancePrefs())
     // Cached list of chat members for the @-mention picker. Loaded lazily
@@ -782,12 +789,11 @@ fun ChatScreen(
         ) {
             // Pinned message banner. Reads the most-recently-pinned message
             // from TDLib on chat open and re-fetches when the chat list
-            // updates (a new pin fires UpdateChatLastMessage / UpdateNewMessage
-            // which bumps chatUpdates → recompose). Tapping the banner
-            // scrolls the LazyColumn to the pinned message's index.
-            var pinned by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
+            // updates. `pinned` now lives at screen scope so the pin action
+            // can update it instantly. Tapping the banner scrolls to it.
             LaunchedEffect(chatId) {
                 pinned = TdClient.getChatPinnedMessage(chatId)
+                pinnedMessageId = pinned?.id ?: 0L
             }
             LaunchedEffect(chatId) {
                 TdClient.chatUpdates.collect { id ->
@@ -1415,6 +1421,9 @@ fun ChatScreen(
                         }
                     }
                     pinnedMessageId = if (wasPinned) 0L else msg.id
+                    // Update the banner immediately — don't wait for a
+                    // server round trip or a chat reload.
+                    pinned = if (wasPinned) null else msg
                     deleteTarget = null
                 }
             } else null,

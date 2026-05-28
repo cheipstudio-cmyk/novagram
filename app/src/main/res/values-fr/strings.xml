@@ -265,4 +265,6 @@
     <string name="empty_archived">Aucune discussion archivée</string>
     <string name="settings_archived_tab">Onglet Archivés</string>
     <string name="settings_archived_tab_desc">Afficher un quatrième onglet avec les discussions archivées</string>
+    <string name="action_archive_chat">Archiver</string>
+    <string name="action_unarchive_chat">Désarchiver</string>
 </resources>

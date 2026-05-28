@@ -265,4 +265,6 @@
     <string name="empty_archived">Keine archivierten Chats</string>
     <string name="settings_archived_tab">Archiviert-Tab</string>
     <string name="settings_archived_tab_desc">Einen vierten Tab mit archivierten Chats anzeigen</string>
+    <string name="action_archive_chat">Archivieren</string>
+    <string name="action_unarchive_chat">Aus Archiv</string>
 </resources>

@@ -279,4 +279,6 @@
     <string name="empty_archived">Nessuna chat archiviata</string>
     <string name="settings_archived_tab">Tab Archiviati</string>
     <string name="settings_archived_tab_desc">Mostra una quarta scheda con le chat archiviate</string>
+    <string name="action_archive_chat">Archivia</string>
+    <string name="action_unarchive_chat">Disarchivia</string>
 </resources>

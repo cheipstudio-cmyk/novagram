@@ -1017,6 +1017,18 @@ object TdClient {
         runCatching { send(TdApi.GetChatPinnedMessage(chatId)) }.getOrNull()
 
     /**
+     * Move a chat into the Archive list (or back to Main). TDLib's
+     * AddChatToList replaces the chat's list membership; the chat-position
+     * update that follows refreshes our chats flow so the list re-sorts
+     * and the chat moves between the main tabs and the Archiviati tab.
+     */
+    suspend fun archiveChat(chatId: Long, archived: Boolean) {
+        val list: TdApi.ChatList =
+            if (archived) TdApi.ChatListArchive() else TdApi.ChatListMain()
+        runCatching { send(TdApi.AddChatToList(chatId, list)) }
+    }
+
+    /**
      * All pinned messages in a chat (channels can have many). We cap at
      * 20 because the banner only cycles through visible ones; pulling
      * everything would slow first-render.

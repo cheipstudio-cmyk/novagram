@@ -337,12 +337,21 @@ fun ChatListScreen(
             chatTitle = target.title,
             chatKind = target.kind,
             isMuted = isMuted,
+            isArchived = target.isArchived,
             onDismiss = { chatActionTarget = null },
             onToggleMute = {
                 val cid = target.id
                 chatActionTarget = null
                 scope.launch {
                     runCatching { TdClient.setChatMuted(cid, !isMuted) }
+                }
+            },
+            onToggleArchive = {
+                val cid = target.id
+                val wasArchived = target.isArchived
+                chatActionTarget = null
+                scope.launch {
+                    runCatching { TdClient.archiveChat(cid, !wasArchived) }
                 }
             },
             onDeleteRequest = {
@@ -447,8 +456,10 @@ private fun ChatActionSheet(
     chatTitle: String,
     chatKind: ChatKind,
     isMuted: Boolean,
+    isArchived: Boolean,
     onDismiss: () -> Unit,
     onToggleMute: () -> Unit,
+    onToggleArchive: () -> Unit,
     onDeleteRequest: () -> Unit,
     onLeaveRequest: () -> Unit
 ) {
@@ -474,6 +485,13 @@ private fun ChatActionSheet(
                     if (isMuted) R.string.action_unmute_chat else R.string.action_mute_chat
                 ),
                 onClick = onToggleMute
+            )
+            Spacer(Modifier.height(4.dp))
+            ChatActionRow(
+                label = stringResource(
+                    if (isArchived) R.string.action_unarchive_chat else R.string.action_archive_chat
+                ),
+                onClick = onToggleArchive
             )
             Spacer(Modifier.height(4.dp))
             // Groups + channels can't be "deleted" from your side — only

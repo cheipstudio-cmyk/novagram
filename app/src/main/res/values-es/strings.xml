@@ -265,4 +265,6 @@
     <string name="empty_archived">Sin chats archivados</string>
     <string name="settings_archived_tab">Pestaña Archivados</string>
     <string name="settings_archived_tab_desc">Muestra una cuarta pestaña con los chats archivados</string>
+    <string name="action_archive_chat">Archivar</string>
+    <string name="action_unarchive_chat">Desarchivar</string>
 </resources>
