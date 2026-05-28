@@ -629,6 +629,10 @@ object TdClient {
         send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
+    /** Recently used stickers (most-recently-sent first). */
+    suspend fun getRecentStickers(): TdApi.Stickers =
+        send(TdApi.GetRecentStickers(false))
+
     /** Stickers the user has explicitly favourited via Telegram. */
     suspend fun getFavoriteStickers(): TdApi.Stickers =
         send(TdApi.GetFavoriteStickers())
