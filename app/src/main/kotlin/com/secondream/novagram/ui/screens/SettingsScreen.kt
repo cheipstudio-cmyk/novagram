@@ -681,6 +681,7 @@ private fun SegmentedChip(
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 private fun AccentRow(current: AccentColor, onPick: (AccentColor) -> Unit) {
     Column(modifier = Modifier.padding(16.dp)) {
         Text(
@@ -975,14 +976,14 @@ private fun CreditsBlock() {
                     runCatching {
                         val intent = android.content.Intent(
                             android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse("https://t.me/novagram")
+                            android.net.Uri.parse("https://t.me/novagram_messenger")
                         ).setPackage(context.packageName)
                         context.startActivity(intent)
                     }.recoverCatching {
                         context.startActivity(
                             android.content.Intent(
                                 android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://t.me/novagram")
+                                android.net.Uri.parse("https://t.me/novagram_messenger")
                             )
                         )
                     }

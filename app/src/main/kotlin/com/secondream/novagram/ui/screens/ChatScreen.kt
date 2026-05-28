@@ -32,6 +32,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.content.contentReceiver
+import androidx.compose.foundation.content.consume
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.luminance
@@ -1226,7 +1228,25 @@ fun ChatScreen(
                     }
                 },
                 recording = recording,
-                hasPendingMedia = pendingMedia != null || editTarget != null
+                hasPendingMedia = pendingMedia != null || editTarget != null,
+                onContentReceived = { uri ->
+                    // Keyboard inserted a GIF or sticker. Mime-sniff via the
+                    // ContentResolver, copy off the content:// URI into our
+                    // cache (since the keyboard's permission may expire) and
+                    // send: animation path for GIF / mp4 so it auto-plays in
+                    // the chat, photo path for static images.
+                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val mime = (context.contentResolver.getType(uri) ?: "").lowercase()
+                        val file = com.secondream.novagram.util.FileUtils.copyUriToCache(context, uri) ?: return@launch
+                        runCatching {
+                            if (mime == "image/gif" || mime == "video/mp4") {
+                                TdClient.sendAnimation(chatId, file.absolutePath)
+                            } else {
+                                TdClient.sendPhoto(chatId, file.absolutePath)
+                            }
+                        }
+                    }
+                }
             )
         }
     }
@@ -1894,7 +1914,11 @@ private fun InputBar(
     // empty text field — captions are optional. Without this the user
     // would see the mic button on an empty caption and have no way to
     // actually push the media out.
-    hasPendingMedia: Boolean = false
+    hasPendingMedia: Boolean = false,
+    // Called when the IME (Gboard, SwiftKey, etc.) inserts rich content
+    // — typically a GIF or sticker. We get a content:// URI from the
+    // keyboard and forward it to the chat for upload.
+    onContentReceived: (android.net.Uri) -> Unit = {}
 ) {
     // Pull the custom input-bar color if the user has set one in the
     // theme builder. Falls back to MaterialTheme.colorScheme.background
@@ -1997,6 +2021,7 @@ private fun InputBar(
                             style = MaterialTheme.typography.bodyLarge
                         )
                     }
+                    @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
                     BasicTextField(
                         value = value,
                         onValueChange = onValueChange,
@@ -2005,6 +2030,20 @@ private fun InputBar(
                         modifier = Modifier
                             .fillMaxWidth()
                             .verticalScroll(rememberScrollState())
+                            .contentReceiver { transferableContent ->
+                                // Gboard/SwiftKey hand us a content:// URI for the
+                                // inserted GIF or image. Forward the URI to the
+                                // chat screen which copies + sends it. Any
+                                // non-URI items (raw text) we let the system
+                                // handle as a normal paste.
+                                transferableContent.consume { item ->
+                                    val u = item.uri
+                                    if (u != null) {
+                                        onContentReceived(u)
+                                        true
+                                    } else false
+                                }
+                            }
                     )
                 }
                 Spacer(Modifier.width(4.dp))

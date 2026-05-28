@@ -802,13 +802,13 @@ private fun ChatRow(
                         modifier = Modifier
                             .size(20.dp)
                             .clip(CircleShape)
-                            .background(Ink.Amber),
+                            .background(MaterialTheme.colorScheme.primary),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             if (c.unread > 99) "99+" else c.unread.toString(),
                             style = MaterialTheme.typography.labelSmall,
-                            color = Ink.OnAmber,
+                            color = MaterialTheme.colorScheme.onPrimary,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -988,7 +988,7 @@ private fun HomePage(
             LaunchedEffect(allChats.size) {
                 if (novagramJoined == true) return@LaunchedEffect
                 novagramJoined = runCatching {
-                    val res = TdClient.searchPublicChats("novagram")
+                    val res = TdClient.searchPublicChats("novagram_messenger")
                     val match = res.firstOrNull { c ->
                         c.title.equals("Novagram", ignoreCase = true)
                     } ?: return@runCatching false
@@ -1017,7 +1017,7 @@ private fun HomePage(
                         onClick = {
                             val intent = android.content.Intent(
                                 android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://t.me/novagram")
+                                android.net.Uri.parse("https://t.me/novagram_messenger")
                             )
                             runCatching { ctx.startActivity(intent) }
                         },

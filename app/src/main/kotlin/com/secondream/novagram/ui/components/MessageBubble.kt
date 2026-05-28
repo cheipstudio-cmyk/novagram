@@ -666,22 +666,39 @@ private fun MessageContent(
             }
         }
         is TdApi.MessageDocument -> {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Description, null, tint = Ink.Amber, modifier = Modifier.size(28.dp))
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text(
-                        c.document.fileName.ifBlank { stringResource(R.string.media_document) },
-                        style = MaterialTheme.typography.titleSmall,
-                        color = onBackground,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        formatBytes(c.document.document.size),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = onBackground.copy(alpha = 0.6f)
-                    )
+            // Documents with an image mime (png/jpg/webp/heic) — common for
+            // forwarded screenshots or files shared "as document" — get the
+            // photo treatment: download + render inline so the user actually
+            // sees the picture once it's on disk, instead of being stuck
+            // with a generic file chip.
+            val mime = c.document.mimeType.lowercase()
+            val isImage = mime.startsWith("image/") && !mime.contains("gif")
+            if (isImage) {
+                DownloadingImage(
+                    initialFile = c.document.document,
+                    placeholderIcon = { Icon(Icons.Outlined.Image, null, tint = Ink.Muted) },
+                    placeholderLabel = c.document.fileName.ifBlank {
+                        stringResource(R.string.media_photo)
+                    }
+                )
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Description, null, tint = Ink.Amber, modifier = Modifier.size(28.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            c.document.fileName.ifBlank { stringResource(R.string.media_document) },
+                            style = MaterialTheme.typography.titleSmall,
+                            color = onBackground,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            formatBytes(c.document.document.size),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = onBackground.copy(alpha = 0.6f)
+                        )
+                    }
                 }
             }
             if (c.caption.text.isNotBlank()) {

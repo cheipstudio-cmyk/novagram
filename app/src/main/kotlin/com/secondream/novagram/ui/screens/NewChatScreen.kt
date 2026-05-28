@@ -249,7 +249,7 @@ fun NewChatScreen(
                             val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phone"))
                             intent.putExtra(
                                 "sms_body",
-                                "Ti scrivo da Nova. Provala anche tu: https://t.me/novagram"
+                                "Ti scrivo da Novagram. Provala anche tu: https://t.me/novagram_messenger"
                             )
                             context.startActivity(intent)
                         }
