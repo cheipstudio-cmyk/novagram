@@ -298,4 +298,17 @@
     <string name="settings_accent_rose">Rose</string>
     <string name="settings_accent_cyan">Cyan</string>
     <string name="settings_accent_orange">Orange</string>
+    <string name="search_public_users">Search users by username</string>
+    <string name="search_public_groups">Search public groups</string>
+    <string name="search_public_channels">Search public channels</string>
+    <string name="search_in_archive">Search in archive</string>
+    <string name="search_public_results">PUBLIC RESULTS</string>
+    <string name="search_public_no_results">No public results</string>
+    <string name="search_public_kind_user">User</string>
+    <string name="search_public_kind_group">Public group</string>
+    <string name="search_public_kind_channel">Public channel</string>
+    <string name="search_public_open">Open</string>
+    <string name="search_public_join_group">Join group</string>
+    <string name="search_public_join_channel">Join channel</string>
+    <string name="unknown_chat">Unknown</string>
 </resources>

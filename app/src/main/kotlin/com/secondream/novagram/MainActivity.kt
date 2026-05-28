@@ -14,6 +14,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -85,9 +86,27 @@ class MainActivity : ComponentActivity() {
                 customBgArgb = appearance.customBgArgb,
                 textScale = appearance.textScale
             ) {
+                // Sync the Activity's window background to the Compose theme
+                // background. The static @color/ink_bg in themes.xml is dark,
+                // so when the user is in light mode every recomposition that
+                // briefly exposes the window (transitions, IME shifts) would
+                // flash dark. SideEffect re-runs on every successful
+                // composition and applies the live theme color.
+                val bgArgb = MaterialTheme.colorScheme.background.toArgb()
+                androidx.compose.runtime.SideEffect {
+                    window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bgArgb))
+                }
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = Color.Unspecified
+                    // CRITICAL: must paint the theme background, not be
+                    // transparent. With Color.Unspecified the Surface drew
+                    // nothing, so during the AppRouter scaleIn transition
+                    // (92% → 100%) the 8% margin around the new screen
+                    // revealed the window's hardcoded dark @color/ink_bg
+                    // — a black flash on every navigation in light themes.
+                    // Tracking colorScheme.background means the empty area
+                    // is always the right color for the active theme.
+                    color = MaterialTheme.colorScheme.background
                 ) {
                     // Box wraps both the nav graph and the persistent
                     // transfer panel overlay. The panel sits at the

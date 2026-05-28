@@ -123,6 +123,12 @@ fun ChatListScreen(
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    // Server-side public search results — public users (in Chat tab),
+    // public groups (in Gruppi), or public channels (in Canali). Populated
+    // by a debounced LaunchedEffect downstream and rendered under the
+    // local-filtered list when the search bar is open.
+    var publicResults by remember { mutableStateOf<List<org.drinkless.tdlib.TdApi.Chat>>(emptyList()) }
+    var publicSearching by remember { mutableStateOf(false) }
     var chatActionTarget by remember { mutableStateOf<ChatSummary?>(null) }
     var deleteConfirmTarget by remember { mutableStateOf<ChatSummary?>(null) }
     var leaveConfirmTarget by remember { mutableStateOf<ChatSummary?>(null) }
@@ -149,6 +155,49 @@ fun ChatListScreen(
         }
     }
 
+    // Debounced public search. Whenever the user types in the search bar
+    // (or switches tab while still searching), wait a beat and then ask
+    // TDLib for matching public chats. Filter the response down to the
+    // ChatKind of the current tab so the Chat tab only surfaces people,
+    // Gruppi only surfaces groups, and Canali only channels.
+    LaunchedEffect(searchOpen, searchQuery, selectedTab) {
+        if (!searchOpen) {
+            publicResults = emptyList()
+            publicSearching = false
+            return@LaunchedEffect
+        }
+        val q = searchQuery.trim()
+        if (q.length < 2) {
+            publicResults = emptyList()
+            publicSearching = false
+            return@LaunchedEffect
+        }
+        val spec = tabs.getOrNull(selectedTab) ?: return@LaunchedEffect
+        if (spec.isArchive) {
+            // Archive tab — no public search needed, those are already in
+            // the local list and there's no public concept for archive.
+            publicResults = emptyList()
+            return@LaunchedEffect
+        }
+        publicSearching = true
+        kotlinx.coroutines.delay(250)
+        val raw = runCatching { TdClient.searchPublicChats(q) }.getOrNull().orEmpty()
+        // Map to ChatKind locally (TdClient's resolveKind is private). Same
+        // logic: private/secret → Private, basic group or non-channel
+        // supergroup → Group, channel supergroup → Channel.
+        publicResults = raw.filter { chat ->
+            val k = when (val t = chat.type) {
+                is org.drinkless.tdlib.TdApi.ChatTypePrivate -> ChatKind.Private
+                is org.drinkless.tdlib.TdApi.ChatTypeBasicGroup -> ChatKind.Group
+                is org.drinkless.tdlib.TdApi.ChatTypeSupergroup -> if (t.isChannel) ChatKind.Channel else ChatKind.Group
+                is org.drinkless.tdlib.TdApi.ChatTypeSecret -> ChatKind.Private
+                else -> ChatKind.Private
+            }
+            k == spec.kind && chat.id != myUserId  // hide self in user results
+        }
+        publicSearching = false
+    }
+
     Scaffold(
         floatingActionButton = {
             FloatingActionButton(
@@ -167,9 +216,18 @@ fun ChatListScreen(
                 TopAppBar(
                     title = {
                         if (searchOpen) {
+                            val safeTab = selectedTab.coerceIn(0, tabs.lastIndex)
+                            val spec = tabs[safeTab]
+                            val placeholder = when {
+                                spec.isArchive -> stringResource(R.string.search_in_archive)
+                                spec.kind == ChatKind.Channel -> stringResource(R.string.search_public_channels)
+                                spec.kind == ChatKind.Group -> stringResource(R.string.search_public_groups)
+                                else -> stringResource(R.string.search_public_users)
+                            }
                             SearchField(
                                 value = searchQuery,
-                                onValueChange = { searchQuery = it }
+                                onValueChange = { searchQuery = it },
+                                placeholder = placeholder
                             )
                         } else {
                             val safeTab = selectedTab.coerceIn(0, tabs.lastIndex)
@@ -302,15 +360,17 @@ fun ChatListScreen(
                 if (q.isBlank()) base
                 else base.filter { it.title.contains(q, ignoreCase = true) }
             }
-            if (pageChats.isEmpty()) {
+            val hasActiveSearch = searchOpen && searchQuery.trim().isNotBlank()
+            val showingNoResults = pageChats.isEmpty() &&
+                !hasActiveSearch &&
+                publicResults.isEmpty()
+            if (showingNoResults) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         when {
-                            searchQuery.isNotBlank() ->
-                                stringResource(R.string.empty_search_results, searchQuery.trim())
                             spec.isArchive -> stringResource(R.string.empty_archived)
                             spec.kind == ChatKind.Group -> stringResource(R.string.empty_groups)
                             spec.kind == ChatKind.Channel -> stringResource(R.string.empty_channels)
@@ -337,6 +397,66 @@ fun ChatListScreen(
                             thickness = 0.5.dp,
                             modifier = Modifier.padding(start = 88.dp)
                         )
+                    }
+                    if (hasActiveSearch) {
+                        // Server-side results: people / public groups /
+                        // public channels matched by Telegram itself, not
+                        // by our local cache. Header + list with a join
+                        // affordance per item.
+                        item(key = "public_results_header") {
+                            Text(
+                                stringResource(R.string.search_public_results),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 18.dp, top = 16.dp, bottom = 6.dp)
+                            )
+                        }
+                        if (publicSearching && publicResults.isEmpty()) {
+                            item(key = "public_searching") {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(24.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    androidx.compose.material3.CircularProgressIndicator(
+                                        modifier = Modifier.size(22.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                }
+                            }
+                        } else if (publicResults.isEmpty()) {
+                            item(key = "public_empty") {
+                                Text(
+                                    stringResource(R.string.search_public_no_results),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 18.dp, vertical = 12.dp)
+                                )
+                            }
+                        } else {
+                            items(publicResults, key = { "public_${it.id}" }) { chat ->
+                                PublicResultRow(
+                                    chat = chat,
+                                    onOpen = { onChatClick(chat.id) },
+                                    onJoin = {
+                                        scope.launch {
+                                            runCatching { TdClient.joinChat(chat.id) }
+                                            onChatClick(chat.id)
+                                        }
+                                    }
+                                )
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outline,
+                                    thickness = 0.5.dp,
+                                    modifier = Modifier.padding(start = 88.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -659,7 +779,8 @@ private fun PillTabs(
 @Composable
 private fun SearchField(
     value: String,
-    onValueChange: (String) -> Unit
+    onValueChange: (String) -> Unit,
+    placeholder: String? = null
 ) {
     // Theme-aware search bubble. On light themes we paint pure white so it
     // stands out against the off-white background like Telegram's iOS skin
@@ -693,7 +814,7 @@ private fun SearchField(
             Box(modifier = Modifier.weight(1f)) {
                 if (value.isEmpty()) {
                     Text(
-                        stringResource(R.string.search_chats_placeholder),
+                        placeholder ?: stringResource(R.string.search_chats_placeholder),
                         color = placeholderColor,
                         style = MaterialTheme.typography.bodyLarge
                     )
@@ -714,6 +835,91 @@ private fun SearchField(
 /** Compact search field reused by the chat list and the new-chat screen. */
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+/**
+ * Row for a public-search hit: avatar + title + @username on the left, and
+ * a contextual action button on the right. Channels and groups show
+ * "Unisciti" (which joinChats then opens), private users show "Apri"
+ * (just opens). Tapping the row itself also opens.
+ */
+@Composable
+private fun PublicResultRow(
+    chat: org.drinkless.tdlib.TdApi.Chat,
+    onOpen: () -> Unit,
+    onJoin: () -> Unit
+) {
+    val type = chat.type
+    val isPrivate = type is org.drinkless.tdlib.TdApi.ChatTypePrivate ||
+        type is org.drinkless.tdlib.TdApi.ChatTypeSecret
+    val isChannel = type is org.drinkless.tdlib.TdApi.ChatTypeSupergroup && type.isChannel
+    // Heuristic for "already member": TDLib only includes a chat in chat
+    // lists (positions) once you're in it. searchPublicChats returns
+    // both joinable and joined chats; for the latter, positions is
+    // non-empty.
+    val alreadyMember = chat.positions != null && chat.positions.isNotEmpty()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpen() }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Avatar(
+            file = chat.photo?.small,
+            fallbackText = chat.title,
+            bgColor = avatarBackgroundFor(chat.id),
+            size = 48.dp
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                chat.title.ifBlank { stringResource(R.string.unknown_chat) },
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                when {
+                    isPrivate -> stringResource(R.string.search_public_kind_user)
+                    isChannel -> stringResource(R.string.search_public_kind_channel)
+                    else -> stringResource(R.string.search_public_kind_group)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        // Action pill on the right. Private chats and already-member groups
+        // get "Apri"; non-member groups/channels get "Unisciti al gruppo"
+        // / "Unisciti al canale" which calls JoinChat first.
+        val (label, action) = when {
+            isPrivate || alreadyMember ->
+                stringResource(R.string.search_public_open) to onOpen
+            isChannel ->
+                stringResource(R.string.search_public_join_channel) to onJoin
+            else ->
+                stringResource(R.string.search_public_join_group) to onJoin
+        }
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.primary)
+                .clickable { action() }
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onPrimary,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
 @Composable
 private fun ChatRow(
     c: ChatSummary,

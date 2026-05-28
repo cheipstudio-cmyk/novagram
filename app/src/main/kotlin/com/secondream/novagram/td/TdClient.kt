@@ -1118,6 +1118,15 @@ object TdClient {
         send(TdApi.JoinChatByInviteLink(link))
 
     /**
+     * Join a public chat by id (supergroup or channel surfaced via
+     * SearchPublicChats). Idempotent — TDLib silently no-ops if you're
+     * already a member, so callers don't need to pre-check.
+     */
+    suspend fun joinChat(chatId: Long) {
+        runCatching { send(TdApi.JoinChat(chatId)) }
+    }
+
+    /**
      * Inspect an invite link without joining. Returns info including the
      * chatId when the current user is already a member (chatId != 0), so
      * callers can open the existing chat instead of triggering the

@@ -312,4 +312,17 @@
     <string name="settings_accent_rose">Rosa</string>
     <string name="settings_accent_cyan">Ciano</string>
     <string name="settings_accent_orange">Arancio</string>
+    <string name="search_public_users">Cerca utenti per username</string>
+    <string name="search_public_groups">Cerca gruppi pubblici</string>
+    <string name="search_public_channels">Cerca canali pubblici</string>
+    <string name="search_in_archive">Cerca nell\'archivio</string>
+    <string name="search_public_results">RISULTATI PUBBLICI</string>
+    <string name="search_public_no_results">Nessun risultato pubblico</string>
+    <string name="search_public_kind_user">Utente</string>
+    <string name="search_public_kind_group">Gruppo pubblico</string>
+    <string name="search_public_kind_channel">Canale pubblico</string>
+    <string name="search_public_open">Apri</string>
+    <string name="search_public_join_group">Unisciti al gruppo</string>
+    <string name="search_public_join_channel">Unisciti al canale</string>
+    <string name="unknown_chat">Sconosciuto</string>
 </resources>
