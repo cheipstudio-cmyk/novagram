@@ -79,7 +79,6 @@ object FileUtils {
             false
         }
     }
-}
 
     /**
      * Copy a local TDLib file into the public Downloads directory under a

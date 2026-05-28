@@ -40,6 +40,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -933,19 +934,6 @@ private fun TapToDownloadPlaceholder(
     }
 }
 
-/** Pretty-print byte sizes as KB/MB/GB. */
-private fun formatBytes(bytes: Long): String {
-    val kb = 1024.0
-    val mb = kb * 1024
-    val gb = mb * 1024
-    return when {
-        bytes >= gb -> "%.1f GB".format(bytes / gb)
-        bytes >= mb -> "%.1f MB".format(bytes / mb)
-        bytes >= kb -> "%.0f KB".format(bytes / kb)
-        else -> "$bytes B"
-    }
-}
-
 @Composable
 private fun ImagePlaceholder(
     icon: @Composable () -> Unit,
@@ -1515,19 +1503,19 @@ private fun parseSameChatMessageLink(uri: android.net.Uri, currentChatId: Long):
         return if (expected == internalId) msgId else null
     } else {
         val urlUsername = segments.first().lowercase()
-        // Resolve the current chat's @username. Private chats expose it via
-        // the linked User; groups/channels via Chat.usernames directly.
+        // Resolve the current chat's @username. TdApi.Chat itself has no
+        // username field — it lives on the underlying user (for private
+        // chats) or supergroup. We only have a user cache here, so we
+        // resolve the private-chat case; public supergroups/channels
+        // reached via t.me/<username>/<id> fall through to the Intent
+        // path (rare, and the numeric t.me/c/<internal>/<id> path above
+        // already covers the common same-supergroup link case).
         val cachedChat = TdClient.getCachedChat(currentChatId) ?: return null
-        val currentUsername: String? = run {
-            val chatUsernames = cachedChat.usernames?.activeUsernames
-                ?.firstOrNull()?.lowercase()
-            if (!chatUsernames.isNullOrBlank()) return@run chatUsernames
-            // Private chat: pull username off the underlying user
+        val currentUsername: String? =
             (cachedChat.type as? TdApi.ChatTypePrivate)?.userId?.let { uid ->
                 TdClient.getCachedUser(uid)?.usernames?.activeUsernames
                     ?.firstOrNull()?.lowercase()
             }
-        }
         return if (currentUsername != null && currentUsername == urlUsername) msgId else null
     }
 }
