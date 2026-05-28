@@ -9,6 +9,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +27,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.AlternateEmail
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -163,13 +168,24 @@ fun ProfileScreen(onBack: () -> Unit) {
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 16.dp),
+                .padding(horizontal = 20.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Avatar
+            Spacer(Modifier.height(8.dp))
+            // Avatar with a soft accent gradient ring.
             Box(
                 modifier = Modifier
-                    .size(140.dp)
+                    .size(132.dp)
+                    .clip(CircleShape)
+                    .background(
+                        androidx.compose.ui.graphics.Brush.linearGradient(
+                            listOf(
+                                MaterialTheme.colorScheme.primary,
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                            )
+                        )
+                    )
+                    .padding(3.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .clickable(enabled = !saving) {
@@ -185,7 +201,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                         model = path,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize().clip(CircleShape)
                     )
                 } else {
                     val initial = me?.firstName?.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
@@ -201,20 +217,20 @@ fun ProfileScreen(onBack: () -> Unit) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.background.copy(alpha = 0.55f)),
                         contentAlignment = Alignment.Center
                     ) {
                         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
                 }
-                // Camera badge bottom-right
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .size(36.dp)
+                        .size(38.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primary)
-                        .border(2.dp, MaterialTheme.colorScheme.background, CircleShape),
+                        .border(3.dp, MaterialTheme.colorScheme.background, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -225,69 +241,98 @@ fun ProfileScreen(onBack: () -> Unit) {
                     )
                 }
             }
-
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             Text(
                 stringResource(R.string.profile_change_photo),
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable(enabled = !saving) {
+                    photoPicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                }
             )
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(24.dp))
 
-            // First name
-            OutlinedTextField(
-                value = firstName,
-                onValueChange = { firstName = it },
-                label = { Text(stringResource(R.string.profile_first_name)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(14.dp))
-            // Last name
-            OutlinedTextField(
-                value = lastName,
-                onValueChange = { lastName = it },
-                label = { Text(stringResource(R.string.profile_last_name)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(14.dp))
-            // Username
-            OutlinedTextField(
-                value = username,
-                onValueChange = { username = it.filter { c -> c.isLetterOrDigit() || c == '_' } },
-                label = { Text(stringResource(R.string.profile_username)) },
-                supportingText = { Text(stringResource(R.string.profile_username_hint)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(14.dp))
-            // Bio
-            OutlinedTextField(
-                value = bio,
-                onValueChange = { bio = it.take(140) },
-                label = { Text(stringResource(R.string.profile_bio)) },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-                maxLines = 4
-            )
-            Spacer(Modifier.height(14.dp))
-            // Phone (read-only)
-            OutlinedTextField(
-                value = "+${me?.phoneNumber ?: ""}",
-                onValueChange = {},
-                label = { Text(stringResource(R.string.profile_phone)) },
-                singleLine = true,
-                readOnly = true,
-                enabled = false,
-                modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = KeyboardType.Phone
+            // Grouped fields in a single rounded card for a cleaner look.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(16.dp)
+            ) {
+                val fieldColors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                    focusedLabelColor = MaterialTheme.colorScheme.primary
                 )
-            )
+                OutlinedTextField(
+                    value = firstName,
+                    onValueChange = { firstName = it },
+                    label = { Text(stringResource(R.string.profile_first_name)) },
+                    leadingIcon = { Icon(Icons.Outlined.Person, null) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = lastName,
+                    onValueChange = { lastName = it },
+                    label = { Text(stringResource(R.string.profile_last_name)) },
+                    leadingIcon = { Icon(Icons.Outlined.Person, null) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it.filter { c -> c.isLetterOrDigit() || c == '_' } },
+                    label = { Text(stringResource(R.string.profile_username)) },
+                    leadingIcon = { Icon(Icons.Outlined.AlternateEmail, null) },
+                    supportingText = { Text(stringResource(R.string.profile_username_hint)) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = bio,
+                    onValueChange = { bio = it.take(140) },
+                    label = { Text(stringResource(R.string.profile_bio)) },
+                    leadingIcon = { Icon(Icons.Outlined.Info, null) },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 4
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = "+${me?.phoneNumber ?: ""}",
+                    onValueChange = {},
+                    label = { Text(stringResource(R.string.profile_phone)) },
+                    leadingIcon = { Icon(Icons.Outlined.Phone, null) },
+                    singleLine = true,
+                    readOnly = true,
+                    enabled = false,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = KeyboardType.Phone
+                    )
+                )
+            }
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(24.dp))
             Button(
                 onClick = {
                     val u = me ?: return@Button
@@ -319,14 +364,24 @@ fun ProfileScreen(onBack: () -> Unit) {
                             runCatching { TdClient.setBio(bio.trim()) }
                                 .onFailure { failed = true; failMsg = it.message }
                         }
-                        toast = if (failed) failMsg ?: "Errore" else savedMsg
                         saving = false
+                        if (failed) {
+                            toast = failMsg ?: "Errore"
+                        } else {
+                            // Success → go back, as requested.
+                            onBack()
+                        }
                     }
                 },
                 enabled = !saving && me != null,
-                modifier = Modifier.fillMaxWidth()
+                shape = RoundedCornerShape(28.dp),
+                modifier = Modifier.fillMaxWidth().height(54.dp)
             ) {
-                Text(stringResource(R.string.action_save))
+                Text(
+                    stringResource(R.string.action_save),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
 
             AnimatedVisibility(visible = toast != null, enter = fadeIn(), exit = fadeOut()) {

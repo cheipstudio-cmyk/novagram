@@ -612,9 +612,22 @@ object TdClient {
         send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
-    /** Recently used stickers (most-recently-sent first). */
-    suspend fun getRecentStickers(): TdApi.Stickers =
-        send(TdApi.GetRecentStickers(false))
+    /**
+     * Send a GIF / animation. TDLib's InputMessageAnimation accepts a local
+     * file (an actual .gif or an mp4) and renders it as an auto-playing
+     * animation on every client.
+     */
+    suspend fun sendAnimation(chatId: Long, filePath: String, caption: String? = null, replyToMessageId: Long? = null) {
+        val content = TdApi.InputMessageAnimation(
+            TdApi.InputFileLocal(filePath),
+            null,                    // thumbnail
+            intArrayOf(),            // added_sticker_file_ids
+            0, 0, 0,                 // duration, width, height
+            caption?.let { TdApi.FormattedText(it, emptyArray()) },
+            false, false             // show_caption_above_media, has_spoiler
+        )
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
+    }
 
     /** Stickers the user has explicitly favourited via Telegram. */
     suspend fun getFavoriteStickers(): TdApi.Stickers =

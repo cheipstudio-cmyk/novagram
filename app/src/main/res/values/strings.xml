@@ -286,4 +286,5 @@
     <string name="settings_ai_get_key">Crea una chiave su console.anthropic.com →</string>
     <string name="credits_join_group">Unisciti al gruppo Telegram</string>
     <string name="link_open_failed">Impossibile aprire il link</string>
+    <string name="attach_gif">GIF</string>
 </resources>

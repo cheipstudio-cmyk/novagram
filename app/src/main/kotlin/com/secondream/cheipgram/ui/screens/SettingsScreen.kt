@@ -1355,6 +1355,14 @@ private fun ThemeBuilderDialog(
         mutableStateListOf<Int>().apply { initials.forEach { add(it) } }
     }
     var name by remember { mutableStateOf(initialTheme?.name ?: "") }
+    // Light vs dark foundation for the theme. Declared at builder scope (not
+    // inside the dialog body) so the confirmButton can read it when saving.
+    var baseLight by remember {
+        mutableStateOf(
+            initialTheme?.isLight
+                ?: (initialTheme?.let { Color(it.bgArgb).luminance() > 0.5f } ?: false)
+        )
+    }
 
     val sectionTitles = listOf(
         stringResource(R.string.theme_section_accent),
@@ -1378,14 +1386,7 @@ private fun ThemeBuilderDialog(
 
                 // Base mode: whether the theme is built on a light or dark
                 // foundation. Saved into the theme so applying it flips the
-                // app's themeMode and surfaces match. Default inferred from
-                // the initial theme (or its bg luminance for legacy themes).
-                var baseLight by remember {
-                    mutableStateOf(
-                        initialTheme?.isLight
-                            ?: (initialTheme?.let { Color(it.bgArgb).luminance() > 0.5f } ?: false)
-                    )
-                }
+                // app's themeMode and surfaces match.
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)

@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -643,12 +645,12 @@ private fun MessageContent(
             }
         }
         is TdApi.MessageAnimation -> {
-            // GIF: show thumbnail, autoplay belongs to Round 2.
-            val thumb = c.animation.thumbnail?.file
-            DownloadingImage(
-                initialFile = thumb,
-                placeholderIcon = { Icon(Icons.Outlined.Image, null, tint = Ink.Muted) },
-                placeholderLabel = stringResource(R.string.media_gif)
+            // GIF: auto-playing, looping, muted — like Telegram.
+            InlineGifPlayer(
+                animationFile = c.animation.animation,
+                thumbFile = c.animation.thumbnail?.file,
+                width = c.animation.width,
+                height = c.animation.height
             )
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
@@ -759,6 +761,111 @@ private fun MessageContent(
             color = onBackground.copy(alpha = 0.7f)
         )
         else -> Text(stringResource(R.string.media_unsupported), style = MaterialTheme.typography.bodyLarge, color = onBackground.copy(alpha = 0.6f))
+    }
+}
+
+/**
+ * Auto-playing, looping, muted GIF player for MessageAnimation bubbles.
+ * Mirrors Telegram: the GIF plays in place. Downloads the animation file
+ * on first composition (gated by the auto-download preference — when off,
+ * shows the thumbnail with a tap-to-play overlay). Off-screen disposal in
+ * the LazyColumn releases the ExoPlayer automatically.
+ */
+@Composable
+private fun InlineGifPlayer(
+    animationFile: TdApi.File,
+    thumbFile: TdApi.File?,
+    width: Int,
+    height: Int
+) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val appearance by com.secondream.cheipgram.settings.AppSettings.appearance
+        .collectAsState(initial = com.secondream.cheipgram.settings.AppearancePrefs(autoDownloadMedia = false))
+    var localPath by remember(animationFile.id) {
+        mutableStateOf(animationFile.local?.path?.takeIf { it.isNotBlank() && animationFile.local.isDownloadingCompleted })
+    }
+    var requested by remember(animationFile.id) { mutableStateOf(false) }
+    val aspect = if (width > 0 && height > 0) width.toFloat() / height.toFloat() else 1.5f
+
+    // Trigger download (auto, or after a tap).
+    LaunchedEffect(animationFile.id, requested, appearance.autoDownloadMedia) {
+        if (localPath == null && (appearance.autoDownloadMedia || requested)) {
+            val f = runCatching { TdClient.downloadFile(animationFile.id) }.getOrNull()
+            val p = f?.local?.path
+            if (!p.isNullOrBlank()) localPath = p
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth(0.72f)
+            .aspectRatio(aspect.coerceIn(0.6f, 2.2f))
+            .clip(RoundedCornerShape(14.dp))
+            .background(Ink.Surface),
+        contentAlignment = Alignment.Center
+    ) {
+        val path = localPath
+        if (path != null) {
+            AndroidView(
+                factory = { c ->
+                    androidx.media3.ui.PlayerView(c).apply {
+                        useController = false
+                        layoutParams = android.view.ViewGroup.LayoutParams(
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        val exo = androidx.media3.exoplayer.ExoPlayer.Builder(c).build().apply {
+                            setMediaItem(androidx.media3.common.MediaItem.fromUri(android.net.Uri.fromFile(java.io.File(path))))
+                            repeatMode = androidx.media3.common.Player.REPEAT_MODE_ALL
+                            volume = 0f
+                            playWhenReady = true
+                            prepare()
+                        }
+                        player = exo
+                        tag = exo
+                    }
+                },
+                onRelease = { view ->
+                    (view.tag as? androidx.media3.exoplayer.ExoPlayer)?.release()
+                    view.player = null
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+            // Small GIF marker.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f))
+                    .padding(horizontal = 5.dp, vertical = 1.dp)
+            ) {
+                Text("GIF", style = MaterialTheme.typography.labelSmall, color = androidx.compose.ui.graphics.Color.White)
+            }
+        } else {
+            // Thumbnail + tap to play (when auto-download is off).
+            DownloadingImage(
+                initialFile = thumbFile,
+                placeholderIcon = { Icon(Icons.Outlined.Image, null, tint = Ink.Muted) },
+                placeholderLabel = stringResource(R.string.media_gif)
+            )
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clickable { requested = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f))
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text("▶  GIF", style = MaterialTheme.typography.labelLarge, color = androidx.compose.ui.graphics.Color.White)
+                }
+            }
+        }
     }
 }
 

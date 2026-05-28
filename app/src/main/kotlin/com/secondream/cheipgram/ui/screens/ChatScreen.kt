@@ -57,6 +57,7 @@ import androidx.compose.material.icons.automirrored.outlined.Forward
 import androidx.compose.material.icons.outlined.AlternateEmail
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Phone
+import androidx.compose.material.icons.outlined.Gif
 import androidx.compose.material.icons.outlined.Mood
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Reply
@@ -307,6 +308,20 @@ fun ChatScreen(
                     kind = PendingMediaKind.Document,
                     displayName = file.name
                 )
+            }
+        }
+    }
+
+    // GIF picker: pick an animated GIF (or mp4) and send it straight away
+    // as a Telegram animation so it auto-plays in the chat.
+    val gifLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        showAttach = false
+        uri?.let { picked ->
+            scope.launch(Dispatchers.IO) {
+                val file = FileUtils.copyUriToCache(context, picked) ?: return@launch
+                runCatching { TdClient.sendAnimation(chatId, file.absolutePath) }
             }
         }
     }
@@ -1141,6 +1156,7 @@ fun ChatScreen(
                 )
             },
             onPickDocument = { docLauncher.launch(arrayOf("*/*")) },
+            onPickGif = { gifLauncher.launch(arrayOf("image/gif", "video/mp4")) },
             onPickSticker = {
                 showAttach = false
                 showStickerPicker = true
@@ -1959,7 +1975,8 @@ private fun AttachSheet(
     onDismiss: () -> Unit,
     onPickPhoto: () -> Unit,
     onPickDocument: () -> Unit,
-    onPickSticker: () -> Unit
+    onPickSticker: () -> Unit,
+    onPickGif: () -> Unit
 ) {
     val state = rememberModalBottomSheetState()
     // Hardcoded Ink.* tokens were dark-theme only — on light themes the
@@ -2002,6 +2019,12 @@ private fun AttachSheet(
                     label = stringResource(R.string.attach_sticker),
                     icon = Icons.Outlined.Mood,
                     onClick = onPickSticker,
+                    modifier = Modifier.weight(1f)
+                )
+                AttachTile(
+                    label = stringResource(R.string.attach_gif),
+                    icon = Icons.Outlined.Gif,
+                    onClick = onPickGif,
                     modifier = Modifier.weight(1f)
                 )
             }
