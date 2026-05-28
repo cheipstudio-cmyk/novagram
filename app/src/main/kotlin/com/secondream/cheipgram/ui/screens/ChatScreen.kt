@@ -612,6 +612,10 @@ fun ChatScreen(
             }
         }
     }
+    var menuOpen by remember { mutableStateOf(false) }
+    var infoOpen by remember { mutableStateOf(false) }
+    var deleteOpen by remember { mutableStateOf(false) }
+    var leaveOpen by remember { mutableStateOf(false) }
     val cachedChatLive = TdClient.getCachedChat(chatId)
     val isMuted = (cachedChatLive?.notificationSettings?.muteFor ?: 0) > 0
 

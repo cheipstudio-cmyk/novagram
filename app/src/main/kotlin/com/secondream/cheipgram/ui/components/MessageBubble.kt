@@ -430,7 +430,7 @@ fun MessageBubble(
                 )
                 Spacer(Modifier.height(6.dp))
             }
-            MessageContent(message, fill.onBackground, onJumpToMessage)
+            MessageContent(message, fill.onBackground, onJumpToMessage, onOpenTelegramLink)
             // Existing reactions strip. We surface every reaction the
             // message currently carries; tapping toggles your own reaction
             // (add if missing, remove if you've already used it). Updates
@@ -506,7 +506,8 @@ fun MessageBubble(
 private fun MessageContent(
     message: TdApi.Message,
     onBackground: androidx.compose.ui.graphics.Color,
-    onJumpToMessage: (Long) -> Boolean = { false }
+    onJumpToMessage: (Long) -> Boolean = { false },
+    onOpenTelegramLink: (android.net.Uri) -> Unit = {}
 ) {
     when (val c = message.content) {
         is TdApi.MessageText -> {
@@ -529,7 +530,8 @@ private fun MessageContent(
                     onBackground = onBackground,
                     linkColor = MaterialTheme.colorScheme.primary,
                     currentChatId = message.chatId,
-                    onJumpToMessage = onJumpToMessage
+                    onJumpToMessage = onJumpToMessage,
+                    onOpenTelegramLink = onOpenTelegramLink
                 )
             }
         }
@@ -995,7 +997,8 @@ private fun FormattedTextRendering(
     onBackground: androidx.compose.ui.graphics.Color,
     linkColor: androidx.compose.ui.graphics.Color,
     currentChatId: Long = 0L,
-    onJumpToMessage: (Long) -> Boolean = { false }
+    onJumpToMessage: (Long) -> Boolean = { false },
+    onOpenTelegramLink: (android.net.Uri) -> Unit = {}
 ) {
     val text = formatted.text
     val ctx = androidx.compose.ui.platform.LocalContext.current
