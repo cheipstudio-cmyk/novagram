@@ -115,7 +115,7 @@
     <string name="new_chat_empty_telegram">No Telegram contacts.</string>
     <string name="new_chat_empty_phone">No contacts found.</string>
     <string name="new_chat_permission_title">Contacts access</string>
-    <string name="new_chat_permission_body">To search among phone contacts Nova needs the contacts permission.</string>
+    <string name="new_chat_permission_body">To search among phone contacts Novagram needs the contacts permission.</string>
     <string name="new_chat_phone_on_telegram">On Telegram</string>
     <string name="new_chat_phone_invite">Invite</string>
     <string name="new_chat_syncing">Syncing contacts…</string>
@@ -171,7 +171,7 @@
     <string name="theme_open_builder">Customize</string>
     <string name="theme_reset">Reset</string>
     <string name="theme_share">Share theme</string>
-    <string name="theme_share_chooser">Share Nova theme</string>
+    <string name="theme_share_chooser">Share Novagram theme</string>
     <string name="theme_builder_title">Accent color</string>
     <string name="theme_preview">Preview</string>
     <string name="theme_save">Save</string>
@@ -182,10 +182,10 @@
     <string name="theme_paste">Paste theme</string>
     <string name="theme_paste_success">Theme imported</string>
     <string name="theme_paste_error">Invalid theme in clipboard</string>
-    <string name="theme_share_body">Open this link to apply the Nova theme:
+    <string name="theme_share_body">Open this link to apply the Novagram theme:
 
 %1$s</string>
-    <string name="theme_card_title">Nova theme</string>
+    <string name="theme_card_title">Novagram theme</string>
     <string name="theme_card_subtitle">Tap to apply</string>
     <string name="theme_card_apply">Apply theme</string>
     <string name="sticker_search_placeholder">Search stickers...</string>
@@ -215,7 +215,7 @@
     <string name="action_leave_group">Leave group</string>
     <string name="action_leave_channel">Leave channel</string>
     <string name="leave_group_confirm">Leave %1$s?</string>
-    <string name="home_card_join_title">Official Nova group</string>
+    <string name="home_card_join_title">Official Novagram group</string>
     <string name="home_card_join_subtitle">Join for news, support and feedback.</string>
     <string name="home_card_join_action">Join</string>
     <string name="chat_info_bio_label">Bio</string>
@@ -251,7 +251,7 @@
     <string name="settings_media_autodownload_desc">When off, photos/videos/files require a tap to download before viewing</string>
     <string name="media_tap_to_download">Tap to download</string>
     <string name="action_save">Save</string>
-    <string name="media_save_success">Saved to Nova</string>
+    <string name="media_save_success">Saved to Novagram</string>
     <string name="media_save_error">Save failed</string>
     <string name="settings_section_ai">AI</string>
     <string name="settings_ai_apikey_label">Anthropic API key</string>

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Nova</string>
+    <string name="app_name">Novagram</string>
 
     <!-- Google Fonts provider certificates -->
     <string name="provider_authority" translatable="false">com.google.android.gms.fonts</string>
@@ -130,7 +130,7 @@
     <string name="new_chat_empty_telegram">Nessun contatto Telegram.</string>
     <string name="new_chat_empty_phone">Nessun contatto trovato.</string>
     <string name="new_chat_permission_title">Accesso ai contatti</string>
-    <string name="new_chat_permission_body">Per cercare tra i contatti del telefono Nova ha bisogno del permesso ai contatti.</string>
+    <string name="new_chat_permission_body">Per cercare tra i contatti del telefono Novagram ha bisogno del permesso ai contatti.</string>
     <string name="new_chat_phone_on_telegram">Su Telegram</string>
     <string name="new_chat_phone_invite">Invita</string>
     <string name="new_chat_syncing">Sincronizzazione contatti…</string>
@@ -186,7 +186,7 @@
     <string name="theme_open_builder">Personalizza</string>
     <string name="theme_reset">Reimposta</string>
     <string name="theme_share">Condividi tema</string>
-    <string name="theme_share_chooser">Condividi tema Nova</string>
+    <string name="theme_share_chooser">Condividi tema Novagram</string>
     <string name="theme_builder_title">Colore accento</string>
     <string name="theme_preview">Anteprima</string>
     <string name="theme_save">Salva</string>
@@ -197,10 +197,10 @@
     <string name="theme_paste">Incolla tema</string>
     <string name="theme_paste_success">Tema importato</string>
     <string name="theme_paste_error">Tema non valido negli appunti</string>
-    <string name="theme_share_body">Apri questo link per applicare il tema Nova:
+    <string name="theme_share_body">Apri questo link per applicare il tema Novagram:
 
 %1$s</string>
-    <string name="theme_card_title">Tema Nova</string>
+    <string name="theme_card_title">Tema Novagram</string>
     <string name="theme_card_subtitle">Tocca per applicare</string>
     <string name="theme_card_apply">Applica tema</string>
     <string name="sticker_search_placeholder">Cerca sticker...</string>
@@ -230,7 +230,7 @@
     <string name="action_leave_group">Esci dal gruppo</string>
     <string name="action_leave_channel">Esci dal canale</string>
     <string name="leave_group_confirm">Vuoi uscire da %1$s?</string>
-    <string name="home_card_join_title">Gruppo ufficiale Nova</string>
+    <string name="home_card_join_title">Gruppo ufficiale Novagram</string>
     <string name="home_card_join_subtitle">Unisciti per news, supporto e feedback.</string>
     <string name="home_card_join_action">Unisciti</string>
     <string name="chat_info_bio_label">Bio</string>
@@ -265,7 +265,7 @@
     <string name="settings_media_autodownload">Download automatico durante lo scroll</string>
     <string name="settings_media_autodownload_desc">Se disattivato, foto/video/file vanno scaricati manualmente prima di essere visti</string>
     <string name="media_tap_to_download">Tocca per scaricare</string>
-    <string name="media_save_success">Salvato in Nova</string>
+    <string name="media_save_success">Salvato in Novagram</string>
     <string name="media_save_error">Salvataggio non riuscito</string>
     <string name="settings_section_ai">AI</string>
     <string name="settings_ai_apikey_label">Chiave API Anthropic</string>

@@ -115,7 +115,7 @@
     <string name="new_chat_empty_telegram">Keine Telegram-Kontakte.</string>
     <string name="new_chat_empty_phone">Keine Kontakte gefunden.</string>
     <string name="new_chat_permission_title">Kontaktzugriff</string>
-    <string name="new_chat_permission_body">Um in den Telefonkontakten zu suchen, benötigt Nova die Kontaktberechtigung.</string>
+    <string name="new_chat_permission_body">Um in den Telefonkontakten zu suchen, benötigt Novagram die Kontaktberechtigung.</string>
     <string name="new_chat_phone_on_telegram">Auf Telegram</string>
     <string name="new_chat_phone_invite">Einladen</string>
     <string name="new_chat_syncing">Kontakte werden synchronisiert…</string>
@@ -171,7 +171,7 @@
     <string name="theme_open_builder">Anpassen</string>
     <string name="theme_reset">Zurücksetzen</string>
     <string name="theme_share">Theme teilen</string>
-    <string name="theme_share_chooser">Nova-Theme teilen</string>
+    <string name="theme_share_chooser">Novagram-Theme teilen</string>
     <string name="theme_builder_title">Akzentfarbe</string>
     <string name="theme_preview">Vorschau</string>
     <string name="theme_save">Speichern</string>
@@ -182,10 +182,10 @@
     <string name="theme_paste">Theme einfügen</string>
     <string name="theme_paste_success">Theme importiert</string>
     <string name="theme_paste_error">Ungültiges Theme in der Zwischenablage</string>
-    <string name="theme_share_body">Öffne diesen Link, um das Nova-Theme anzuwenden:
+    <string name="theme_share_body">Öffne diesen Link, um das Novagram-Theme anzuwenden:
 
 %1$s</string>
-    <string name="theme_card_title">Nova-Theme</string>
+    <string name="theme_card_title">Novagram-Theme</string>
     <string name="theme_card_subtitle">Tippe zum Anwenden</string>
     <string name="theme_card_apply">Theme anwenden</string>
     <string name="sticker_search_placeholder">Sticker suchen...</string>
@@ -215,7 +215,7 @@
     <string name="action_leave_group">Gruppe verlassen</string>
     <string name="action_leave_channel">Kanal verlassen</string>
     <string name="leave_group_confirm">%1$s verlassen?</string>
-    <string name="home_card_join_title">Offizielle Nova-Gruppe</string>
+    <string name="home_card_join_title">Offizielle Novagram-Gruppe</string>
     <string name="home_card_join_subtitle">News, Support und Feedback.</string>
     <string name="home_card_join_action">Beitreten</string>
     <string name="chat_info_bio_label">Bio</string>
@@ -251,7 +251,7 @@
     <string name="settings_media_autodownload_desc">Wenn aus, müssen Fotos/Videos/Dateien vor dem Ansehen manuell heruntergeladen werden</string>
     <string name="media_tap_to_download">Zum Herunterladen tippen</string>
     <string name="action_save">Speichern</string>
-    <string name="media_save_success">In Nova gespeichert</string>
+    <string name="media_save_success">In Novagram gespeichert</string>
     <string name="media_save_error">Speichern fehlgeschlagen</string>
     <string name="settings_section_ai">KI</string>
     <string name="settings_ai_apikey_label">Anthropic-API-Schlüssel</string>

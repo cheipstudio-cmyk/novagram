@@ -48,7 +48,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="nova" android:host="theme" />
+                <data android:scheme="novagram" android:host="theme" />
             </intent-filter>
             <!--
                 t.me / telegram.me / telegram.dog links. Tapping a t.me
@@ -86,7 +86,7 @@
             android:name=".notifications.ReplyReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.secondream.novamessenger.action.REPLY" />
+                <action android:name="com.secondream.novagram.action.REPLY" />
             </intent-filter>
         </receiver>
 
