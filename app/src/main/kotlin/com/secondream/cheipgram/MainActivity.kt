@@ -55,6 +55,11 @@ class MainActivity : ComponentActivity() {
 
         requestNotifPermissionIfNeeded()
         startTdServiceIfPossible()
+        // App-wide transfer tracker: starts collecting fileUpdates once
+        // TDLib is up. Idempotent — multiple calls are no-ops. Lives for
+        // the process lifetime so the persistent panel can stay current
+        // across screen changes.
+        com.secondream.cheipgram.transfer.TransferTracker.start()
         pendingChatId.value = intent?.getLongExtra("chatId", 0L)?.takeIf { it != 0L }
         handleThemeDeeplink(intent)
         handleTmeDeeplink(intent)
@@ -75,10 +80,22 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = Color.Unspecified
                 ) {
-                    AppRouter(
-                        pendingChatId = chatToOpen,
-                        onChatOpened = { pendingChatId.value = null }
-                    )
+                    // Box wraps both the nav graph and the persistent
+                    // transfer panel overlay. The panel sits at the
+                    // bottom and is only painted when there are active
+                    // transfers; otherwise it's invisible and consumes
+                    // no layout space.
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        AppRouter(
+                            pendingChatId = chatToOpen,
+                            onChatOpened = { pendingChatId.value = null }
+                        )
+                        com.secondream.cheipgram.transfer.TransferPanel(
+                            modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+                        )
+                    }
                 }
             }
         }

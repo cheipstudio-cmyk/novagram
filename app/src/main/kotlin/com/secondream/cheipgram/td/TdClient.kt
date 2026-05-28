@@ -65,6 +65,24 @@ object TdClient {
     val messageContentUpdates = _messageContentUpdates.asSharedFlow()
 
     /**
+     * Emitted when TDLib confirms (or rejects) a message we sent. Carries
+     * the original local-only id we put into the list at send time plus
+     * the now-authoritative message. ChatScreen uses both to swap the
+     * placeholder bubble (sendingState=Pending, "⏱" tick) for the real
+     * one with sendingState=null and a proper id — without this the tick
+     * stays on the local message forever, only flipping to a checkmark
+     * after the user backs out and reopens the chat (which forces a full
+     * history reload).
+     */
+    data class MessageSendUpdate(
+        val oldMessageId: Long,
+        val newMessage: TdApi.Message,
+        val failed: Boolean
+    )
+    private val _messageSendUpdates = MutableSharedFlow<MessageSendUpdate>(extraBufferCapacity = 16)
+    val messageSendUpdates = _messageSendUpdates.asSharedFlow()
+
+    /**
      * Emitted when a message's interaction info (reactions, view count,
      * forward count) changes. ChatScreen listens to this to swap in the
      * fresh `interactionInfo` on the matching cached message so reactions
@@ -165,6 +183,14 @@ object TdClient {
                 chatCache[obj.chatId]?.notificationSettings = obj.notificationSettings
                 refreshChats()
             }
+            is TdApi.UpdateChatDraftMessage -> {
+                // Drafts sync across devices: editing on Desktop pushes one of
+                // these to us. Mirror into the cache so the next chat-list
+                // rebuild shows the right preview and so ChatScreen reads
+                // the latest draft when it opens.
+                chatCache[obj.chatId]?.draftMessage = obj.draftMessage
+                refreshChats()
+            }
             is TdApi.UpdateUser -> {
                 userCache[obj.user.id] = obj.user
             }
@@ -194,7 +220,31 @@ object TdClient {
                 }
             }
             is TdApi.UpdateMessageSendSucceeded -> {
-                scope.launch { _chatUpdates.emit(obj.message.chatId) }
+                scope.launch {
+                    // ChatScreen needs the (oldId, newMessage) pair to swap
+                    // its optimistic placeholder bubble for the confirmed
+                    // one. Without this swap the ⏱ tick stays forever.
+                    _messageSendUpdates.emit(
+                        MessageSendUpdate(
+                            oldMessageId = obj.oldMessageId,
+                            newMessage = obj.message,
+                            failed = false
+                        )
+                    )
+                    _chatUpdates.emit(obj.message.chatId)
+                }
+            }
+            is TdApi.UpdateMessageSendFailed -> {
+                scope.launch {
+                    _messageSendUpdates.emit(
+                        MessageSendUpdate(
+                            oldMessageId = obj.oldMessageId,
+                            newMessage = obj.message,
+                            failed = true
+                        )
+                    )
+                    _chatUpdates.emit(obj.message.chatId)
+                }
             }
             is TdApi.UpdateFile -> {
                 scope.launch { _fileUpdates.emit(obj.file) }
@@ -403,6 +453,110 @@ object TdClient {
         send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
+    // ===== Editing =====
+
+    /**
+     * Replace the text content of a previously-sent text message. TDLib
+     * decides whether the edit is allowed (time window, bot-vs-user rules,
+     * channel admin permissions) and returns an error otherwise — we let
+     * that propagate so the caller can surface "modifica non possibile".
+     *
+     * Only valid for messages whose content is [TdApi.MessageText]. For
+     * media messages (photo/video/document with caption) use
+     * [editMessageCaption] instead — captions and text bodies are stored
+     * separately in TDLib.
+     */
+    suspend fun editMessageText(chatId: Long, messageId: Long, newText: String) {
+        val content = TdApi.InputMessageText(
+            TdApi.FormattedText(newText, emptyArray()),
+            /* linkPreviewOptions = */ null,
+            /* clearDraft = */ false
+        )
+        send(TdApi.EditMessageText(chatId, messageId, null, content))
+    }
+
+    /**
+     * Replace only the caption of a media message (photo/video/document/
+     * animation/audio with caption). Passing a blank string clears the
+     * caption entirely. Keeps the original media intact — we don't
+     * re-upload or even touch the file.
+     */
+    suspend fun editMessageCaption(chatId: Long, messageId: Long, newCaption: String) {
+        val formatted = if (newCaption.isBlank()) null
+        else TdApi.FormattedText(newCaption, emptyArray())
+        send(TdApi.EditMessageCaption(
+            chatId, messageId,
+            /* replyMarkup = */ null,
+            formatted,
+            /* showAboveText = */ false
+        ))
+    }
+
+    // ===== Drafts =====
+
+    /**
+     * Read the current draft for a chat. We pull it from our cache rather
+     * than asking TDLib each time — UpdateChatDraftMessage events keep
+     * chatCache in sync, and on chat open the cache is already populated
+     * by GetChats during init.
+     *
+     * Returns the plain draft text or null if there is no draft. We don't
+     * surface replyTo here yet; the input bar in ChatScreen has its own
+     * reply preview state driven by user gestures.
+     */
+    fun getChatDraftText(chatId: Long): String? {
+        val draft = chatCache[chatId]?.draftMessage ?: return null
+        val content = draft.inputMessageText as? TdApi.InputMessageText ?: return null
+        return content.text?.text?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Persist (or clear) the draft for a chat. Passing a blank `text`
+     * clears the draft entirely so the chat list stops showing the
+     * "Bozza:" prefix. TDLib syncs drafts across devices, so what we
+     * save here also shows up on Telegram Desktop/Web.
+     *
+     * `replyToMessageId` is optional and mirrors the reply target that
+     * was active in the input bar when the user left the chat — TDLib
+     * preserves it so the reply preview is still there when they come back.
+     */
+    suspend fun setChatDraft(
+        chatId: Long,
+        text: String,
+        replyToMessageId: Long? = null
+    ) {
+        val draft = if (text.isBlank()) {
+            null
+        } else {
+            // Field assignment over all-args constructor: TDLib occasionally
+            // appends new fields (e.g. effectId) between versions and this
+            // style stays compatible without having to track the schema.
+            TdApi.DraftMessage().apply {
+                replyTo = buildReplyTo(replyToMessageId)
+                date = (System.currentTimeMillis() / 1000L).toInt()
+                inputMessageText = TdApi.InputMessageText(
+                    TdApi.FormattedText(text, emptyArray()),
+                    null,
+                    /* clearDraft = */ false
+                )
+            }
+        }
+        // Mirror the change into our cache immediately so chat-list rows
+        // refresh without waiting for the round-trip UpdateChatDraftMessage.
+        chatCache[chatId]?.draftMessage = draft
+        runCatching {
+            // Recent TDLib replaced the old `messageThreadId: Long` parameter
+            // with `topicId: MessageTopic?`. Field-assignment style stays
+            // compatible with both shapes (kotlin no-arg + setter call) and
+            // we pass null because we only target the main thread of the
+            // chat — topic-specific drafts are out of scope here.
+            send(TdApi.SetChatDraftMessage().apply {
+                this.chatId = chatId
+                this.draftMessage = draft
+            })
+        }
+    }
+
     suspend fun sendPhoto(chatId: Long, filePath: String, caption: String? = null, replyToMessageId: Long? = null) {
         val content = TdApi.InputMessagePhoto(
             TdApi.InputFileLocal(filePath),
@@ -510,6 +664,16 @@ object TdClient {
     suspend fun downloadFile(fileId: Int): TdApi.File {
         return send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
     }
+
+    /**
+     * Quick lookup of a file's current state — no download triggered.
+     * TDLib mutates the [TdApi.File] objects we hand out (the same Java
+     * reference) but Compose doesn't observe field mutation, so any reader
+     * that wants the latest local.path / isDownloadingCompleted has to ask
+     * TDLib again. Used by DownloadingImage on (re-)compose and by the
+     * MessageBubble tap handler before opening media / documents.
+     */
+    suspend fun getFile(fileId: Int): TdApi.File = send(TdApi.GetFile(fileId))
 
     // ----- Profile -----
 
@@ -722,6 +886,17 @@ object TdClient {
      */
     suspend fun getMessageProperties(chatId: Long, messageId: Long): TdApi.MessageProperties =
         send(TdApi.GetMessageProperties(chatId, messageId))
+
+    /**
+     * Fetch a single message by chat + id. Used by the reply-quote bar
+     * in MessageBubble when the inline preview carried by
+     * [TdApi.MessageReplyToMessage] isn't enough (or isn't present in
+     * older message records). Returns null if the message has been
+     * deleted on the server or TDLib can't find it.
+     */
+    suspend fun getMessage(chatId: Long, messageId: Long): TdApi.Message? =
+        runCatching { send(TdApi.GetMessage(chatId, messageId)) as? TdApi.Message }
+            .getOrNull()
 
     /**
      * Forward messages from one chat to another. message_ids must be sorted

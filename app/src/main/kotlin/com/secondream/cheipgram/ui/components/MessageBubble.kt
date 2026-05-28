@@ -7,8 +7,8 @@ package com.secondream.cheipgram.ui.components
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.input.pointer.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.pointerInput
 
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -76,6 +76,17 @@ fun MessageBubble(
     onLongPress: (TdApi.Message) -> Unit = {},
     onMediaTap: (String) -> Unit = {},
     onSwipeReply: (TdApi.Message) -> Unit = {},
+    /** Fired when the user taps the sender avatar shown next to non-mine
+     *  bubbles in group chats. Receives the sender's userId so the parent
+     *  can open a profile sheet / start a chat. No-op by default for
+     *  callers that don't need profile-on-tap. */
+    onAvatarClick: (userId: Long) -> Unit = {},
+    /** Fired when the user taps a Telegram link in the message text that
+     *  points to a message in THIS SAME chat — caller scrolls the list
+     *  to that message. Return true if it could jump (message is in the
+     *  in-memory window), false to let the default Intent flow handle
+     *  it as a fallback. */
+    onJumpToMessage: (Long) -> Boolean = { false },
     /**
      * Bumped by the parent each time TDLib pushes a new InteractionInfo
      * for this message. Reading it here pulls this composable into the
@@ -126,6 +137,12 @@ fun MessageBubble(
     val animatedOffset by animateFloatAsState(targetValue = swipeOffset, label = "swipe-reply")
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     var hapticFired by remember(message.id) { mutableStateOf(false) }
+    // Coroutine scope + Android context for the bubble click handler:
+    // we need to ask TDLib for the *current* file state at tap time (in
+    // case the closure-captured TdApi.File reference is stale) and we
+    // need a Context to launch system Intents for non-image content.
+    val tapScope = androidx.compose.runtime.rememberCoroutineScope()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
 
     Box(
         modifier = Modifier
@@ -164,28 +181,31 @@ fun MessageBubble(
             // ~400ms expecting the menu to appear — now it does. Also
             // gives a haptic on trigger so the user knows it landed.
             .pointerInput("longpress-${message.id}") {
+                // We launch the long-press timer from the composable-level
+                // CoroutineScope (`tapScope`) rather than from the
+                // PointerInputScope: in current Compose-foundation that
+                // scope is NOT a CoroutineScope, so .launch{} won't resolve
+                // here. Going through tapScope also keeps the timer's
+                // lifecycle tied to the bubble's composition, which is
+                // exactly what we want (cancelled if the bubble scrolls
+                // off-screen and recomposes elsewhere).
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val timeoutMs = 300L
-                    val startNs = System.nanoTime()
-                    var fired = false
-                    while (!fired) {
-                        val elapsedMs = (System.nanoTime() - startNs) / 1_000_000L
-                        val remaining = timeoutMs - elapsedMs
-                        if (remaining <= 0) {
-                            haptic.performHapticFeedback(
-                                androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
-                            )
-                            onLongPress(message)
-                            fired = true
-                            break
-                        }
-                        val event = kotlinx.coroutines.withTimeoutOrNull(remaining) {
-                            awaitPointerEvent()
-                        } ?: continue
-                        val change = event.changes.find { it.id == down.id } ?: break
-                        if (!change.pressed) break
-                        if (change.positionChange().getDistance() > viewConfiguration.touchSlop) break
+                    awaitFirstDown(requireUnconsumed = false)
+                    // 300ms timer fires the long press if the user hasn't lifted
+                    // or moved past touchSlop by then. waitForUpOrCancellation()
+                    // returns when either of those happens, at which point we
+                    // cancel the pending timer.
+                    val timerJob = tapScope.launch {
+                        kotlinx.coroutines.delay(300L)
+                        haptic.performHapticFeedback(
+                            androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
+                        )
+                        onLongPress(message)
+                    }
+                    try {
+                        waitForUpOrCancellation()
+                    } finally {
+                        timerJob.cancel()
                     }
                 }
             }
@@ -218,13 +238,21 @@ fun MessageBubble(
             verticalAlignment = Alignment.Bottom
         ) {
             if (showSender && !mine) {
+                val senderUserId = (message.senderId as? TdApi.MessageSenderUser)?.userId
                 Avatar(
                     file = senderUser?.profilePhoto?.small,
-                fallbackText = senderUser?.firstName ?: "?",
-                size = 28.dp
-            )
-            Spacer(Modifier.width(6.dp))
-        }
+                    fallbackText = senderUser?.firstName ?: "?",
+                    size = 28.dp,
+                    // Tap-on-avatar opens the profile sheet in the parent.
+                    // We only wire the click when we actually have a userId
+                    // to send back; chat-author messages (admin announcements
+                    // posted as the group itself) leave the avatar inert.
+                    modifier = if (senderUserId != null) {
+                        Modifier.clickable { onAvatarClick(senderUserId) }
+                    } else Modifier
+                )
+                Spacer(Modifier.width(6.dp))
+            }
         Column(
             modifier = Modifier
                 .widthIn(max = 300.dp)
@@ -232,17 +260,124 @@ fun MessageBubble(
                 .background(fill.background)
                 .combinedClickable(
                     onClick = {
-                        val path: String? = when (val c = message.content) {
-                            is TdApi.MessagePhoto -> c.photo.sizes
-                                .lastOrNull { it.photo.local.isDownloadingCompleted }
-                                ?.photo?.local?.path
-                            is TdApi.MessageAnimation -> c.animation.animation
-                                .takeIf { it.local.isDownloadingCompleted }?.local?.path
-                            is TdApi.MessageVideo -> c.video.video
-                                .takeIf { it.local.isDownloadingCompleted }?.local?.path
-                            else -> null
+                        // The TdApi.File references inside message.content are
+                        // captured at compose time. TDLib mutates them in
+                        // place when downloads finish, but Compose doesn't
+                        // observe the field-level change so by the time the
+                        // user taps, local.isDownloadingCompleted on the
+                        // captured object may still read false even though
+                        // the file IS actually on disk. We launch a small
+                        // coroutine that re-asks TDLib for the latest state,
+                        // then routes to MediaViewer for images / system
+                        // viewer for documents.
+                        tapScope.launch {
+                            when (val c = message.content) {
+                                is TdApi.MessagePhoto -> {
+                                    val biggest = c.photo.sizes.lastOrNull()?.photo
+                                        ?: return@launch
+                                    val latest = runCatching { TdClient.getFile(biggest.id) }
+                                        .getOrNull() ?: biggest
+                                    val path = latest.local?.path
+                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        onMediaTap(path)
+                                    } else {
+                                        runCatching { TdClient.downloadFile(latest.id) }
+                                            .onSuccess { done ->
+                                                done.local?.path?.takeIf {
+                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                }?.let(onMediaTap)
+                                            }
+                                    }
+                                }
+                                is TdApi.MessageVideo -> {
+                                    val f = c.video.video
+                                    val latest = runCatching { TdClient.getFile(f.id) }
+                                        .getOrNull() ?: f
+                                    val path = latest.local?.path
+                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        // Open in the embedded ExoPlayer-backed
+                                        // viewer rather than firing an external
+                                        // Intent — keeps the user inside the app.
+                                        com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = true
+                                        onMediaTap(path)
+                                    } else {
+                                        runCatching { TdClient.downloadFile(latest.id) }
+                                            .onSuccess { done ->
+                                                done.local?.path?.takeIf {
+                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                }?.let { p ->
+                                                    com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = true
+                                                    onMediaTap(p)
+                                                }
+                                            }
+                                    }
+                                }
+                                is TdApi.MessageAnimation -> {
+                                    val f = c.animation.animation
+                                    val latest = runCatching { TdClient.getFile(f.id) }
+                                        .getOrNull() ?: f
+                                    val path = latest.local?.path
+                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = true
+                                        onMediaTap(path)
+                                    } else {
+                                        runCatching { TdClient.downloadFile(latest.id) }
+                                            .onSuccess { done ->
+                                                done.local?.path?.takeIf {
+                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                }?.let { p ->
+                                                    com.secondream.cheipgram.ui.screens.MediaViewerHolder.isVideo = true
+                                                    onMediaTap(p)
+                                                }
+                                            }
+                                    }
+                                }
+                                is TdApi.MessageDocument -> {
+                                    val f = c.document.document
+                                    val latest = runCatching { TdClient.getFile(f.id) }
+                                        .getOrNull() ?: f
+                                    val path = latest.local?.path
+                                    val open: (String) -> Unit = { p ->
+                                        com.secondream.cheipgram.util.FileUtils.openDocument(
+                                            ctx, p, c.document.mimeType, c.document.fileName
+                                        )
+                                    }
+                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        open(path)
+                                    } else {
+                                        runCatching { TdClient.downloadFile(latest.id) }
+                                            .onSuccess { done ->
+                                                done.local?.path?.takeIf {
+                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                }?.let(open)
+                                            }
+                                    }
+                                }
+                                is TdApi.MessageAudio -> {
+                                    val f = c.audio.audio
+                                    val latest = runCatching { TdClient.getFile(f.id) }
+                                        .getOrNull() ?: f
+                                    val path = latest.local?.path
+                                    if (latest.local.isDownloadingCompleted && !path.isNullOrBlank()) {
+                                        com.secondream.cheipgram.util.FileUtils.openDocument(
+                                            ctx, path, c.audio.mimeType, c.audio.fileName
+                                        )
+                                    } else {
+                                        runCatching { TdClient.downloadFile(latest.id) }
+                                            .onSuccess { done ->
+                                                done.local?.path?.takeIf {
+                                                    done.local.isDownloadingCompleted && it.isNotBlank()
+                                                }?.let { p ->
+                                                    com.secondream.cheipgram.util.FileUtils.openDocument(
+                                                        ctx, p, c.audio.mimeType, c.audio.fileName
+                                                    )
+                                                }
+                                            }
+                                    }
+                                }
+                                else -> Unit
+                            }
                         }
-                        if (!path.isNullOrBlank()) onMediaTap(path)
                     },
                     onLongClick = { onLongPress(message) }
                 )
@@ -260,7 +395,32 @@ fun MessageBubble(
                     Spacer(Modifier.height(2.dp))
                 }
             }
-            MessageContent(message, fill.onBackground)
+            // If this message is a reply to another one, render the
+            // quoted-preview bar just above the body. Matches Telegram's
+            // visual: a tinted strip with a left accent stripe carrying
+            // the original sender's name + a one-line preview of the
+            // original content (or the manually-quoted slice when the
+            // user picked a quote range with TDLib's quote feature).
+            (message.replyTo as? TdApi.MessageReplyToMessage)?.let { rt ->
+                ReplyQuoteBar(
+                    replyTo = rt,
+                    accent = MaterialTheme.colorScheme.primary,
+                    onBackground = fill.onBackground,
+                    onTap = {
+                        // Only jump if the quoted message is in this chat —
+                        // cross-chat replies (forwarded with reply context)
+                        // would need a different navigation path which we
+                        // don't have wired in this scope. Falling through
+                        // silently is acceptable since the rt.chatId of a
+                        // normal in-chat reply always matches message.chatId.
+                        if (rt.chatId == message.chatId) {
+                            onJumpToMessage(rt.messageId)
+                        }
+                    }
+                )
+                Spacer(Modifier.height(6.dp))
+            }
+            MessageContent(message, fill.onBackground, onJumpToMessage)
             // Existing reactions strip. We surface every reaction the
             // message currently carries; tapping toggles your own reaction
             // (add if missing, remove if you've already used it). Updates
@@ -286,6 +446,19 @@ fun MessageBubble(
             val cachedChat = TdClient.getCachedChat(message.chatId)
             val isPrivateChat = cachedChat?.type is TdApi.ChatTypePrivate
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // "modificato" tag — only on messages TDLib has flagged as
+                // edited (editDate > 0). Sits to the LEFT of the timestamp
+                // so it reads naturally as a property of the time mark, the
+                // same place Telegram puts its "edited" indicator.
+                if (message.editDate > 0) {
+                    Text(
+                        text = stringResource(R.string.bubble_edited_tag),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = fill.onBackground.copy(alpha = 0.55f),
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
                 Text(
                     text = formatHHmm(message.date),
                     style = MaterialTheme.typography.labelSmall,
@@ -320,7 +493,11 @@ fun MessageBubble(
 }
 
 @Composable
-private fun MessageContent(message: TdApi.Message, onBackground: androidx.compose.ui.graphics.Color) {
+private fun MessageContent(
+    message: TdApi.Message,
+    onBackground: androidx.compose.ui.graphics.Color,
+    onJumpToMessage: (Long) -> Boolean = { false }
+) {
     when (val c = message.content) {
         is TdApi.MessageText -> {
             val rawText = c.text.text
@@ -340,7 +517,9 @@ private fun MessageContent(message: TdApi.Message, onBackground: androidx.compos
                 FormattedTextRendering(
                     formatted = c.text,
                     onBackground = onBackground,
-                    linkColor = MaterialTheme.colorScheme.primary
+                    linkColor = MaterialTheme.colorScheme.primary,
+                    currentChatId = message.chatId,
+                    onJumpToMessage = onJumpToMessage
                 )
             }
         }
@@ -357,28 +536,93 @@ private fun MessageContent(message: TdApi.Message, onBackground: androidx.compos
             }
         }
         is TdApi.MessageVideo -> {
-            // Show the thumbnail file (cheap, usually auto-downloaded by TDLib).
-            // Tap-to-play would belong in a dedicated player screen, Round 2+.
+            // We track the main video file's progress on top of the
+            // thumbnail. Three visual states:
+            //  - completed: show the play icon overlay
+            //  - downloading (or auto-download is on): show a circular
+            //    progress with % overlay
+            //  - idle (auto-download off, user hasn't tapped): show a
+            //    download icon overlay — tapping the bubble kicks the
+            //    download via the existing onMediaTap path.
             val thumb = c.video.thumbnail?.file
+            val videoFile = c.video.video
+            var liveFile by remember(videoFile.id) {
+                mutableStateOf(videoFile)
+            }
+            LaunchedEffect(videoFile.id) {
+                runCatching { TdClient.getFile(videoFile.id) }.onSuccess { liveFile = it }
+                TdClient.fileUpdates.collect { upd ->
+                    if (upd.id == videoFile.id) liveFile = upd
+                }
+            }
             Box(contentAlignment = Alignment.Center) {
                 DownloadingImage(
                     initialFile = thumb,
                     placeholderIcon = { Icon(Icons.Outlined.PlayArrow, null, tint = Ink.Cream) },
                     placeholderLabel = stringResource(R.string.media_video)
                 )
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(Ink.Bg.copy(alpha = 0.6f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Outlined.PlayArrow,
-                        null,
-                        tint = Ink.Cream,
-                        modifier = Modifier.size(28.dp)
-                    )
+                // Overlay state-aware progress / play / download icon
+                when {
+                    liveFile.local.isDownloadingCompleted -> {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(28.dp))
+                                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Outlined.PlayArrow,
+                                null,
+                                tint = androidx.compose.ui.graphics.Color.White,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                    }
+                    liveFile.local.isDownloadingActive -> {
+                        val total = liveFile.size.coerceAtLeast(1).toFloat()
+                        val done = liveFile.local.downloadedSize.coerceAtLeast(0).toFloat()
+                        val progress = (done / total).coerceIn(0f, 1f)
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(32.dp))
+                                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                progress = { progress },
+                                strokeWidth = 3.dp,
+                                color = androidx.compose.ui.graphics.Color.White,
+                                trackColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.25f),
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Text(
+                                "${(progress * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.ui.graphics.Color.White
+                            )
+                        }
+                    }
+                    else -> {
+                        // Idle: tap the bubble to start the download (the
+                        // outer onMediaTap branch already calls
+                        // TdClient.downloadFile for non-completed video).
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(28.dp))
+                                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                androidx.compose.material.icons.Icons.Outlined.Download,
+                                null,
+                                tint = androidx.compose.ui.graphics.Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
                 }
             }
             if (c.caption.text.isNotBlank()) {
@@ -523,30 +767,182 @@ private fun DownloadingImage(
         return
     }
     var file by remember(initialFile.id) { mutableStateOf(initialFile) }
+    val appearance by com.secondream.cheipgram.settings.AppSettings.appearance
+        .collectAsState(initial = com.secondream.cheipgram.settings.AppearancePrefs())
+    val autoDownload = appearance.autoDownloadMedia
+    // Tracks whether the user has explicitly asked for this file via the
+    // tap-to-download placeholder. Once requested, we keep downloading
+    // (and don't fall back to placeholder) even if autoDownload is off
+    // — the request is per-file and sticky for this composition.
+    var userRequested by remember(initialFile.id) { mutableStateOf(false) }
 
     LaunchedEffect(initialFile.id) {
-        val f = initialFile
-        if (!f.local.isDownloadingCompleted && !f.local.isDownloadingActive) {
-            runCatching { TdClient.downloadFile(f.id) }
+        runCatching { TdClient.getFile(initialFile.id) }.onSuccess { latest ->
+            file = latest
         }
         TdClient.fileUpdates.collect { updated ->
             if (updated.id == initialFile.id) file = updated
         }
     }
 
+    // Kick off the download when either (a) auto-download is on and the
+    // file isn't already done/in-flight, or (b) the user explicitly asked
+    // via the placeholder tap. Re-runs when those conditions change so a
+    // tap from the placeholder triggers TDLib immediately.
+    LaunchedEffect(initialFile.id, autoDownload, userRequested) {
+        val current = file
+        if ((autoDownload || userRequested) &&
+            !current.local.isDownloadingCompleted &&
+            !current.local.isDownloadingActive) {
+            runCatching { TdClient.downloadFile(current.id) }
+        }
+    }
+
     val path = file.local?.path
-    if (!path.isNullOrBlank() && file.local.isDownloadingCompleted) {
-        AsyncImage(
-            model = path,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .width(260.dp)
-                .heightIn(min = 120.dp, max = 320.dp)
-                .clip(RoundedCornerShape(12.dp))
-        )
-    } else {
-        ImagePlaceholder(placeholderIcon, placeholderLabel)
+    val completed = file.local.isDownloadingCompleted
+    val downloading = file.local.isDownloadingActive
+    when {
+        !path.isNullOrBlank() && completed -> {
+            AsyncImage(
+                model = path,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .width(260.dp)
+                    .heightIn(min = 120.dp, max = 320.dp)
+                    .clip(RoundedCornerShape(12.dp))
+            )
+        }
+        // Show a progress overlay while bytes flow in (covers both auto
+        // and user-initiated downloads).
+        downloading || (autoDownload && !completed) || userRequested -> {
+            DownloadProgressPlaceholder(
+                file = file,
+                placeholderIcon = placeholderIcon,
+                placeholderLabel = placeholderLabel
+            )
+        }
+        else -> {
+            // Auto-download is off AND the user hasn't requested it yet:
+            // show a tap-to-download placeholder. Tap flips userRequested
+            // which triggers the LaunchedEffect above.
+            TapToDownloadPlaceholder(
+                file = file,
+                onTap = { userRequested = true }
+            )
+        }
+    }
+}
+
+/**
+ * Placeholder shown while a media file is actively downloading. Renders
+ * the supplied icon centred plus a thin progress indicator + percentage
+ * label so the user knows TDLib is working. Reads file.local.downloadedSize
+ * against file.size to derive progress (TDLib mutates these fields in
+ * place as bytes arrive; our caller already collects fileUpdates and
+ * re-passes the latest snapshot via [file]).
+ */
+@Composable
+private fun DownloadProgressPlaceholder(
+    file: TdApi.File,
+    placeholderIcon: @Composable () -> Unit,
+    placeholderLabel: String
+) {
+    val total = file.size.coerceAtLeast(1).toFloat()
+    val downloaded = file.local.downloadedSize.coerceAtLeast(0).toFloat()
+    val progress = (downloaded / total).coerceIn(0f, 1f)
+    Box(
+        modifier = Modifier
+            .width(260.dp)
+            .heightIn(min = 140.dp, max = 200.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            placeholderIcon()
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .width(180.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "${(progress * 100).toInt()}% · ${formatBytes(downloaded.toLong())} / ${formatBytes(total.toLong())}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * Placeholder shown when auto-download is off and the user hasn't yet
+ * requested this file. Tap fires [onTap] which the caller wires to flip
+ * `userRequested = true` and start the download.
+ */
+@Composable
+private fun TapToDownloadPlaceholder(
+    file: TdApi.File,
+    onTap: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .width(260.dp)
+            .heightIn(min = 140.dp, max = 200.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable { onTap() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                androidx.compose.material.icons.Icons.Outlined.Download,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(36.dp)
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                androidx.compose.ui.res.stringResource(
+                    com.secondream.cheipgram.R.string.media_tap_to_download
+                ),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (file.size > 0) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    formatBytes(file.size),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** Pretty-print byte sizes as KB/MB/GB. */
+private fun formatBytes(bytes: Long): String {
+    val kb = 1024.0
+    val mb = kb * 1024
+    val gb = mb * 1024
+    return when {
+        bytes >= gb -> "%.1f GB".format(bytes / gb)
+        bytes >= mb -> "%.1f MB".format(bytes / mb)
+        bytes >= kb -> "%.0f KB".format(bytes / kb)
+        else -> "$bytes B"
     }
 }
 
@@ -600,7 +996,9 @@ private fun formatBytes(size: Long): String {
 private fun FormattedTextRendering(
     formatted: TdApi.FormattedText,
     onBackground: androidx.compose.ui.graphics.Color,
-    linkColor: androidx.compose.ui.graphics.Color
+    linkColor: androidx.compose.ui.graphics.Color,
+    currentChatId: Long = 0L,
+    onJumpToMessage: (Long) -> Boolean = { false }
 ) {
     val text = formatted.text
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -688,6 +1086,22 @@ private fun FormattedTextRendering(
                     val uri = android.net.Uri.parse(raw)
                     val host = uri.host?.lowercase().orEmpty()
                     val isTelegramLink = host == "t.me" || host == "telegram.me" || host == "telegram.dog"
+
+                    // Same-chat shortcut: if this is a t.me/<chat>/<msgId>
+                    // link pointing INTO the current chat, hand the message
+                    // id to the screen so it can scroll the LazyColumn
+                    // instead of dispatching an Intent. Without this every
+                    // tap on an in-chat link routed through Android →
+                    // MainActivity.onNewIntent → nav.navigate(chat/...),
+                    // stacking a fresh ChatScreen each time and forcing
+                    // the user to press Back N times to escape.
+                    if (isTelegramLink && currentChatId != 0L) {
+                        val targetMsgId = parseSameChatMessageLink(uri, currentChatId)
+                        if (targetMsgId != null && onJumpToMessage(targetMsgId)) {
+                            return@ClickableText
+                        }
+                    }
+
                     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
                         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     // For t.me / telegram.me / telegram.dog links we force
@@ -916,5 +1330,204 @@ private fun ReactionStrip(
             messageId = messageId,
             onDismiss = { showViewers = false }
         )
+    }
+}
+
+/**
+ * Quote-style preview of the message we're replying to, rendered inline
+ * inside the bubble (above the new message's content). Visually it's a
+ * 3dp accent stripe + sender name + 1-line preview, same language we
+ * already use in ReplyPreview in the input bar — so the same affordance
+ * reads consistently whether you're seeing it before sending OR seeing
+ * it on a delivered message.
+ *
+ * The TDLib MessageReplyToMessage carries either an inline `content`
+ * snapshot (recent enough TDLib versions) or a `quote.text` slice the
+ * sender hand-picked. If neither is available we fetch the full message
+ * lazily via TdClient.getMessage as a best-effort fallback. When the
+ * source message has been deleted server-side everything stays null
+ * and we render a generic "Messaggio originale" placeholder so the user
+ * still sees the bar instead of an awkward empty space.
+ */
+@Composable
+private fun ReplyQuoteBar(
+    replyTo: TdApi.MessageReplyToMessage,
+    accent: androidx.compose.ui.graphics.Color,
+    onBackground: androidx.compose.ui.graphics.Color,
+    onTap: () -> Unit = {},
+) {
+    // The quote text wins when present (manual user-picked quote slice);
+    // otherwise we derive a preview from the inline content TDLib gave us,
+    // and only fall back to the network as a last resort.
+    val inlinePreview = remember(replyTo) { previewFromContentOrQuote(replyTo) }
+    var fetchedPreview by remember(replyTo.messageId) { mutableStateOf<String?>(null) }
+    var fetchedSender by remember(replyTo.messageId) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(replyTo.chatId, replyTo.messageId) {
+        if (inlinePreview != null) return@LaunchedEffect
+        val msg = runCatching {
+            TdClient.getMessage(replyTo.chatId, replyTo.messageId)
+        }.getOrNull() ?: return@LaunchedEffect
+        fetchedPreview = previewFromContent(msg.content)
+        fetchedSender = resolveReplySenderName(msg.senderId, replyTo.origin)
+    }
+
+    val senderName = resolveReplySenderName(null, replyTo.origin)
+        ?: fetchedSender
+        ?: "Messaggio"
+    val preview = inlinePreview ?: fetchedPreview ?: "Messaggio originale"
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable { onTap() }
+            .background(onBackground.copy(alpha = 0.06f))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .height(32.dp)
+                .background(accent)
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                senderName,
+                style = MaterialTheme.typography.labelMedium,
+                color = accent,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+            Text(
+                preview,
+                style = MaterialTheme.typography.bodySmall,
+                color = onBackground.copy(alpha = 0.8f),
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/**
+ * Pull a 1-line preview out of the inline reply-content snapshot if TDLib
+ * carried one. Returns null if it didn't, so the caller knows to fetch the
+ * source message instead. We deliberately don't read the manually-picked
+ * `quote` slice here — its nested shape (TextQuote.text vs FormattedText)
+ * varies between TDLib releases, and the inline content path covers the
+ * common case while staying schema-stable.
+ */
+private fun previewFromContentOrQuote(replyTo: TdApi.MessageReplyToMessage): String? {
+    val inline = replyTo.content ?: return null
+    return previewFromContent(inline)
+}
+
+/**
+ * Short text preview for any [TdApi.MessageContent]. Mirrors the mapping
+ * NotificationHelper / ForwardChatPickerSheet use so the user sees the
+ * same shorthand everywhere replies and notifications appear.
+ */
+private fun previewFromContent(content: TdApi.MessageContent): String = when (content) {
+    is TdApi.MessageText -> content.text.text.take(120)
+    is TdApi.MessagePhoto -> "📷 Foto" +
+        (content.caption.text.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+    is TdApi.MessageVideo -> "🎬 Video"
+    is TdApi.MessageVoiceNote -> "🎙 Nota vocale"
+    is TdApi.MessageDocument -> "📎 ${content.document.fileName}"
+    is TdApi.MessageAnimation -> "GIF"
+    is TdApi.MessageSticker -> content.sticker.emoji.ifBlank { "Sticker" } + " Sticker"
+    is TdApi.MessageAudio -> "🎵 " + content.audio.title.ifBlank { content.audio.fileName.ifBlank { "Audio" } }
+    is TdApi.MessageLocation -> "📍 Posizione"
+    is TdApi.MessageContact -> "👤 Contatto"
+    else -> "Messaggio"
+}
+
+/**
+ * Best-effort sender-name lookup for a quoted reply. We try the message's
+ * own senderId first (when the caller fetched the full message), then fall
+ * back to the [TdApi.MessageOrigin] TDLib stores on the reply target so the
+ * name still resolves even if the original message has been deleted.
+ */
+private fun resolveReplySenderName(
+    senderId: TdApi.MessageSender?,
+    origin: TdApi.MessageOrigin?
+): String? {
+    val fromSender = when (senderId) {
+        is TdApi.MessageSenderUser -> {
+            val u = TdClient.getCachedUser(senderId.userId)
+            "${u?.firstName.orEmpty()} ${u?.lastName.orEmpty()}".trim()
+                .ifBlank { null }
+        }
+        is TdApi.MessageSenderChat -> TdClient.getCachedChat(senderId.chatId)?.title
+        else -> null
+    }
+    if (!fromSender.isNullOrBlank()) return fromSender
+    return when (origin) {
+        is TdApi.MessageOriginUser -> {
+            val u = TdClient.getCachedUser(origin.senderUserId)
+            "${u?.firstName.orEmpty()} ${u?.lastName.orEmpty()}".trim()
+                .ifBlank { null }
+        }
+        is TdApi.MessageOriginChat -> TdClient.getCachedChat(origin.senderChatId)?.title
+        is TdApi.MessageOriginHiddenUser -> origin.senderName.ifBlank { null }
+        is TdApi.MessageOriginChannel -> TdClient.getCachedChat(origin.chatId)?.title
+        else -> null
+    }
+}
+
+/**
+ * Parse a `t.me/<chatRef>/<messageId>` link and return the messageId IFF
+ * the link points into the same chat as [currentChatId]. Returns null
+ * for cross-chat links (caller falls back to the normal Intent flow) and
+ * for non-message t.me links (joinchat hashes, profile-only `t.me/user`,
+ * etc.).
+ *
+ * Supported link shapes:
+ *  - `t.me/c/<supergroupInternalId>/<messageId>` — private supergroup or
+ *    channel. TDLib chat ids for these are `-100<supergroupInternalId>`
+ *    (e.g. `-1001234567890` ↔ `1234567890` in the link). We reconstruct
+ *    the expected internal id by stripping the `-100` prefix from the
+ *    absolute chat id and compare against the path segment.
+ *  - `t.me/<username>/<messageId>` — public chat / channel. We resolve
+ *    the current chat's active username from TDLib's cached User/Chat
+ *    object and compare case-insensitively.
+ *
+ * Topic links (`t.me/c/<id>/<topicId>/<messageId>`) currently take the
+ * LAST segment as the message id and ignore the topic — Eugenio's chats
+ * aren't using forum topics yet and TDLib's getMessage works regardless.
+ */
+private fun parseSameChatMessageLink(uri: android.net.Uri, currentChatId: Long): Long? {
+    val segments = uri.pathSegments?.filter { it.isNotBlank() } ?: return null
+    if (segments.size < 2) return null
+    // Last segment must be a numeric message id.
+    val msgId = segments.last().toLongOrNull() ?: return null
+    val isPrivateRef = segments.first() == "c"
+    if (isPrivateRef) {
+        if (segments.size < 3) return null
+        val internalId = segments[1].toLongOrNull() ?: return null
+        // TDLib supergroup chat ids are -100<internalId>. abs(chatId) -
+        // 1_000_000_000_000 == internalId when this is the same chat.
+        val expected = kotlin.math.abs(currentChatId) - 1_000_000_000_000L
+        return if (expected == internalId) msgId else null
+    } else {
+        val urlUsername = segments.first().lowercase()
+        // Resolve the current chat's @username. Private chats expose it via
+        // the linked User; groups/channels via Chat.usernames directly.
+        val cachedChat = TdClient.getCachedChat(currentChatId) ?: return null
+        val currentUsername: String? = run {
+            val chatUsernames = cachedChat.usernames?.activeUsernames
+                ?.firstOrNull()?.lowercase()
+            if (!chatUsernames.isNullOrBlank()) return@run chatUsernames
+            // Private chat: pull username off the underlying user
+            (cachedChat.type as? TdApi.ChatTypePrivate)?.userId?.let { uid ->
+                TdClient.getCachedUser(uid)?.usernames?.activeUsernames
+                    ?.firstOrNull()?.lowercase()
+            }
+        }
+        return if (currentUsername != null && currentUsername == urlUsername) msgId else null
     }
 }

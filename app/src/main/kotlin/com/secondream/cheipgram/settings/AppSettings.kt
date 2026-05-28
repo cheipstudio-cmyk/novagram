@@ -58,7 +58,26 @@ data class AppearancePrefs(
      * Settings). null = no saved theme active, the user is on a base theme
      * mode (System/Light/Dark/Amoled) or freely tweaked customs.
      */
-    val activeSavedThemeId: String? = null
+    val activeSavedThemeId: String? = null,
+    /**
+     * When true (default), media in chats (photos, video previews, voice
+     * notes, documents) auto-downloads as the user scrolls into view.
+     * When false, each piece of media renders as a tap-to-download
+     * placeholder showing the file size — useful on metered connections
+     * or when the user just wants to scroll fast without TDLib starting
+     * dozens of background transfers. Voice notes are still tappable to
+     * download on-demand, same flow.
+     */
+    val autoDownloadMedia: Boolean = true,
+    /**
+     * Optional Anthropic API key the user provides for the in-chat AI
+     * features (summarise/translate/draft-reply on selected messages).
+     * Null/blank disables the AI tile in the message actions sheet so
+     * the feature is opt-in — users without a key see no AI surface at
+     * all. Stored locally only, never leaves the device except as the
+     * Authorization header to api.anthropic.com.
+     */
+    val anthropicApiKey: String? = null
 )
 
 /**
@@ -98,6 +117,8 @@ object AppSettings {
     private val ACTIVE_SAVED_THEME_ID = stringPreferencesKey("active_saved_theme_id")
     private val SAVED_THEMES_JSON = stringPreferencesKey("saved_themes_json")
     private val TEXT_SCALE = androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
+    private val AUTO_DOWNLOAD_MEDIA = androidx.datastore.preferences.core.booleanPreferencesKey("auto_download_media")
+    private val ANTHROPIC_API_KEY = androidx.datastore.preferences.core.stringPreferencesKey("anthropic_api_key")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -136,9 +157,27 @@ object AppSettings {
                 customBgArgb = prefs[CUSTOM_BG],
                 customInputBarArgb = prefs[CUSTOM_INPUT_BAR],
                 activeSavedThemeId = prefs[ACTIVE_SAVED_THEME_ID],
-                textScale = (prefs[TEXT_SCALE] ?: 1.0f).coerceIn(0.85f, 1.35f)
+                textScale = (prefs[TEXT_SCALE] ?: 1.0f).coerceIn(0.85f, 1.35f),
+                autoDownloadMedia = prefs[AUTO_DOWNLOAD_MEDIA] ?: true,
+                anthropicApiKey = prefs[ANTHROPIC_API_KEY]?.takeIf { it.isNotBlank() }
             )
         }
+
+    suspend fun setAutoDownloadMedia(enabled: Boolean) {
+        appContext.dataStore.edit { it[AUTO_DOWNLOAD_MEDIA] = enabled }
+    }
+
+    /**
+     * Store (or clear) the user's Anthropic API key. Passing a blank
+     * string deletes the entry so the AI tile disappears from the
+     * actions sheet — easier than a separate "disable" toggle.
+     */
+    suspend fun setAnthropicApiKey(key: String) {
+        appContext.dataStore.edit { e ->
+            if (key.isBlank()) e.remove(ANTHROPIC_API_KEY)
+            else e[ANTHROPIC_API_KEY] = key.trim()
+        }
+    }
 
     /**
      * The list of user-defined saved themes. Persisted as a JSON array under
