@@ -1285,6 +1285,30 @@ private fun ThemeBuilderDialog(
                 )
                 Spacer(Modifier.height(12.dp))
 
+                // Base mode buttons. Tapping Chiaro / Scuro resets the
+                // background + input-bar colours to a clean light or dark
+                // preset, keeping ONLY the chosen accent — so the new theme
+                // starts from a pure base instead of inheriting whatever
+                // theme is currently applied to the app.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val applyBase: (bg: Int, input: Int) -> Unit = { bg, input ->
+                        colors[1] = bg      // background
+                        colors[2] = input   // input bar
+                    }
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { applyBase(0xFFF6F6F8.toInt(), 0xFFFFFFFF.toInt()) },
+                        modifier = Modifier.weight(1f)
+                    ) { Text(stringResource(R.string.settings_theme_light)) }
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { applyBase(0xFF0F1115.toInt(), 0xFF1A1D24.toInt()) },
+                        modifier = Modifier.weight(1f)
+                    ) { Text(stringResource(R.string.settings_theme_dark)) }
+                }
+                Spacer(Modifier.height(12.dp))
+
                 androidx.compose.foundation.layout.FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()

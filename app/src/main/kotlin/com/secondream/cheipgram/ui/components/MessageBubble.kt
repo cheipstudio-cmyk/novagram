@@ -780,7 +780,13 @@ private fun DownloadingImage(
     }
     var file by remember(initialFile.id) { mutableStateOf(initialFile) }
     val appearance by com.secondream.cheipgram.settings.AppSettings.appearance
-        .collectAsState(initial = com.secondream.cheipgram.settings.AppearancePrefs())
+        // Default to autoDownloadMedia=FALSE until DataStore delivers the
+        // real value. Previously the initial defaulted to true, so every
+        // image fired a download on its first frame — before the user's
+        // "off" setting had loaded — which is exactly the "still downloads
+        // while scrolling" bug. Biasing the pre-load value to false means
+        // we never download until we KNOW auto-download is on.
+        .collectAsState(initial = com.secondream.cheipgram.settings.AppearancePrefs(autoDownloadMedia = false))
     val autoDownload = appearance.autoDownloadMedia
     // Tracks whether the user has explicitly asked for this file via the
     // tap-to-download placeholder. Once requested, we keep downloading

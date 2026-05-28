@@ -34,6 +34,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,62 +68,70 @@ import androidx.compose.ui.unit.dp
 fun TransferPanel(modifier: Modifier = Modifier) {
     val transfers by TransferTracker.transfers.collectAsState()
     var expanded by remember { mutableStateOf(false) }
+    // Collapse automatically whenever there are no transfers, so the pill
+    // doesn't reopen empty next time.
+    LaunchedEffect(transfers.isEmpty()) { if (transfers.isEmpty()) expanded = false }
     AnimatedVisibility(
         visible = transfers.isNotEmpty(),
-        enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
-        exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+        enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
+        exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
         modifier = modifier
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 12.dp)
-                .padding(top = 8.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.surface)
+                .padding(top = 6.dp, start = 12.dp, end = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header row — always visible. Tap to toggle expansion.
+            val down = transfers.count { !it.isUpload }
+            val up = transfers.count { it.isUpload }
+            // COMPACT PILL — small, centered, not a full-width banner. Shows
+            // a down/up arrow + the count of active transfers. Tap to open
+            // the mini modal with the per-file progress list.
             Row(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(MaterialTheme.colorScheme.primary)
                     .clickable { expanded = !expanded }
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val down = transfers.count { !it.isUpload }
-                val up = transfers.count { it.isUpload }
-                Text(
-                    buildLabel(down, up),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontStyle = FontStyle.Italic,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f)
+                Icon(
+                    if (up > 0 && down == 0) Icons.Outlined.ArrowUpward
+                    else Icons.Outlined.ArrowDownward,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(16.dp)
                 )
-                IconButton(onClick = { expanded = !expanded }) {
-                    Icon(
-                        if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ExpandLess,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (up > 0 && down > 0) "${down + up}" else "${down + up}",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(16.dp)
+                )
             }
-            // Expanded body — scrollable transfer list, cap at 40% of
-            // visible height via heightIn so a flood of transfers doesn't
-            // swallow the whole screen.
+            // MINI MODAL — appears under the pill when expanded.
             AnimatedVisibility(
                 visible = expanded,
                 enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
                 exit = fadeOut() + slideOutVertically(targetOffsetY = { -it })
             ) {
-                Column {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
-                    )
-                    LazyColumn(
-                        modifier = Modifier.heightIn(max = 280.dp)
-                    ) {
+                Column(
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                ) {
+                    LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
                         items(transfers, key = { it.fileId }) { t ->
                             TransferRow(t)
                             HorizontalDivider(

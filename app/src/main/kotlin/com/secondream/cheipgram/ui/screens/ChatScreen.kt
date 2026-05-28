@@ -1792,37 +1792,38 @@ private fun InputBar(
             .navigationBarsPadding()
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
-        if (recording) {
-            // Count-up timer driven by a LaunchedEffect that ticks every
-            // second while the user is holding the mic. Doesn't try to be
-            // sample-accurate — it's a UI hint, not the official duration
-            // (that's measured by VoiceRecorder via SystemClock.elapsedRealtime).
-            var elapsed by remember { mutableIntStateOf(0) }
-            LaunchedEffect(Unit) {
-                while (true) {
-                    kotlinx.coroutines.delay(1000)
-                    elapsed += 1
+        // IMPORTANT: the trailing MicButton must stay the SAME composable
+        // instance whether or not we're recording. Previously the whole
+        // row was swapped by `if (recording)`, which disposed the mic
+        // button mid-press the instant recording started — its gesture
+        // detector got cancelled, tryAwaitRelease never returned, and
+        // onMicUp never fired, so releasing sent nothing. Now we keep one
+        // Row; only the LEADING content swaps (input fields vs the live
+        // recording indicator), and the trailing button is a single
+        // persistent MicButton (or the Send button when there's text).
+        Row(
+            verticalAlignment = if (recording) Alignment.CenterVertically else Alignment.Bottom,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+        ) {
+            if (recording) {
+                var elapsed by remember { mutableIntStateOf(0) }
+                LaunchedEffect(Unit) {
+                    while (true) { kotlinx.coroutines.delay(1000); elapsed += 1 }
                 }
-            }
-            // Pulsing red dot for the live indicator.
-            val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "rec-pulse")
-                .animateFloat(
-                    initialValue = 0.5f, targetValue = 1f,
-                    animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-                        animation = androidx.compose.animation.core.tween(700),
-                        repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
-                    ),
-                    label = "rec-alpha"
-                )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
-            ) {
+                val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "rec-pulse")
+                    .animateFloat(
+                        initialValue = 0.5f, targetValue = 1f,
+                        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                            animation = androidx.compose.animation.core.tween(700),
+                            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+                        ),
+                        label = "rec-alpha"
+                    )
                 Box(
                     modifier = Modifier
                         .size(12.dp)
                         .clip(CircleShape)
-                        .background(Ink.Error.copy(alpha = pulse))
+                        .background(MaterialTheme.colorScheme.error.copy(alpha = pulse))
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
@@ -1839,23 +1840,9 @@ private fun InputBar(
                     modifier = Modifier.weight(1f),
                     maxLines = 2
                 )
-                MicButton(recording = true, onDown = onMicDown, onUp = onMicUp)
-            }
-        } else {
-            // Alignment.Bottom keeps attach + send pinned at the foot of
-            // the row. Without this the buttons stay vertically centered
-            // and visibly creep upward each time the text wraps to a new
-            // line — a behaviour Eugenio specifically called out.
-            Row(
-                verticalAlignment = Alignment.Bottom,
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            } else {
                 IconButton(
                     onClick = onAttach,
-                    // Manual sizing so the button has the same 48dp tap
-                    // target as MicButton/Send below; default IconButton
-                    // is 48dp anyway but being explicit makes the
-                    // alignment math obvious.
                     modifier = Modifier.size(48.dp)
                 ) {
                     Icon(Icons.Outlined.AttachFile, null, tint = iconTint)
@@ -1863,10 +1850,6 @@ private fun InputBar(
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        // Cap how tall the bubble can grow. ~6 lines at
-                        // bodyLarge gives roughly 150dp; beyond that the
-                        // BasicTextField scrolls internally instead of
-                        // pushing the layout upward.
                         .heightIn(min = 44.dp, max = 150.dp)
                         .clip(RoundedCornerShape(22.dp))
                         .background(bubbleBg)
@@ -1886,44 +1869,37 @@ private fun InputBar(
                         onValueChange = onValueChange,
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = textColor),
                         cursorBrush = androidx.compose.ui.graphics.SolidColor(cs.primary),
-                        // Internal scrolling kicks in once the content
-                        // grows past the 150dp ceiling above. Up to that
-                        // point the field expands naturally so a 1-2
-                        // line message doesn't waste vertical space.
                         modifier = Modifier
                             .fillMaxWidth()
                             .verticalScroll(rememberScrollState())
                     )
                 }
                 Spacer(Modifier.width(4.dp))
-                if (value.isNotBlank() || hasPendingMedia) {
-                    IconButton(
-                        onClick = onSend,
-                        modifier = Modifier.size(48.dp)
+            }
+            // Trailing slot. Send button only when NOT recording and there's
+            // something to send; otherwise the persistent MicButton.
+            if (!recording && (value.isNotBlank() || hasPendingMedia)) {
+                IconButton(
+                    onClick = onSend,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            // Plain paper-plane vector — single-color so it
-                            // tints cleanly with the accent's onPrimary.
-                            // (We used to render ic_cheipgram_logo here, but
-                            // tinting a multi-color PNG flattens it to a
-                            // solid silhouette and looked terrible.)
-                            Icon(
-                                Icons.AutoMirrored.Outlined.Send,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
+                        Icon(
+                            Icons.AutoMirrored.Outlined.Send,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
-                } else {
-                    MicButton(recording = false, onDown = onMicDown, onUp = onMicUp)
                 }
+            } else {
+                MicButton(recording = recording, onDown = onMicDown, onUp = onMicUp)
             }
         }
     }
