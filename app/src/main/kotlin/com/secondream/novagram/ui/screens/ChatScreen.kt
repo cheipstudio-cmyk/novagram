@@ -130,9 +130,13 @@ fun ChatScreen(
     onBack: () -> Unit,
     onOpenMediaViewer: () -> Unit = {},
     /** Navigate to another chat by id. Used by the avatar profile sheet's
-     *  "Inizia chat" button so tapping a sender's avatar in a group can
-     *  spin up (or open) the corresponding private chat. */
-    onOpenChat: (Long) -> Unit = {}
+     *  "Inizia chat" button and by t.me deep-link handling: a second optional
+     *  message id is used to land on a specific message in the destination
+     *  chat (e.g. t.me/canalegruppo/1234). */
+    onOpenChat: (Long, Long?) -> Unit = { _, _ -> },
+    /** When non-null, ChatScreen scrolls to this message id on first load.
+     *  Used by the navigation arg msg=… for in-app t.me deep-links. */
+    targetMessageId: Long? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -313,20 +317,6 @@ fun ChatScreen(
                     kind = PendingMediaKind.Document,
                     displayName = file.name
                 )
-            }
-        }
-    }
-
-    // GIF picker: pick an animated GIF (or mp4) and send it straight away
-    // as a Telegram animation so it auto-plays in the chat.
-    val gifLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        showAttach = false
-        uri?.let { picked ->
-            scope.launch(Dispatchers.IO) {
-                val file = FileUtils.copyUriToCache(context, picked) ?: return@launch
-                runCatching { TdClient.sendAnimation(chatId, file.absolutePath) }
             }
         }
     }
@@ -580,13 +570,34 @@ fun ChatScreen(
     val jumpToMessage: (Long) -> Unit = { targetId ->
         scope.launch {
             var idx = messages.indexOfFirst { it.id == targetId }
+            // The previous guard of 8×50=400 messages was insufficient: in
+            // long chats search hits older than that simply silently
+            // failed (which felt like "the arrow doesn't work"). 40×50 =
+            // 2000 messages of headroom catches almost every realistic
+            // case while still bounding the network traffic.
             var guard = 0
-            while (idx < 0 && !noMore && guard < 8) {
+            while (idx < 0 && !noMore && guard < 40) {
                 guard++
                 val oldest = messages.lastOrNull()?.id ?: break
                 val res = runCatching { TdClient.getChatHistory(chatId, oldest, 50) }.getOrNull()
                 if (res == null || res.messages.isEmpty()) { noMore = true; break }
                 messages.addAll(res.messages.toList())
+                idx = messages.indexOfFirst { it.id == targetId }
+            }
+            // Fallback when normal pagination didn't surface the target —
+            // typically because the message is far older than the loaded
+            // window AND noMore got tripped. Pull the message directly via
+            // TDLib + a small surrounding window, splice it into our list,
+            // then scroll. Without this, jumping to a 6-month-old search
+            // hit or to a t.me deep-link target would silently no-op.
+            if (idx < 0) {
+                runCatching {
+                    val ctx = TdClient.getChatHistory(chatId, targetId + 1, 25)
+                    val toAdd = ctx.messages.toList().filter { m ->
+                        messages.none { it.id == m.id }
+                    }
+                    if (toAdd.isNotEmpty()) messages.addAll(toAdd)
+                }
                 idx = messages.indexOfFirst { it.id == targetId }
             }
             if (idx >= 0) {
@@ -599,8 +610,21 @@ fun ChatScreen(
                 // referenced message").
                 val viewportH = listState.layoutInfo.viewportSize.height
                 val topOffset = if (viewportH > 0) (viewportH * 6) / 10 else 800
-                listState.animateScrollToItem(idx, topOffset)
+                runCatching { listState.animateScrollToItem(idx, topOffset) }
             }
+        }
+    }
+
+    // Deep-link target: when ChatScreen is reached via t.me/<user>/<msgId>
+    // (or the avatar-sheet equivalent) the route carries a targetMessageId,
+    // and we should land on that message rather than the latest. We wait
+    // for the initial history page to settle so jumpToMessage has something
+    // to search against, then perform the jump exactly once.
+    var didJumpToTarget by remember(chatId, targetMessageId) { mutableStateOf(false) }
+    LaunchedEffect(messages.size, targetMessageId, chatId) {
+        if (targetMessageId != null && !didJumpToTarget && messages.isNotEmpty()) {
+            didJumpToTarget = true
+            jumpToMessage(targetMessageId)
         }
     }
 
@@ -650,9 +674,18 @@ fun ChatScreen(
             val host = uri.host.orEmpty()
             var username: String? = null
             var invite: String? = null
+            // Optional Telegram message id encoded in t.me/<user>/<id>.
+            // TDLib message ids are not the raw integer in the URL — they
+            // need to be shifted (<<20) to map onto a chat-internal id.
+            // Without this shift, getMessageLinkInfo / our scrollers would
+            // never find the target.
+            var targetMsg: Long? = null
             if (scheme == "tg") {
                 when (host) {
-                    "resolve" -> username = uri.getQueryParameter("domain")
+                    "resolve" -> {
+                        username = uri.getQueryParameter("domain")
+                        uri.getQueryParameter("post")?.toLongOrNull()?.let { targetMsg = it shl 20 }
+                    }
                     "join" -> uri.getQueryParameter("invite")?.let { invite = "https://t.me/+$it" }
                 }
             } else {
@@ -662,19 +695,18 @@ fun ChatScreen(
                     first.isNullOrBlank() -> {}
                     first == "joinchat" && segs.size >= 2 -> invite = "https://t.me/joinchat/${segs[1]}"
                     first.startsWith("+") -> invite = "https://t.me/$first"
-                    // s/<channel> is the "preview" path; the real username
-                    // is the next segment.
-                    first == "s" && segs.size >= 2 -> username = segs[1]
-                    else -> username = first
+                    first == "s" && segs.size >= 2 -> {
+                        username = segs[1]
+                        segs.getOrNull(2)?.toLongOrNull()?.let { targetMsg = it shl 20 }
+                    }
+                    else -> {
+                        username = first
+                        segs.getOrNull(1)?.toLongOrNull()?.let { targetMsg = it shl 20 }
+                    }
                 }
             }
             val resolvedId: Long? = when {
                 invite != null -> {
-                    // For invite links, first inspect the link WITHOUT
-                    // joining (checkChatInviteLink) — if we're already a
-                    // member it returns the existing chatId, avoiding the
-                    // "already participant" error that JoinChatByInviteLink
-                    // throws. Only actually join when we're not in it yet.
                     val info = runCatching { TdClient.checkChatInviteLink(invite!!) }.getOrNull()
                     val existing = info?.chatId?.takeIf { it != 0L }
                     existing ?: runCatching { TdClient.joinChatByInviteLink(invite!!).id }.getOrNull()
@@ -683,11 +715,15 @@ fun ChatScreen(
                 else -> null
             }
             if (resolvedId != null && resolvedId != 0L) {
-                onOpenChat(resolvedId)
+                // Same-chat case: don't replace the screen — just scroll.
+                // Otherwise the user gets a stack of identical ChatScreens
+                // and the back button feels broken.
+                if (resolvedId == chatId && targetMsg != null) {
+                    jumpToMessage(targetMsg!!)
+                } else {
+                    onOpenChat(resolvedId, targetMsg)
+                }
             } else {
-                // Could not resolve to a chat. Per Eugenio's hard
-                // requirement, NEVER bounce out to the browser / real
-                // Telegram — just inform the user.
                 android.widget.Toast.makeText(
                     context,
                     context.getString(R.string.link_open_failed),
@@ -1264,7 +1300,6 @@ fun ChatScreen(
                 )
             },
             onPickDocument = { docLauncher.launch(arrayOf("*/*")) },
-            onPickGif = { gifLauncher.launch(arrayOf("image/gif", "video/mp4")) },
             onPickSticker = {
                 showAttach = false
                 showStickerPicker = true
@@ -1324,7 +1359,7 @@ fun ChatScreen(
             onDismiss = { profileSheetUserId = null },
             onStartChat = { newChatId ->
                 profileSheetUserId = null
-                onOpenChat(newChatId)
+                onOpenChat(newChatId, null)
             }
         )
     }
@@ -2176,8 +2211,7 @@ private fun AttachSheet(
     onDismiss: () -> Unit,
     onPickPhoto: () -> Unit,
     onPickDocument: () -> Unit,
-    onPickSticker: () -> Unit,
-    onPickGif: () -> Unit
+    onPickSticker: () -> Unit
 ) {
     val state = rememberModalBottomSheetState()
     // Hardcoded Ink.* tokens were dark-theme only — on light themes the
@@ -2220,12 +2254,6 @@ private fun AttachSheet(
                     label = stringResource(R.string.attach_sticker),
                     icon = Icons.Outlined.Mood,
                     onClick = onPickSticker,
-                    modifier = Modifier.weight(1f)
-                )
-                AttachTile(
-                    label = stringResource(R.string.attach_gif),
-                    icon = Icons.Outlined.Gif,
-                    onClick = onPickGif,
                     modifier = Modifier.weight(1f)
                 )
             }

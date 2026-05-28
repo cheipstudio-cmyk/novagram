@@ -28,12 +28,17 @@ object Routes {
     const val CONFIG = "config"
     const val LOGIN = "login"
     const val CHATS = "chats"
-    const val CHAT = "chat/{chatId}"
+    // chat/{chatId} with an optional ?msg=<id> tail used by deep-links
+    // (t.me/<user>/<msgId>) and the avatar profile sheet's "go to message"
+    // affordance. ChatScreen reads this and auto-scrolls to msg on mount
+    // so the user lands on the linked message instead of the chat's tail.
+    const val CHAT = "chat/{chatId}?msg={msg}"
     const val SETTINGS = "settings"
     const val PROFILE = "profile"
     const val NEW_CHAT = "new_chat"
     const val MEDIA_VIEWER = "media_viewer"
-    fun chat(id: Long) = "chat/$id"
+    fun chat(id: Long, msg: Long? = null) =
+        if (msg != null && msg != 0L) "chat/$id?msg=$msg" else "chat/$id?msg=0"
 }
 
 @Composable
@@ -162,19 +167,24 @@ fun AppRouter(
         }
         composable(
             Routes.CHAT,
-            arguments = listOf(navArgument("chatId") { type = NavType.LongType })
+            arguments = listOf(
+                navArgument("chatId") { type = NavType.LongType },
+                navArgument("msg") { type = NavType.LongType; defaultValue = 0L }
+            )
         ) { entry ->
             val id = entry.arguments?.getLong("chatId") ?: 0L
+            val msg = entry.arguments?.getLong("msg") ?: 0L
             ChatScreen(
                 chatId = id,
+                targetMessageId = msg.takeIf { it != 0L },
                 onBack = { nav.popBackStack() },
                 onOpenMediaViewer = { nav.navigate(Routes.MEDIA_VIEWER) },
-                onOpenChat = { other ->
+                onOpenChat = { other, otherMsg ->
                     // Used by the avatar profile sheet's "Inizia chat"
-                    // button: replace ourselves on the back stack so back
-                    // returns to the chat list, not to the previous group
-                    // we came from.
-                    nav.navigate("${Routes.CHAT.substringBefore("/{")}/$other") {
+                    // button and by t.me deep-link handling: replace
+                    // ourselves on the back stack so back returns to the
+                    // chat list, not to the previous group we came from.
+                    nav.navigate(Routes.chat(other, otherMsg)) {
                         popUpTo(Routes.CHATS)
                     }
                 }

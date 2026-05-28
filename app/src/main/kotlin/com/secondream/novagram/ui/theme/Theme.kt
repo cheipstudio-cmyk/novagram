@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
@@ -244,16 +245,42 @@ fun bubbleFillFor(color: BubbleColor, isOutgoing: Boolean, customArgb: Int? = nu
     val cs = MaterialTheme.colorScheme
     val isLight = cs.background.luminance() > 0.5f
     return when (color) {
-        BubbleColor.Default -> if (isLight) {
-            BubbleFill(
-                background = if (isOutgoing) Ink.LightBubbleMine else Ink.LightBubbleTheirs,
-                onBackground = Ink.LightInk
-            )
-        } else {
-            BubbleFill(
-                background = if (isOutgoing) Ink.BubbleMine else Ink.BubbleTheirs,
-                onBackground = cs.onSurface
-            )
+        BubbleColor.Default -> {
+            // Default bubbles now follow the user's chosen accent so picking
+            // e.g. Rose tints the chat instead of leaving it generic beige.
+            // We blend the accent (cs.primary) at low alpha over the surface
+            // for outgoing bubbles, and keep the incoming side neutral so
+            // there's still a clear "me vs them" distinction. compositeOver
+            // produces a readable tint at any accent without needing per-
+            // accent BubbleFill entries.
+            val accent = cs.primary
+            if (isLight) {
+                if (isOutgoing) {
+                    BubbleFill(
+                        background = accent.copy(alpha = 0.22f)
+                            .compositeOver(androidx.compose.ui.graphics.Color.White),
+                        onBackground = Ink.LightInk
+                    )
+                } else {
+                    BubbleFill(
+                        background = Ink.LightBubbleTheirs,
+                        onBackground = Ink.LightInk
+                    )
+                }
+            } else {
+                if (isOutgoing) {
+                    BubbleFill(
+                        background = accent.copy(alpha = 0.30f)
+                            .compositeOver(Ink.SurfaceHi),
+                        onBackground = cs.onSurface
+                    )
+                } else {
+                    BubbleFill(
+                        background = Ink.BubbleTheirs,
+                        onBackground = cs.onSurface
+                    )
+                }
+            }
         }
         BubbleColor.Amber  -> BubblePalette.Amber
         BubbleColor.Blue   -> BubblePalette.Blue
