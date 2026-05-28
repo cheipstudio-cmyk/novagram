@@ -115,7 +115,7 @@
     <string name="new_chat_empty_telegram">No Telegram contacts.</string>
     <string name="new_chat_empty_phone">No contacts found.</string>
     <string name="new_chat_permission_title">Contacts access</string>
-    <string name="new_chat_permission_body">To search among phone contacts CheipGram needs the contacts permission.</string>
+    <string name="new_chat_permission_body">To search among phone contacts Nova needs the contacts permission.</string>
     <string name="new_chat_phone_on_telegram">On Telegram</string>
     <string name="new_chat_phone_invite">Invite</string>
     <string name="new_chat_syncing">Syncing contacts…</string>
@@ -171,7 +171,7 @@
     <string name="theme_open_builder">Customize</string>
     <string name="theme_reset">Reset</string>
     <string name="theme_share">Share theme</string>
-    <string name="theme_share_chooser">Share CheipGram theme</string>
+    <string name="theme_share_chooser">Share Nova theme</string>
     <string name="theme_builder_title">Accent color</string>
     <string name="theme_preview">Preview</string>
     <string name="theme_save">Save</string>
@@ -182,10 +182,10 @@
     <string name="theme_paste">Paste theme</string>
     <string name="theme_paste_success">Theme imported</string>
     <string name="theme_paste_error">Invalid theme in clipboard</string>
-    <string name="theme_share_body">Open this link to apply the CheipGram theme:
+    <string name="theme_share_body">Open this link to apply the Nova theme:
 
 %1$s</string>
-    <string name="theme_card_title">CheipGram theme</string>
+    <string name="theme_card_title">Nova theme</string>
     <string name="theme_card_subtitle">Tap to apply</string>
     <string name="theme_card_apply">Apply theme</string>
     <string name="sticker_search_placeholder">Search stickers...</string>
@@ -215,7 +215,7 @@
     <string name="action_leave_group">Leave group</string>
     <string name="action_leave_channel">Leave channel</string>
     <string name="leave_group_confirm">Leave %1$s?</string>
-    <string name="home_card_join_title">Official CheipGram group</string>
+    <string name="home_card_join_title">Official Nova group</string>
     <string name="home_card_join_subtitle">Join for news, support and feedback.</string>
     <string name="home_card_join_action">Join</string>
     <string name="chat_info_bio_label">Bio</string>
@@ -251,7 +251,7 @@
     <string name="settings_media_autodownload_desc">When off, photos/videos/files require a tap to download before viewing</string>
     <string name="media_tap_to_download">Tap to download</string>
     <string name="action_save">Save</string>
-    <string name="media_save_success">Saved to Cheip Gram</string>
+    <string name="media_save_success">Saved to Nova</string>
     <string name="media_save_error">Save failed</string>
     <string name="settings_section_ai">AI</string>
     <string name="settings_ai_apikey_label">Anthropic API key</string>
@@ -273,4 +273,29 @@
     <string name="credits_join_group">Join the Telegram group</string>
     <string name="link_open_failed">Could not open the link</string>
     <string name="attach_gif">GIF</string>
+    <string name="ai_action_copy">Copy</string>
+    <string name="ai_action_use_reply">Use as reply</string>
+    <string name="ai_action_send">Send</string>
+    <string name="ai_action_other">← Other action</string>
+    <string name="ai_copied">Copied</string>
+    <string name="ai_retry">Retry</string>
+    <string name="ai_change_action">Change action</string>
+    <string name="ai_error">Error</string>
+    <string name="ai_custom_prompt_label">Custom prompt</string>
+    <string name="ai_custom_prompt_hint">E.g. \"rewrite in a nicer tone\"</string>
+    <string name="ai_custom_prompt_go">Go</string>
+    <string name="ai_preset_summarise">Summarise the thread</string>
+    <string name="ai_preset_summarise_desc">Quick summary of the latest messages</string>
+    <string name="ai_preset_reply_formal">Reply formally</string>
+    <string name="ai_preset_reply_formal_desc">Draft a reply in a professional tone</string>
+    <string name="ai_preset_reply_casual">Reply casually</string>
+    <string name="ai_preset_reply_casual_desc">Draft a reply in a friendly tone</string>
+    <string name="ai_preset_translate">Translate</string>
+    <string name="ai_preset_translate_desc">Translation of the selected message</string>
+    <string name="ai_preset_explain">Explain</string>
+    <string name="ai_preset_explain_desc">Simple explanation of the content</string>
+    <string name="chat_search_placeholder">Search in chat</string>
+    <string name="settings_accent_rose">Rose</string>
+    <string name="settings_accent_cyan">Cyan</string>
+    <string name="settings_accent_orange">Orange</string>
 </resources>

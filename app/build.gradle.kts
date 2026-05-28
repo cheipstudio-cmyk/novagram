@@ -15,16 +15,16 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.secondream.cheipgram"
+    namespace = "com.secondream.novamessenger"
     compileSdk = 35
     ndkVersion = "26.1.10909125"
 
     defaultConfig {
-        applicationId = "com.secondream.cheipgram"
+        applicationId = "com.secondream.novamessenger"
         minSdk = 26
         targetSdk = 35
-        versionCode = 62
-        versionName = "0.9.4"
+        versionCode = 64
+        versionName = "0.10.1"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

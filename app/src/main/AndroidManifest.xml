@@ -39,7 +39,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <!--
-                Theme deeplink. Tapping a cheipgram://theme?data=<base64-json>
+                Theme deeplink. Tapping a nova://theme?data=<base64-json>
                 URL in any app (Telegram, browser, mail, Slack...) routes
                 here. MainActivity handles the intent in onCreate/onNewIntent,
                 decodes the payload, and applies it via AppSettings.
@@ -48,7 +48,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="cheipgram" android:host="theme" />
+                <data android:scheme="nova" android:host="theme" />
             </intent-filter>
             <!--
                 t.me / telegram.me / telegram.dog links. Tapping a t.me
@@ -86,7 +86,7 @@
             android:name=".notifications.ReplyReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.secondream.cheipgram.action.REPLY" />
+                <action android:name="com.secondream.novamessenger.action.REPLY" />
             </intent-filter>
         </receiver>
 

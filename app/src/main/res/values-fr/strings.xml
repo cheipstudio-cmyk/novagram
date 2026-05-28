@@ -115,7 +115,7 @@
     <string name="new_chat_empty_telegram">Aucun contact Telegram.</string>
     <string name="new_chat_empty_phone">Aucun contact trouvé.</string>
     <string name="new_chat_permission_title">Accès aux contacts</string>
-    <string name="new_chat_permission_body">Pour rechercher dans les contacts du téléphone, CheipGram a besoin de l\'accès aux contacts.</string>
+    <string name="new_chat_permission_body">Pour rechercher dans les contacts du téléphone, Nova a besoin de l\'accès aux contacts.</string>
     <string name="new_chat_phone_on_telegram">Sur Telegram</string>
     <string name="new_chat_phone_invite">Inviter</string>
     <string name="new_chat_syncing">Synchronisation des contacts…</string>
@@ -171,7 +171,7 @@
     <string name="theme_open_builder">Personnaliser</string>
     <string name="theme_reset">Réinitialiser</string>
     <string name="theme_share">Partager le thème</string>
-    <string name="theme_share_chooser">Partager le thème CheipGram</string>
+    <string name="theme_share_chooser">Partager le thème Nova</string>
     <string name="theme_builder_title">Couleur d\'accent</string>
     <string name="theme_preview">Aperçu</string>
     <string name="theme_save">Enregistrer</string>
@@ -182,10 +182,10 @@
     <string name="theme_paste">Coller le thème</string>
     <string name="theme_paste_success">Thème importé</string>
     <string name="theme_paste_error">Thème invalide dans le presse-papiers</string>
-    <string name="theme_share_body">Ouvre ce lien pour appliquer le thème CheipGram:
+    <string name="theme_share_body">Ouvre ce lien pour appliquer le thème Nova:
 
 %1$s</string>
-    <string name="theme_card_title">Thème CheipGram</string>
+    <string name="theme_card_title">Thème Nova</string>
     <string name="theme_card_subtitle">Touche pour appliquer</string>
     <string name="theme_card_apply">Appliquer le thème</string>
     <string name="sticker_search_placeholder">Rechercher des stickers...</string>
@@ -215,7 +215,7 @@
     <string name="action_leave_group">Quitter le groupe</string>
     <string name="action_leave_channel">Quitter le canal</string>
     <string name="leave_group_confirm">Quitter %1$s ?</string>
-    <string name="home_card_join_title">Groupe officiel CheipGram</string>
+    <string name="home_card_join_title">Groupe officiel Nova</string>
     <string name="home_card_join_subtitle">Rejoins pour les news, support et feedback.</string>
     <string name="home_card_join_action">Rejoindre</string>
     <string name="chat_info_bio_label">Bio</string>
@@ -251,7 +251,7 @@
     <string name="settings_media_autodownload_desc">Désactivé : photos/vidéos/fichiers doivent être téléchargés manuellement avant d\'être vus</string>
     <string name="media_tap_to_download">Toucher pour télécharger</string>
     <string name="action_save">Enregistrer</string>
-    <string name="media_save_success">Enregistré dans Cheip Gram</string>
+    <string name="media_save_success">Enregistré dans Nova</string>
     <string name="media_save_error">Échec de l\'enregistrement</string>
     <string name="settings_section_ai">IA</string>
     <string name="settings_ai_apikey_label">Clé API Anthropic</string>
@@ -273,4 +273,29 @@
     <string name="credits_join_group">Rejoindre le groupe Telegram</string>
     <string name="link_open_failed">Impossible d ouvrir le lien</string>
     <string name="attach_gif">GIF</string>
+    <string name="ai_action_copy">Copier</string>
+    <string name="ai_action_use_reply">Utiliser comme réponse</string>
+    <string name="ai_action_send">Envoyer</string>
+    <string name="ai_action_other">← Autre action</string>
+    <string name="ai_copied">Copié</string>
+    <string name="ai_retry">Réessayer</string>
+    <string name="ai_change_action">Changer d action</string>
+    <string name="ai_error">Erreur</string>
+    <string name="ai_custom_prompt_label">Prompt personnalisé</string>
+    <string name="ai_custom_prompt_hint">Ex. \"reformule plus gentiment\"</string>
+    <string name="ai_custom_prompt_go">OK</string>
+    <string name="ai_preset_summarise">Résumer le fil</string>
+    <string name="ai_preset_summarise_desc">Résumé rapide des derniers messages</string>
+    <string name="ai_preset_reply_formal">Répondre formel</string>
+    <string name="ai_preset_reply_formal_desc">Brouillon de réponse formelle</string>
+    <string name="ai_preset_reply_casual">Répondre casual</string>
+    <string name="ai_preset_reply_casual_desc">Brouillon de réponse amicale</string>
+    <string name="ai_preset_translate">Traduire</string>
+    <string name="ai_preset_translate_desc">Traduction du message sélectionné</string>
+    <string name="ai_preset_explain">Expliquer</string>
+    <string name="ai_preset_explain_desc">Explication simple du contenu</string>
+    <string name="chat_search_placeholder">Rechercher dans le chat</string>
+    <string name="settings_accent_rose">Rose</string>
+    <string name="settings_accent_cyan">Cyan</string>
+    <string name="settings_accent_orange">Orange</string>
 </resources>
