@@ -880,6 +880,18 @@ fun ChatScreen(
     // Mirrors MainActivity.handleTmeDeeplink's parsing but navigates via
     // onOpenChat instead of an Intent, so a t.me link in a message never
     // bounces the user out to a browser.
+    // True while openTelegramLink is in flight resolving a username /
+    // invite via TDLib. First-time resolutions can take 1-3 seconds
+    // (TDLib has to round-trip through the Telegram servers and then
+    // wait for a complete chat record to be emitted) and without
+    // visible feedback the tap looked broken. Renders a centered
+    // spinner overlay (built far below) while true; cleared in a
+    // finally{} so an exception in the resolution doesn't leave the
+    // spinner stuck. MUST be declared before `openTelegramLink`
+    // because the lambda closure captures it — Kotlin doesn't allow
+    // forward references within the same function body.
+    var linkResolving by remember { mutableStateOf(false) }
+
     val openTelegramLink: (android.net.Uri) -> Unit = { uri ->
         scope.launch {
             // Flip the resolving flag so the overlay spinner draws.
@@ -965,14 +977,6 @@ fun ChatScreen(
     // Controls visibility of the self-destruct timer chooser dialog.
     // Set true by the menu item; the dialog itself clears it.
     var ttlDialogOpen by remember { mutableStateOf(false) }
-    // True while openTelegramLink is in flight resolving a username /
-    // invite via TDLib. First-time resolutions can take 1-3 seconds
-    // (TDLib has to round-trip through the Telegram servers and then
-    // wait for a complete chat record to be emitted) and without
-    // visible feedback the tap looked broken. Renders a centered spinner
-    // overlay while true; cleared in a finally{} so an exception in
-    // the resolution doesn't leave the spinner stuck.
-    var linkResolving by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var leaveOpen by remember { mutableStateOf(false) }
