@@ -23,8 +23,8 @@ android {
         applicationId = "com.secondream.novagram"
         minSdk = 26
         targetSdk = 35
-        versionCode = 88
-        versionName = "0.10.25"
+        versionCode = 90
+        versionName = "0.10.27"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -106,6 +106,12 @@ dependencies {
     androidTestImplementation(composeBom)
 
     implementation("androidx.core:core-ktx:1.13.1")
+    // Installs the baked baseline profile (app/src/main/baseline-prof.txt)
+    // on first launch. Play installs pick the profile up via cloud profiles
+    // automatically, but our GitHub-Releases .apk is sideloaded — without
+    // this library the profile is never applied on those installs, so the
+    // hot startup + first-scroll paths stay interpreted/JIT instead of AOT.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("androidx.lifecycle:lifecycle-process:2.8.6")

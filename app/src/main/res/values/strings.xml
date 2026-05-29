@@ -340,4 +340,7 @@
     <string name="ttl_1d">1 giorno</string>
     <string name="ttl_1w">1 settimana</string>
     <string name="action_cancel">Annulla</string>
+    <string name="action_unmute_author">Riattiva autore</string>
+    <string name="action_unkick_author">Sblocca autore</string>
+    <string name="action_join_group">Unisciti al gruppo</string>
 </resources>

@@ -374,6 +374,11 @@ object AppSettings {
             e.remove(CUSTOM_INPUT_BAR)
             e.remove(ACTIVE_SAVED_THEME_ID)
         }
+        // Sync the launcher icon to the new theme. The activity-alias
+        // swap is fire-and-forget — the launcher will refresh on its
+        // next cycle. We do this AFTER persisting so a crash mid-save
+        // never leaves the icon out of sync with persisted prefs.
+        com.secondream.novagram.IconAliasManager.apply(appContext, mode)
     }
 
     suspend fun setAccentColor(color: AccentColor) {

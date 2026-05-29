@@ -170,6 +170,20 @@ object TdClient {
             is TdApi.UpdateChatReadInbox -> {
                 chatCache[obj.chatId]?.unreadCount = obj.unreadCount
                 refreshChats()
+                // If the unread count just hit zero, drop any active
+                // notification for the chat. Covers two cases at once:
+                // (a) we ourselves just opened the chat → openChat
+                // fires this update once TDLib has marked-read, and
+                // (b) another device the user owns read the messages →
+                // the notification on THIS device is now stale and
+                // should go too. The chat-screen entrypoint also
+                // calls dismissForChat directly for instant clear on
+                // local open; this handler is the catch-all for
+                // cross-device and openChat-pending paths.
+                if (obj.unreadCount == 0) {
+                    com.secondream.novagram.notifications.NotificationHelper
+                        .dismissForChat(obj.chatId)
+                }
             }
             is TdApi.UpdateChatReadOutbox -> {
                 chatCache[obj.chatId]?.lastReadOutboxMessageId = obj.lastReadOutboxMessageId
@@ -848,6 +862,19 @@ object TdClient {
     }
 
     /**
+     * Reverse of [kickGroupUser]. Restore the user to plain member status
+     * (no admin rights, no restrictions). Called by the admin action sheet
+     * when the user is already banned — same tap, opposite direction —
+     * so a quick toggle works without leaving the sheet.
+     */
+    suspend fun unbanGroupUser(chatId: Long, userId: Long) {
+        send(TdApi.SetChatMemberStatus(
+            chatId, TdApi.MessageSenderUser(userId),
+            TdApi.ChatMemberStatusMember(0)
+        ))
+    }
+
+    /**
      * Mute a user in a group: restrict them from sending messages of any
      * kind, but leave them as a member so they can still read. Forever
      * (restrictedUntilDate=0). Reading-only permissions are derived from
@@ -862,6 +889,32 @@ object TdClient {
             chatId, TdApi.MessageSenderUser(userId),
             TdApi.ChatMemberStatusRestricted(true, 0, noWrite)
         ))
+    }
+
+    /**
+     * Reverse of [muteGroupUser]. Lift all restrictions and return the
+     * user to plain member status. Used by the admin action sheet so the
+     * mute tile toggles in place — once a user is muted, the next long
+     * press shows "Smuta" and tapping it routes through here.
+     */
+    suspend fun unmuteGroupUser(chatId: Long, userId: Long) {
+        send(TdApi.SetChatMemberStatus(
+            chatId, TdApi.MessageSenderUser(userId),
+            TdApi.ChatMemberStatusMember(0)
+        ))
+    }
+
+    /**
+     * Fetch a user's current membership status in a chat (admin /
+     * restricted / banned / plain member / etc). The action sheet calls
+     * this on open to figure out whether the admin's mute/ban tiles
+     * should read "Muta / Espelli" or "Smuta / Sblocca", so the toggle
+     * UI mirrors the actual server state.
+     */
+    suspend fun getChatMemberStatus(chatId: Long, userId: Long): TdApi.ChatMemberStatus? {
+        return runCatching {
+            send(TdApi.GetChatMember(chatId, TdApi.MessageSenderUser(userId))).status
+        }.getOrNull()
     }
 
     // ===== Bot commands =====

@@ -258,6 +258,14 @@ fun ChatScreen(
     // Cached own user id, used to gate admin actions (you can't kick
     // yourself) and to filter the slash-commands picker for self-replies.
     var myUserId by remember { mutableStateOf<Long?>(null) }
+    // Whether the current user is NOT a member of this chat — true for
+    // public supergroups / channels we landed on via a t.me link, a
+    // search hit, or a forwarded mention, without having joined yet.
+    // While true the input bar disappears and a "Unisciti al gruppo"
+    // CTA takes its place. Flips back to false the moment TDLib echoes
+    // back the join via UpdateChatMember (which the chatUpdates flow
+    // surfaces), so the chat unlocks immediately after we press join.
+    var isNonMember by remember(chatId) { mutableStateOf(false) }
     LaunchedEffect(chatId) {
         val me = runCatching { TdClient.getMe() }.getOrNull() ?: return@LaunchedEffect
         myUserId = me.id
@@ -267,6 +275,41 @@ fun ChatScreen(
             is TdApi.ChatMemberStatusCreator,
             is TdApi.ChatMemberStatusAdministrator -> true
             else -> false
+        }
+        // Non-member = Left or Banned. TDLib surfaces Restricted with
+        // sending blocked separately (which we don't gate the input on
+        // here — chat permissions handle restrictions, this is purely
+        // about "you haven't joined yet").
+        isNonMember = when (member?.status) {
+            is TdApi.ChatMemberStatusLeft,
+            is TdApi.ChatMemberStatusBanned -> true
+            null -> {
+                // Null result usually means the call failed because we
+                // genuinely are not a member (TDLib refuses GetChatMember
+                // in that case for non-public chats). Treat as non-member
+                // for public chats so the join CTA appears; private
+                // groups will just be inaccessible upstream so this
+                // value doesn't matter.
+                true
+            }
+            else -> false
+        }
+    }
+    // Re-evaluate membership whenever TDLib echoes a status change on
+    // this chat — covers our own join landing (status flips from Left
+    // → Member) AND being kicked while in the chat (Member → Banned,
+    // input goes back to a CTA).
+    LaunchedEffect(chatId) {
+        TdClient.chatUpdates.collect { cid ->
+            if (cid != chatId) return@collect
+            val me = myUserId ?: return@collect
+            if (!isGroupChat) return@collect
+            val member = runCatching { TdClient.getMyChatMember(chatId, me) }.getOrNull()
+            isNonMember = when (member?.status) {
+                is TdApi.ChatMemberStatusLeft,
+                is TdApi.ChatMemberStatusBanned -> true
+                else -> false
+            }
         }
     }
 
@@ -352,6 +395,12 @@ fun ChatScreen(
         // NotificationHelper can skip heads-up only for THIS chat. Other
         // incoming chats still fire normally.
         com.secondream.novagram.AppForegroundState.currentChatId = chatId
+        // Clear any pending heads-up / tray notification for THIS chat
+        // the moment we land here. The user is now reading the chat,
+        // so a notification still sitting in the tray is stale — same
+        // behaviour as the official Telegram client. Cancelling is
+        // safe even if no notification was active.
+        com.secondream.novagram.notifications.NotificationHelper.dismissForChat(chatId)
         onDispose {
             scope.launch { runCatching { TdClient.closeChat(chatId) } }
             // Only clear if still pointing to us — if the user nav'd to
@@ -980,8 +1029,24 @@ fun ChatScreen(
     var infoOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var leaveOpen by remember { mutableStateOf(false) }
-    val cachedChatLive = TdClient.getCachedChat(chatId)
-    val isMuted = (cachedChatLive?.notificationSettings?.muteFor ?: 0) > 0
+    // Live mute state: subscribes to chatUpdates so toggling mute from
+    // the action sheet (or from the chat-list swipe action, or from
+    // another device) flips the BellSlash icon in the title immediately
+    // — no more "leave the chat and come back to see the change".
+    // Reads getCachedChat which is kept in sync by the
+    // UpdateChatNotificationSettings handler in TdClient.
+    var isMuted by remember(chatId) {
+        mutableStateOf(
+            (TdClient.getCachedChat(chatId)?.notificationSettings?.muteFor ?: 0) > 0
+        )
+    }
+    LaunchedEffect(chatId) {
+        TdClient.chatUpdates.collect { cid ->
+            if (cid == chatId) {
+                isMuted = (TdClient.getCachedChat(chatId)?.notificationSettings?.muteFor ?: 0) > 0
+            }
+        }
+    }
 
     // Swipe-from-left-to-right closes the chat. Mirrors the Telegram /
     // iOS pattern of "swipe right to pop". We hook a horizontal drag
@@ -1080,7 +1145,7 @@ fun ChatScreen(
                                         com.secondream.novagram.ui.icons.PhosphorIcons.BellSlash,
                                         contentDescription = null,
                                         modifier = Modifier
-                                            .size(14.dp)
+                                            .size(20.dp)
                                             .padding(start = 6.dp),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1346,7 +1411,22 @@ fun ChatScreen(
                             if (msg.content !== fresh) msg.content = fresh
                         }
                         androidx.compose.foundation.layout.Box(
-                            modifier = Modifier.animateItem()
+                            // animateItem(): default would fade new bubbles
+                            // in from alpha 0 over 220ms, which reads as a
+                            // flash when a new message lands or when the
+                            // list paginates older history mid-scroll. We
+                            // nuke the fade specs and keep only the spring
+                            // placement animation, so positions slide
+                            // smoothly into place but bubbles never wash
+                            // through a translucent ghost state.
+                            modifier = Modifier.animateItem(
+                                fadeInSpec = null,
+                                fadeOutSpec = null,
+                                placementSpec = androidx.compose.animation.core.spring(
+                                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                                    stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                                )
+                            )
                         ) {
                             MessageBubble(
                                 message = msg,
@@ -1562,6 +1642,69 @@ fun ChatScreen(
                     onCancel = { pendingMedia = null }
                 )
             }
+            if (isNonMember) {
+                // Not a member yet: the chat is being previewed via a
+                // t.me link, a search hit, or a deep link. The official
+                // Telegram client hides the input bar in this state and
+                // shows a full-width "Unisciti al gruppo" CTA at the
+                // bottom — matching that here. Tapping fires JoinChat
+                // and the chatUpdates listener above flips isNonMember
+                // back to false the instant TDLib echoes the new
+                // status, so the InputBar swaps back in without the
+                // user having to back out of the chat. The system
+                // "X si è unito" message arrives in the chat scroll on
+                // the same TDLib echo.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    var joining by remember(chatId) { mutableStateOf(false) }
+                    androidx.compose.material3.Button(
+                        onClick = {
+                            if (joining) return@Button
+                            joining = true
+                            scope.launch {
+                                runCatching { TdClient.joinChat(chatId) }
+                                    .onFailure {
+                                        joining = false
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            it.message ?: "Impossibile unirsi",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                // On success we leave `joining` true; the
+                                // chatUpdates collector flips isNonMember
+                                // and this whole Box leaves composition
+                                // (replaced by the InputBar), so the
+                                // spinner state doesn't matter.
+                            }
+                        },
+                        enabled = !joining,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        if (joining) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        } else {
+                            Text(
+                                stringResource(R.string.action_join_group),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            } else {
             InputBar(
                 value = input,
                 onValueChange = { input = it },
@@ -1663,7 +1806,26 @@ fun ChatScreen(
                         text.isNotEmpty() -> {
                             input = androidx.compose.ui.text.input.TextFieldValue("")
                             replyTarget = null
-                            scope.launch { runCatching { TdClient.sendText(chatId, text, rid) } }
+                            scope.launch {
+                                runCatching {
+                                    TdClient.sendText(chatId, text, rid)
+                                }.onFailure { err ->
+                                    // Failures here are silent by default —
+                                    // TDLib rejects sends for secret chats
+                                    // whose handshake hasn't completed, for
+                                    // groups where the user is restricted,
+                                    // and for channels we don't admin.
+                                    // Surfacing the error tells the user
+                                    // what's going on instead of leaving
+                                    // them tapping a button that does
+                                    // nothing.
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        err.message ?: "Invio non riuscito",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
                         }
                     }
                 },
@@ -1677,6 +1839,27 @@ fun ChatScreen(
                         micLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     } else {
                         runCatching {
+                            // Short haptic tick — same pattern WhatsApp uses
+                            // when you start holding the mic: tells the user
+                            // the long-press registered without needing to
+                            // glance back at the screen. Uses the new
+                            // VibrationEffect API where available; on older
+                            // Android falls back to the deprecated vibrate(ms).
+                            val vibrator = ContextCompat.getSystemService(
+                                context, android.os.Vibrator::class.java
+                            )
+                            if (vibrator != null && vibrator.hasVibrator()) {
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                    vibrator.vibrate(
+                                        android.os.VibrationEffect.createOneShot(
+                                            30L, android.os.VibrationEffect.DEFAULT_AMPLITUDE
+                                        )
+                                    )
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    vibrator.vibrate(30L)
+                                }
+                            }
                             recorder.start()
                             recording = true
                         }
@@ -1723,6 +1906,7 @@ fun ChatScreen(
                 },
                 focusRequester = inputFocus
             )
+            }
         }
     }
 
@@ -1812,8 +1996,19 @@ fun ChatScreen(
             chatId = chatId,
             onDismiss = { pinnedSheetOpen = false },
             onJumpToMessage = { targetId ->
-                pinnedSheetOpen = false
+                // Fire the jump FIRST while we're still on the ChatScreen
+                // composition scope — jumpToMessage launches in that
+                // scope's coroutine context, so any subsequent dismiss
+                // animation tearing down the sheet doesn't cancel the
+                // pending history-paginate + scroll work. The dismiss
+                // then runs as a separate post-action, after which the
+                // user sees the chat scrolled to the target with the
+                // flash highlight playing. Previously the order was
+                // reversed and the sheet's dismissal could race the
+                // launched coroutine, leaving the user back in the
+                // chat at the original position with no jump.
                 jumpToMessage(targetId)
+                pinnedSheetOpen = false
             }
         )
     }
@@ -2098,18 +2293,24 @@ fun ChatScreen(
                 }
                 deleteTarget = null
             },
-            onMuteAuthor = {
+            onMuteAuthor = { mute ->
                 if (senderUserId != null) {
                     scope.launch {
-                        runCatching { TdClient.muteGroupUser(chatId, senderUserId) }
+                        runCatching {
+                            if (mute) TdClient.muteGroupUser(chatId, senderUserId)
+                            else TdClient.unmuteGroupUser(chatId, senderUserId)
+                        }
                     }
                 }
                 deleteTarget = null
             },
-            onKickAuthor = {
+            onKickAuthor = { kick ->
                 if (senderUserId != null) {
                     scope.launch {
-                        runCatching { TdClient.kickGroupUser(chatId, senderUserId) }
+                        runCatching {
+                            if (kick) TdClient.kickGroupUser(chatId, senderUserId)
+                            else TdClient.unbanGroupUser(chatId, senderUserId)
+                        }
                     }
                 }
                 deleteTarget = null
@@ -2895,8 +3096,8 @@ private fun MessageActionsSheet(
     onReact: (String) -> Unit,
     onDeleteForMe: () -> Unit,
     onDeleteForEveryone: () -> Unit,
-    onMuteAuthor: () -> Unit,
-    onKickAuthor: () -> Unit
+    onMuteAuthor: (mute: Boolean) -> Unit,
+    onKickAuthor: (kick: Boolean) -> Unit
 ) {
     val state = rememberModalBottomSheetState()
     val cachedChat = TdClient.getCachedChat(message.chatId)
@@ -2926,19 +3127,30 @@ private fun MessageActionsSheet(
     // Admin actions are only meaningful in groups, only against someone
     // who isn't you and isn't yourself the sender. We hide the entire
     // block otherwise to keep the sheet uncluttered.
-    // Detect whether the sender is the group CREATOR. Admins must never
-    // see ban/mute against the owner — TDLib would reject it anyway, but
-    // showing the option is confusing. Fetched lazily on sheet open; until
-    // it resolves we assume "not owner" so the (rare) race just briefly
-    // shows the actions, never hides them incorrectly for normal members.
-    var senderIsOwner by remember(message.id) { mutableStateOf(false) }
+    // We grab the sender's *current* ChatMember status on sheet open so
+    // the three admin tiles (mute, ban, owner-detection) all key off
+    // the same fresh value. Since the sheet leaves composition between
+    // long-press sessions, this LaunchedEffect re-runs every time the
+    // sheet reopens — which gives us the "ri-tieni premuto e vedi
+    // Smuta" toggle without any extra invalidation plumbing.
+    var senderStatus by remember(message.id) {
+        mutableStateOf<TdApi.ChatMemberStatus?>(null)
+    }
     LaunchedEffect(message.id, senderUserId) {
         val uid = senderUserId
         if (uid != null && cachedChat?.type !is TdApi.ChatTypePrivate) {
-            val status = TdClient.getChatMemberStatus(message.chatId, uid)
-            senderIsOwner = status is TdApi.ChatMemberStatusCreator
+            senderStatus = TdClient.getChatMemberStatus(message.chatId, uid)
         }
     }
+    val senderIsOwner = senderStatus is TdApi.ChatMemberStatusCreator
+    // "Muted" means TDLib has them as Restricted with sending of basic
+    // messages forbidden. We don't quibble about other Restricted
+    // permission combos — anyone who can't post text is effectively
+    // muted as far as our UI is concerned, so the toggle reads
+    // correctly.
+    val senderIsMuted = (senderStatus as? TdApi.ChatMemberStatusRestricted)
+        ?.permissions?.canSendBasicMessages == false
+    val senderIsBanned = senderStatus is TdApi.ChatMemberStatusBanned
     val showAdminActions = isAdmin &&
         cachedChat?.type !is TdApi.ChatTypePrivate &&
         senderUserId != null &&
@@ -2953,6 +3165,55 @@ private fun MessageActionsSheet(
         containerColor = MaterialTheme.colorScheme.surface
     ) {
         Column(modifier = Modifier.padding(20.dp).navigationBarsPadding()) {
+            // If this message already has reactions, list them at the
+            // top so the user can see at a glance what others picked
+            // and (with a tap) join or leave the same emoji. Same chip
+            // styling as the inline ReactionStrip on the bubble — and
+            // tapping fires onReact(emoji), which the parent routes
+            // through addEmojiReaction / removeEmojiReaction based on
+            // whether you've already reacted. Keeping the visual
+            // language identical means a user moving between the
+            // bubble strip and this sheet doesn't have to relearn
+            // anything.
+            val existingReactions = message.interactionInfo?.reactions?.reactions
+                ?.mapNotNull { r ->
+                    val emoji = (r.type as? TdApi.ReactionTypeEmoji)?.emoji
+                    if (emoji != null) Triple(emoji, r.totalCount, r.isChosen) else null
+                }.orEmpty()
+            if (existingReactions.isNotEmpty()) {
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(bottom = 12.dp)
+                ) {
+                    for ((emoji, count, chosen) in existingReactions) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    if (chosen) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                                .clickable { onReact(emoji) }
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(emoji, style = MaterialTheme.typography.titleMedium)
+                            if (count > 1) {
+                                Spacer(Modifier.width(5.dp))
+                                Text(
+                                    count.toString(),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (chosen) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // Quick reactions bar at the top. The 6 most universally used
             // emojis on Telegram. Tapping fires onReact and dismisses the
             // sheet; the chip already appears on the message because of
@@ -3026,10 +3287,33 @@ private fun MessageActionsSheet(
                         com.secondream.novagram.ui.icons.PhosphorIcons.Trash, onDeleteForEveryone, destructive = true))
                 }
                 if (showAdminActions) {
-                    add(ActionTile(stringResource(R.string.action_mute_author),
-                        com.secondream.novagram.ui.icons.PhosphorIcons.SpeakerSlash, onMuteAuthor))
-                    add(ActionTile(stringResource(R.string.action_kick_author),
-                        com.secondream.novagram.ui.icons.PhosphorIcons.UserMinus, onKickAuthor, destructive = true))
+                    // Mute / unmute toggle based on the sender's
+                    // *current* TDLib status (fetched on sheet open).
+                    // Long-pressing a message you've just muted reopens
+                    // the sheet with this tile showing "Smuta" — same
+                    // tap removes the restriction. Real-time toggle,
+                    // no leaving the chat required.
+                    add(ActionTile(
+                        stringResource(
+                            if (senderIsMuted) R.string.action_unmute_author
+                            else R.string.action_mute_author
+                        ),
+                        com.secondream.novagram.ui.icons.PhosphorIcons.SpeakerSlash,
+                        { onMuteAuthor(!senderIsMuted) }
+                    ))
+                    // Same toggle pattern for ban: tile flips between
+                    // "Espelli autore" and "Sblocca autore" against the
+                    // current ChatMemberStatusBanned. Destructive tint
+                    // only on the BAN action — unban is restorative.
+                    add(ActionTile(
+                        stringResource(
+                            if (senderIsBanned) R.string.action_unkick_author
+                            else R.string.action_kick_author
+                        ),
+                        com.secondream.novagram.ui.icons.PhosphorIcons.UserMinus,
+                        { onKickAuthor(!senderIsBanned) },
+                        destructive = !senderIsBanned
+                    ))
                 }
             }
             // Grid: 3 columns. We row-chunk manually instead of using

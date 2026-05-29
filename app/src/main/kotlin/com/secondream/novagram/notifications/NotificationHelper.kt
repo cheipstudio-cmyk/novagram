@@ -240,6 +240,26 @@ object NotificationHelper {
         }
     }
 
+    /**
+     * Clear any active heads-up / tray notification for the given chat.
+     * Telegram's stock behaviour: when you open a chat and the unread
+     * messages get marked read, the related notification disappears on
+     * its own — no need to swipe it away. We mirror that by cancelling
+     * the notification keyed by chatId.hashCode() (the same id we used
+     * in [notify]) whenever ChatScreen opens, AND on every
+     * UpdateChatReadInbox where unreadCount drops to zero (so a read
+     * from another device clears the notification on this one too).
+     *
+     * Wrapped in runCatching because some launchers / OEMs reject
+     * cancel() in edge cases and we don't want a missing notification
+     * cancel to crash the chat scroll.
+     */
+    fun dismissForChat(chatId: Long) {
+        NotificationManagerCompat.from(appContext).runCatching {
+            cancel(chatId.hashCode())
+        }
+    }
+
     private fun previewOf(msg: TdApi.Message): String = when (val c = msg.content) {
         is TdApi.MessageText -> c.text.text
         is TdApi.MessagePhoto -> "📷 " + c.caption.text.ifBlank { "Foto" }

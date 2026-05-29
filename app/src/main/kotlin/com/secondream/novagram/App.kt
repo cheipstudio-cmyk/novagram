@@ -6,10 +6,17 @@ import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import com.secondream.novagram.notifications.NotificationHelper
 import com.secondream.novagram.settings.AppSettings
 import com.secondream.novagram.td.TdClient
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 
 /**
  * Global flag indicating whether the app is currently visible to the user.
@@ -35,7 +42,7 @@ object AppForegroundState {
     @Volatile var currentChatId: Long = 0L
 }
 
-class App : Application() {
+class App : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -61,7 +68,49 @@ class App : Application() {
 
         NotificationHelper.init(this)
         TdClient.init(this)
+        // Apply the launcher-icon variant matching the user's saved
+        // theme on every process start. Idempotent — if nothing
+        // changed, PackageManager no-ops. Wrapped in a launch on
+        // GlobalScope (not a process-tied scope) because the
+        // DataStore read suspends and we don't want to block onCreate.
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            IconAliasManager.applyFromSettings(this@App)
+        }
     }
+
+    /**
+     * Single tuned ImageLoader for the whole app. Coil's singleton picks this
+     * up because App implements ImageLoaderFactory, so every AsyncImage (chat
+     * avatars, message photos/thumbnails, stickers, the media viewer) shares
+     * one in-memory + on-disk cache instead of Coil's conservative defaults.
+     *
+     *  - memory cache 25% of the app heap: avatars in a long chat list and
+     *    re-entered chats come straight from RAM, so scrolling doesn't re-decode
+     *    the same bitmaps and the list stays at frame rate.
+     *  - 150 MB disk cache: thumbnails survive process death, so reopening the
+     *    app doesn't re-read every file from TDLib's store.
+     *  - respectCacheHeaders(false): our image keys are local file paths whose
+     *    bytes never change for a given path, so there is nothing to revalidate;
+     *    skipping that check shaves work off every load.
+     *  - crossfade(150): images fade in instead of popping, which reads as much
+     *    smoother as pictures finish downloading.
+     */
+    override fun newImageLoader(): ImageLoader =
+        ImageLoader.Builder(this)
+            .crossfade(150)
+            .respectCacheHeaders(false)
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.25)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizeBytes(150L * 1024 * 1024)
+                    .build()
+            }
+            .build()
 
     companion object {
         lateinit var instance: App

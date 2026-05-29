@@ -1,0 +1,20 @@
+# Baseline profile (Human-Readable ART Profile format).
+#
+# AGP compiles this into the release artifact (assets/dexopt/baseline.prof[m])
+# and ProfileInstaller applies it on first run, so the listed classes/methods
+# are AOT-compiled instead of interpreted/JIT'd. That removes most of the
+# cold-start jank and the first-scroll stutter in a chat list.
+#
+# We intentionally list ONLY this app's own classes: androidx.compose.* and
+# io.coil-kt:coil-* already ship their own baseline profiles, which the
+# manifest/asset merger folds in automatically — re-listing them here would
+# just bloat the compiled profile.
+#
+# H = Hot (called often), S = Startup (run during app start),
+# P = Post-startup. Wildcards: * within a token, ** across packages.
+#
+# If profgen ever rejects this file during a build, it is safe to simply
+# delete it; the profileinstaller dependency alone causes no harm.
+
+HSPLcom/secondream/novagram/**->**(**)**
+Lcom/secondream/novagram/**

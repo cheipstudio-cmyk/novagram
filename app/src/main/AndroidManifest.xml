@@ -34,10 +34,6 @@
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Cheipgram">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
             <!--
                 Theme deeplink. Tapping a nova://theme?data=<base64-json>
                 URL in any app (Telegram, browser, mail, Slack...) routes
@@ -52,7 +48,7 @@
             </intent-filter>
             <!--
                 t.me / telegram.me / telegram.dog links. Tapping a t.me
-                URL in any app should route into CheipGram, where MainActivity
+                URL in any app should route into Novagram, where MainActivity
                 resolves the username/joinhash via TDLib and navigates to
                 the matching chat. autoVerify stays false because we
                 deliberately want the user to be prompted with a chooser the
@@ -72,6 +68,51 @@
                 <data android:scheme="tg" />
             </intent-filter>
         </activity>
+
+        <!--
+            Two LAUNCHER aliases for the dark / light icon variants. The
+            user's theme preference drives which one is enabled at any
+            given moment, via PackageManager.setComponentEnabledSetting
+            (see IconAliasManager). The Dark alias is the install
+            default (enabled in the manifest, matching our default
+            theme); Light is disabled until the user picks Light /
+            system-light. Both targetActivity .MainActivity so the
+            running code is identical regardless of which icon got
+            tapped.
+
+            Note: targetActivity must NOT itself have a LAUNCHER
+            intent-filter — Android would then show two icons in the
+            launcher at once. Hence the main MainActivity above carries
+            only deeplink filters now, and the aliases own the
+            MAIN/LAUNCHER pair.
+        -->
+        <activity-alias
+            android:name=".LauncherDark"
+            android:targetActivity=".MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_dark"
+            android:roundIcon="@mipmap/ic_launcher_dark_round"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".LauncherLight"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_light"
+            android:roundIcon="@mipmap/ic_launcher_light_round"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <service
             android:name=".notifications.TdService"

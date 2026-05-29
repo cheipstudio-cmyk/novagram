@@ -326,4 +326,7 @@
     <string name="ttl_1d">1 Tag</string>
     <string name="ttl_1w">1 Woche</string>
     <string name="action_cancel">Abbrechen</string>
+    <string name="action_unmute_author">Autor entstummschalten</string>
+    <string name="action_unkick_author">Autor entsperren</string>
+    <string name="action_join_group">Gruppe beitreten</string>
 </resources>

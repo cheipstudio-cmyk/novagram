@@ -16,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.Dp
@@ -54,11 +56,25 @@ fun Avatar(
             if (updated.id == f.id) current = updated
         }
     }
+    // Soft top-to-bottom sheen derived from the (deterministic) bgColor gives
+    // each fallback avatar a subtle spherical depth instead of a flat disc.
+    // It's computed FROM whatever colour the caller passes, so the per-chat
+    // tints from avatarBackgroundFor stay intact — just lit. remember keeps
+    // the gradient off the hot recomposition path while scrolling.
+    val avatarBrush = remember(bgColor) {
+        Brush.verticalGradient(
+            listOf(
+                lerp(bgColor, Color.White, 0.10f),
+                bgColor,
+                lerp(bgColor, Color.Black, 0.22f)
+            )
+        )
+    }
     Box(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
-            .background(bgColor),
+            .background(avatarBrush),
         contentAlignment = Alignment.Center
     ) {
         val path = current?.local?.path

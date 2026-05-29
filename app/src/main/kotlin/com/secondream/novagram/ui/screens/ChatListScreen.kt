@@ -10,6 +10,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
@@ -202,10 +205,29 @@ fun ChatListScreen(
 
     Scaffold(
         floatingActionButton = {
+            // Springy press feedback: the FAB dips to 88% under the finger and
+            // springs back on release. The scale runs through a graphicsLayer
+            // block (layer-only, no recomposition) and the low damping ratio
+            // gives a small, satisfying rebound without looking toy-ish.
+            val fabInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+            val fabPressed by fabInteraction.collectIsPressedAsState()
+            val fabScale by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (fabPressed) 0.88f else 1f,
+                animationSpec = androidx.compose.animation.core.spring(
+                    dampingRatio = 0.55f,
+                    stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+                ),
+                label = "fabScale"
+            )
             FloatingActionButton(
                 onClick = onNewChat,
+                interactionSource = fabInteraction,
                 containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.graphicsLayer {
+                    scaleX = fabScale
+                    scaleY = fabScale
+                }
             ) {
                 Icon(
                     com.secondream.novagram.ui.icons.PhosphorIcons.Plus,
@@ -804,6 +826,20 @@ private fun SearchField(
         androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f)
     } else Ink.Faint
     val iconTint = if (isLight) cs.onSurfaceVariant else Ink.Muted
+    // Pop the soft keyboard open the moment the field enters composition.
+    // Without this the user has to tap the bar a second time after the
+    // magnifying-glass icon button to get the IME — annoying when you
+    // just want to start typing. Same focus-then-show trick we use in
+    // the in-chat search bar: requestFocus first, then a short delay,
+    // then explicit keyboard.show() because some Android builds don't
+    // pop the IME on focus alone.
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        runCatching { focus.requestFocus() }
+        kotlinx.coroutines.delay(30)
+        runCatching { keyboard?.show() }
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -833,7 +869,9 @@ private fun SearchField(
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = textColor),
                     cursorBrush = SolidColor(cs.primary),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focus)
                 )
             }
         }
@@ -998,7 +1036,7 @@ private fun ChatRow(
                     Icon(
                         com.secondream.novagram.ui.icons.PhosphorIcons.BellSlash,
                         contentDescription = stringResource(R.string.action_unmute_chat),
-                        modifier = Modifier.size(14.dp).padding(start = 6.dp),
+                        modifier = Modifier.size(16.dp).padding(start = 6.dp),
                         tint = Ink.Muted
                     )
                 }
@@ -1023,17 +1061,28 @@ private fun ChatRow(
                 )
                 if (c.unread > 0) {
                     Spacer(Modifier.width(8.dp))
+                    // Muted chats get a neutral badge; only un-muted chats keep
+                    // the accent colour, so a glance down the list shows which
+                    // conversations actually pinged you (same language official
+                    // Telegram uses). Pill shape with a min size grows cleanly
+                    // for 2–3 digit counts instead of cramming "99+" into a dot.
+                    val muted = (c.chat.notificationSettings?.muteFor ?: 0) > 0
+                    val badgeBg = if (muted) MaterialTheme.colorScheme.surfaceVariant
+                                  else MaterialTheme.colorScheme.primary
+                    val badgeFg = if (muted) MaterialTheme.colorScheme.onSurfaceVariant
+                                  else MaterialTheme.colorScheme.onPrimary
                     Box(
                         modifier = Modifier
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
+                            .defaultMinSize(minWidth = 20.dp, minHeight = 20.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(badgeBg)
+                            .padding(horizontal = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             if (c.unread > 99) "99+" else c.unread.toString(),
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            color = badgeFg,
                             fontWeight = FontWeight.Bold
                         )
                     }

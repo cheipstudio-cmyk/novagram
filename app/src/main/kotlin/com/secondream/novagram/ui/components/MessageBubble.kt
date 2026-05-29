@@ -464,7 +464,7 @@ fun MessageBubble(
                 )
                 Spacer(Modifier.height(6.dp))
             }
-            MessageContent(message, fill.onBackground, onJumpToMessage, onOpenTelegramLink, highlightQuery)
+            MessageContent(message, fill.onBackground, onJumpToMessage, onOpenTelegramLink, highlightQuery, interactionRevision)
             // Existing reactions strip. We surface every reaction the
             // message currently carries; tapping toggles your own reaction
             // (add if missing, remove if you've already used it). Updates
@@ -542,7 +542,21 @@ private fun MessageContent(
     onBackground: androidx.compose.ui.graphics.Color,
     onJumpToMessage: (Long) -> Boolean = { false },
     onOpenTelegramLink: (android.net.Uri) -> Unit = {},
-    highlightQuery: String? = null
+    highlightQuery: String? = null,
+    /**
+     * Bumped by the parent (via MessageBubble) every time TDLib pushes
+     * a new content / reaction / view-count for this message. The value
+     * is just an Int — its purpose is to act as a stable, value-compared
+     * parameter that Compose's strong skipping CANNOT skip on. Without
+     * this, an in-place mutation of `message.content` would not force
+     * MessageContent to recompose: the parameter list `(message,
+     * onBackground, ...)` is unchanged by reference, strong skipping
+     * triggers, and the bubble keeps rendering the stale content until
+     * the user backs out of the chat. Bumping this int on every
+     * UpdateMessageContent forces the recomposition the in-place
+     * mutation needs in order to be observable.
+     */
+    contentRevision: Int = 0
 ) {
     when (val c = message.content) {
         is TdApi.MessageText -> {
@@ -1522,16 +1536,15 @@ private fun ReactionStrip(
                     .combinedClickable(
                         enabled = emoji != null,
                         onClick = {
-                            // Single tap opens the "who reacted" sheet —
-                            // the user explicitly asked for this gesture
-                            // mapping. They expect to read who reacted
-                            // first, then optionally remove their own.
-                            showViewers = true
-                        },
-                        onLongClick = {
-                            // Long-press toggles your own reaction (the
-                            // quick action). If you already reacted with
-                            // this emoji it's removed, otherwise added.
+                            // Single tap toggles your own reaction on
+                            // this chip — direct, no confirmation
+                            // sheet. If you already reacted with this
+                            // emoji the chip removes it; otherwise it
+                            // adds yours to whatever the chip already
+                            // shows. Matches the official Telegram
+                            // gesture and the simplest mental model:
+                            // "tap = same as tapping the chip in real
+                            // Telegram = on/off for me".
                             if (emoji != null) {
                                 scope.launch {
                                     runCatching {
@@ -1542,6 +1555,14 @@ private fun ReactionStrip(
                                     }
                                 }
                             }
+                        },
+                        onLongClick = {
+                            // Long-press opens the "who reacted" sheet
+                            // so you can audit the list of users behind
+                            // the chip. Moved here from the single-tap
+                            // gesture because the toggle is the action
+                            // people want 9 times out of 10.
+                            showViewers = true
                         }
                     )
                     .padding(horizontal = 8.dp, vertical = 3.dp),

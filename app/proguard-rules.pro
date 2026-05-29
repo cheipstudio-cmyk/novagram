@@ -9,11 +9,11 @@
 -keepattributes *Annotation*, InnerClasses
 -dontnote kotlinx.serialization.AnnotationsKt
 
--keep,includedescriptorclasses class com.secondream.turbogram.**$$serializer { *; }
--keepclassmembers class com.secondream.turbogram.** {
+-keep,includedescriptorclasses class com.secondream.novagram.**$$serializer { *; }
+-keepclassmembers class com.secondream.novagram.** {
     *** Companion;
 }
--keepclasseswithmembers class com.secondream.turbogram.** {
+-keepclasseswithmembers class com.secondream.novagram.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
 
