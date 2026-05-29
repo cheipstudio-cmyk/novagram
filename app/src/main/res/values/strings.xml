@@ -325,4 +325,19 @@
     <string name="search_public_join_group">Unisciti al gruppo</string>
     <string name="search_public_join_channel">Unisciti al canale</string>
     <string name="unknown_chat">Sconosciuto</string>
+    <string name="settings_privacy_last_seen">Mostra ultimo accesso</string>
+    <string name="settings_privacy_last_seen_desc">Mostra il tuo stato online agli altri e vedi il loro</string>
+    <string name="chat_status_online">Online</string>
+    <string name="tab_secret">Segrete</string>
+    <string name="new_chat_choose_type_title">Tipo di chat</string>
+    <string name="new_chat_choose_type_body">Chat normale o chat segreta?</string>
+    <string name="new_chat_type_normal">Normale</string>
+    <string name="new_chat_type_secret">Segreta</string>
+    <string name="chat_set_ttl">Timer autodistruzione</string>
+    <string name="ttl_off">Disattivato</string>
+    <string name="ttl_1m">1 minuto</string>
+    <string name="ttl_1h">1 ora</string>
+    <string name="ttl_1d">1 giorno</string>
+    <string name="ttl_1w">1 settimana</string>
+    <string name="action_cancel">Annulla</string>
 </resources>

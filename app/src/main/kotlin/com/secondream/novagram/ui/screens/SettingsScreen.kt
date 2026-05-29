@@ -405,7 +405,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
+                                com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(22.dp)
@@ -525,6 +525,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                         scope.launch {
                             runCatching { TdClient.setReadDatePrivacy(newValue) }
                         }
+                    }
+                )
+                Divider()
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_privacy_last_seen),
+                    description = stringResource(R.string.settings_privacy_last_seen_desc),
+                    checked = appearance.showLastSeen,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setShowLastSeen(enabled) }
                     }
                 )
             }
@@ -989,7 +998,7 @@ private fun CreditsBlock() {
             horizontalArrangement = Arrangement.Center
         ) {
             Icon(
-                androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree,
+                com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier.size(24.dp)

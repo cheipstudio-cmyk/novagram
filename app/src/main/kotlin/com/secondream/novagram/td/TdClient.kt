@@ -304,7 +304,7 @@ object TdClient {
         is TdApi.ChatTypePrivate -> ChatKind.Private
         is TdApi.ChatTypeBasicGroup -> ChatKind.Group
         is TdApi.ChatTypeSupergroup -> if (type.isChannel) ChatKind.Channel else ChatKind.Group
-        is TdApi.ChatTypeSecret -> ChatKind.Private
+        is TdApi.ChatTypeSecret -> ChatKind.Secret
         else -> ChatKind.Private
     }
 
@@ -1136,6 +1136,48 @@ object TdClient {
         send(TdApi.CheckChatInviteLink(link))
 
     /**
+     * Create a new end-to-end-encrypted secret chat with `userId`. The
+     * returned Chat lives separately from the user's normal private
+     * chat with the same person — Telegram intentionally keeps them as
+     * distinct rows. The other side gets a UI prompt to accept the
+     * connection; until they do the chat is in a Pending state and we
+     * can already render it locally.
+     */
+    suspend fun createNewSecretChat(userId: Long): TdApi.Chat {
+        return send(TdApi.CreateNewSecretChat(userId))
+    }
+
+    /**
+     * Set the auto-delete timer on a chat. `ttlSeconds = 0` turns the
+     * timer off; positive values mean every message in the chat will
+     * disappear that many seconds after being read. Works for both
+     * regular and secret chats (different TDLib enforcement, same
+     * API). Standard Telegram presets: 60 (1min), 3600 (1h), 86400
+     * (1d), 604800 (1w).
+     */
+    suspend fun setMessageAutoDeleteTime(chatId: Long, ttlSeconds: Int) {
+        send(TdApi.SetChatMessageAutoDeleteTime(chatId, ttlSeconds))
+    }
+
+    /**
+     * Update the "show online status" privacy rule on the Telegram
+     * server. `visibleToEveryone = true` lets all users see our online
+     * state ("AllowAll"); `false` hides it from everyone
+     * ("RestrictAll"). We don't currently expose the contacts-only and
+     * per-user lists — the setting in our UI is a single boolean toggle.
+     */
+    suspend fun setShowStatusVisibility(visibleToEveryone: Boolean) {
+        val rule: TdApi.UserPrivacySettingRule = if (visibleToEveryone)
+            TdApi.UserPrivacySettingRuleAllowAll()
+        else TdApi.UserPrivacySettingRuleRestrictAll()
+        val rules = TdApi.UserPrivacySettingRules(arrayOf(rule))
+        send(TdApi.SetUserPrivacySettingRules(
+            TdApi.UserPrivacySettingShowStatus(),
+            rules
+        ))
+    }
+
+    /**
      * Mute or unmute a chat. Mute is implemented as Int.MAX_VALUE seconds —
      * effectively "forever" — which matches Telegram's "Disable notifications".
      * Unmute clears `muteFor` back to zero. All other notification fields are
@@ -1186,7 +1228,7 @@ object TdClient {
 
 class TdException(val code: Int, message: String) : RuntimeException(message)
 
-enum class ChatKind { Private, Group, Channel }
+enum class ChatKind { Private, Group, Channel, Secret }
 
 data class ChatSummary(
     val id: Long,

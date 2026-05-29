@@ -17,12 +17,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,6 +38,7 @@ import androidx.compose.foundation.content.contentReceiver
 import androidx.compose.foundation.content.consume
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
@@ -128,7 +131,16 @@ fun ChatScreen(
     // The input is keyed on chatId so switching between chats wipes the
     // text field instead of letting the previous chat's typing bleed into
     // the new one. The draft loader below repopulates it from TDLib.
-    var input by remember(chatId) { mutableStateOf("") }
+    var input by remember(chatId) { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue("")) }
+    // FocusRequester for the message input — the chat screen can poke it
+    // when the user picks a reply (swipe or button) so the IME pops up
+    // immediately and they can start typing without an extra tap on the
+    // field. Held at this scope so it survives recomposition of the
+    // input bar; paired with the LocalSoftwareKeyboardController call
+    // below because requestFocus() alone doesn't reliably show the IME
+    // on every Android build.
+    val inputFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val inputKeyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     // Track whether we've already loaded the draft for this chat. Without
     // this guard the draft loader could fight the user: imagine you type
     // "ciao", we save it to TDLib, TDLib emits UpdateChatDraftMessage,
@@ -142,6 +154,19 @@ fun ChatScreen(
     // Message the user has swiped on (or null if not replying). Cleared on
     // send and on tap of the "x" in the ReplyPreview.
     var replyTarget by remember { mutableStateOf<TdApi.Message?>(null) }
+    // When the user picks a reply via swipe-to-reply or the long-press
+    // sheet, fire focus + IME so they can start typing without an extra
+    // tap on the field. Only triggers on null → non-null transitions
+    // (we don't want a re-focus every time the message object recomposes
+    // because TDLib mutated interactionInfo). 50ms gives the focus path
+    // a beat before we shout for the keyboard.
+    LaunchedEffect(replyTarget?.id) {
+        if (replyTarget != null) {
+            kotlinx.coroutines.delay(50)
+            runCatching { inputFocus.requestFocus() }
+            runCatching { inputKeyboard?.show() }
+        }
+    }
     // When non-null, the user has tapped Modifica on one of their own
     // messages. The input bar pre-populates with the existing text and a
     // banner above it shows "Modifica messaggio" — same visual language
@@ -203,6 +228,26 @@ fun ChatScreen(
     // chat list ever renders, so we read it synchronously.
     val isGroupChat = remember(chatId) {
         TdClient.getCachedChat(chatId)?.type !is TdApi.ChatTypePrivate
+    }
+
+    // Online status of the other participant in a private chat. Used to
+    // light up the green dot on the title-bar avatar and to render the
+    // "online" subtitle under the chat name (gated by the user's own
+    // showLastSeen pref so it can be turned off globally). We poll on a
+    // 30s tick because TDLib doesn't expose a Compose-friendly user
+    // status flow — close enough to feel real-time without a custom
+    // subscription pipeline.
+    var peerOnline by remember(chatId) { mutableStateOf(false) }
+    LaunchedEffect(chatId) {
+        if (isGroupChat) return@LaunchedEffect
+        val cached = TdClient.getCachedChat(chatId)
+        val privateType = cached?.type as? TdApi.ChatTypePrivate ?: return@LaunchedEffect
+        val userId = privateType.userId
+        while (true) {
+            val user = runCatching { TdClient.getUser(userId) }.getOrNull()
+            peerOnline = user?.status is TdApi.UserStatusOnline
+            kotlinx.coroutines.delay(30_000)
+        }
     }
 
     // Am I an admin/creator of this group? Drives whether admin actions
@@ -320,7 +365,7 @@ fun ChatScreen(
             // before reaching TDLib. Capturing input/replyTarget by value
             // means even if the user typed a frame before backing out we
             // still persist the last state.
-            val finalText = input
+            val finalText = input.text
             val finalReply = replyTarget?.id
             val inEditMode = editTarget != null
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
@@ -363,8 +408,8 @@ fun ChatScreen(
     LaunchedEffect(chatId) {
         if (draftLoaded) return@LaunchedEffect
         val saved = TdClient.getChatDraftText(chatId)
-        if (!saved.isNullOrEmpty() && input.isEmpty()) {
-            input = saved
+        if (!saved.isNullOrEmpty() && input.text.isEmpty()) {
+            input = androidx.compose.ui.text.input.TextFieldValue(saved, androidx.compose.ui.text.TextRange(saved.length))
         }
         draftLoaded = true
     }
@@ -376,7 +421,7 @@ fun ChatScreen(
     LaunchedEffect(chatId, draftLoaded) {
         if (!draftLoaded) return@LaunchedEffect
         @OptIn(kotlinx.coroutines.FlowPreview::class)
-        snapshotFlow { Triple(input, replyTarget?.id, editTarget?.id) }
+        snapshotFlow { Triple(input.text, replyTarget?.id, editTarget?.id) }
             .debounce(400)
             .distinctUntilChanged()
             .collect { (text, replyId, editId) ->
@@ -390,21 +435,52 @@ fun ChatScreen(
             }
     }
 
+    // Unread state carried from the moment the chat was opened. We snapshot
+    // it here (not from a live flow) because the moment is the only one
+    // that matters: Telegram lands you on the FIRST unread message when
+    // you open a chat with backlog, and the floating "scroll to bottom"
+    // FAB pulses accent until you actually reach the bottom. While the
+    // user is in the chat, new messages get marked-read on arrival as
+    // before — so this counter only reflects what was already there.
+    var chatUnreadOnOpen by remember(chatId) { mutableStateOf(0) }
+    // Set true once we've landed on the first-unread message during
+    // initial load, OR explicitly false if the chat had no unread on
+    // open. Drives the FAB accent + the "mark all read" behaviour when
+    // the user reaches the bottom either by FAB or by manual scroll.
+    var unreadModeActive by remember(chatId) { mutableStateOf(false) }
+
     // Initial history load.
     // TDLib's getChatHistory first call returns only what's already in the
     // local DB cache, even with onlyLocal=false. For a chat never opened
     // before, that cache is just lastMessage. We iterate (and let TDLib
     // backfill from the server between calls) until we have ~20 messages
-    // or the server stops returning more.
+    // or the server stops returning more — but if the chat has 100 unread
+    // we keep iterating until that first unread is in the window, capped
+    // so we don't try to backfill a thousand-message channel.
     LaunchedEffect(chatId) {
         messages.clear()
         noMore = false
         loading = true
         runCatching {
+            // Snapshot the unread state BEFORE loading history so the
+            // "land on first unread" decision is based on what the server
+            // told us, not on what we've already pulled. Falls back to
+            // the cached ChatSummary if a full getChat round-trip fails.
+            val chatInfo = runCatching { TdClient.getChat(chatId) }.getOrNull()
+            val initialUnread = chatInfo?.unreadCount ?: 0
+            val lastReadId = chatInfo?.lastReadInboxMessageId ?: 0L
+            chatUnreadOnOpen = initialUnread
+
+            // Target window: cover all unread messages plus a small
+            // pre-read buffer (~10 messages) so the first unread isn't
+            // glued to the very top edge of the viewport. Cap at 200 so
+            // we don't sit there spinning on a backlog channel.
+            val target = if (initialUnread > 0) minOf(initialUnread + 10, 200) else 20
             var fromId = 0L
             var attempts = 0
             var consecutiveEmpty = 0
-            while (messages.size < 20 && attempts < 6 && consecutiveEmpty < 2) {
+            val attemptCap = if (initialUnread > 0) 10 else 6
+            while (messages.size < target && attempts < attemptCap && consecutiveEmpty < 2) {
                 val res = TdClient.getChatHistory(chatId, fromId, 50)
                 if (res.messages.isEmpty()) {
                     consecutiveEmpty++
@@ -416,10 +492,66 @@ fun ChatScreen(
                 }
                 attempts++
             }
-            val ids = messages.filter { !it.isOutgoing }.map { it.id }.toLongArray()
-            if (ids.isNotEmpty()) runCatching { TdClient.viewMessages(chatId, ids) }
+
+            // If there's no unread backlog we keep the original behaviour:
+            // mark loaded incoming messages as viewed and stay anchored at
+            // the bottom. With unread > 0 we deliberately do NOT mark the
+            // unread ones — that's what reading them implies, and the
+            // server will get the viewMessages call when the user actually
+            // scrolls down to them (or taps the FAB).
+            if (initialUnread > 0 && lastReadId > 0L) {
+                // First unread = the message immediately after the last
+                // read inbox id. In our newest-first list we want the one
+                // with the *smallest* id that's still > lastReadId.
+                val firstUnread = messages
+                    .filter { !it.isOutgoing && it.id > lastReadId }
+                    .minByOrNull { it.id }
+                val idx = firstUnread?.let { tgt ->
+                    messages.indexOfFirst { it.id == tgt.id }
+                } ?: -1
+                if (idx >= 0) {
+                    // Land with the first-unread message ~near the top of
+                    // the viewport so the user reads downward into the
+                    // newer content (same affordance Telegram uses).
+                    val viewportH = listState.layoutInfo.viewportSize.height
+                    val topOffset = if (viewportH > 0) (viewportH * 7) / 10 else 1000
+                    runCatching { listState.scrollToItem(idx, topOffset) }
+                    unreadModeActive = true
+                }
+                // Already-read incoming messages we DID load: those can be
+                // safely re-viewed, the call is idempotent and keeps the
+                // unread counter on the server in sync with what's now in
+                // our window.
+                val alreadyReadIds = messages
+                    .filter { !it.isOutgoing && it.id <= lastReadId }
+                    .map { it.id }
+                    .toLongArray()
+                if (alreadyReadIds.isNotEmpty()) {
+                    runCatching { TdClient.viewMessages(chatId, alreadyReadIds) }
+                }
+            } else {
+                val ids = messages.filter { !it.isOutgoing }.map { it.id }.toLongArray()
+                if (ids.isNotEmpty()) runCatching { TdClient.viewMessages(chatId, ids) }
+            }
         }
         loading = false
+    }
+
+    // While unread mode is active, watch the scroll position: as soon as
+    // the user reaches the bottom (manually or via the FAB) we mark all
+    // currently-loaded incoming messages as read and clear the accent
+    // affordance. This is what makes the "tap FAB or just scroll down"
+    // experience feel symmetric with the official client.
+    LaunchedEffect(unreadModeActive, chatId) {
+        if (!unreadModeActive) return@LaunchedEffect
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .filter { it == 0 }
+            .collect {
+                val ids = messages.filter { !it.isOutgoing }.map { it.id }.toLongArray()
+                if (ids.isNotEmpty()) runCatching { TdClient.viewMessages(chatId, ids) }
+                chatUnreadOnOpen = 0
+                unreadModeActive = false
+            }
     }
 
     // Listen for new messages in this chat.
@@ -534,7 +666,15 @@ fun ChatScreen(
                 if (prev != newFirstId) {
                     val first = messages.firstOrNull() ?: return@collect
                     if (first.isOutgoing || listState.firstVisibleItemIndex <= 2) {
-                        runCatching { listState.animateScrollToItem(0) }
+                        // Instant snap rather than animateScrollToItem.
+                        // The new bubble already animates in via
+                        // Modifier.animateItem(); a simultaneous viewport
+                        // animation fought with it and produced the
+                        // full-chat "flash" the user saw. A snap of one
+                        // bubble's height is invisible, so the user only
+                        // perceives the bubble sliding up from the
+                        // bottom — same effect as the official client.
+                        runCatching { listState.scrollToItem(0) }
                     }
                 }
             }
@@ -752,6 +892,9 @@ fun ChatScreen(
         }
     }
     var menuOpen by remember { mutableStateOf(false) }
+    // Controls visibility of the self-destruct timer chooser dialog.
+    // Set true by the menu item; the dialog itself clears it.
+    var ttlDialogOpen by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var leaveOpen by remember { mutableStateOf(false) }
@@ -809,17 +952,38 @@ fun ChatScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.clickable { infoOpen = true }
                     ) {
-                        // Chat avatar on the left of the title — matches
-                        // Telegram's native client. Uses the chat photo
-                        // from TDLib's cached chat object; falls back to a
-                        // colored circle with the first letter via Avatar
-                        // when no photo is present.
-                        com.secondream.novagram.ui.components.Avatar(
-                            file = cachedChatLive?.photo?.small,
-                            fallbackText = chatTitle,
-                            bgColor = com.secondream.novagram.ui.screens.avatarBackgroundFor(chatId),
-                            size = 36.dp
-                        )
+                        // Avatar with optional online-presence dot. The
+                        // dot is rendered as a tiny green circle anchored
+                        // at the avatar's bottom-right, with a ring in
+                        // the topbar's background colour so it reads as
+                        // an overlay rather than blending into the
+                        // photo. Gated by the showLastSeen pref AND by
+                        // it being a private chat — groups never get a
+                        // dot.
+                        Box {
+                            com.secondream.novagram.ui.components.Avatar(
+                                file = cachedChatLive?.photo?.small,
+                                fallbackText = chatTitle,
+                                bgColor = com.secondream.novagram.ui.screens.avatarBackgroundFor(chatId),
+                                size = 36.dp
+                            )
+                            if (!isGroupChat && peerOnline && appearance.showLastSeen) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .size(12.dp)
+                                        .background(
+                                            MaterialTheme.colorScheme.background,
+                                            shape = androidx.compose.foundation.shape.CircleShape
+                                        )
+                                        .padding(2.dp)
+                                        .background(
+                                            Color(0xFF22C55E),
+                                            shape = androidx.compose.foundation.shape.CircleShape
+                                        )
+                                )
+                            }
+                        }
                         Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f, fill = false)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -839,6 +1003,20 @@ fun ChatScreen(
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
+                            }
+                            // "online" subtitle for private chats only,
+                            // gated by the same pref as the dot. Lives
+                            // below the chat name like the official
+                            // client; we don't currently render the
+                            // "last seen ago" string when offline — that
+                            // would need TDLib's friendlier formatting.
+                            if (!isGroupChat && peerOnline && appearance.showLastSeen) {
+                                Text(
+                                    stringResource(R.string.chat_status_online),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1
+                                )
                             }
                         }
                     }
@@ -871,6 +1049,18 @@ fun ChatScreen(
                                 scope.launch {
                                     runCatching { TdClient.setChatMuted(chatId, !isMuted) }
                                 }
+                            }
+                        )
+                        // Self-destruct timer. Works for any chat type but is
+                        // most useful in secret chats — TDLib still applies
+                        // the setting to regular chats (server-side message
+                        // auto-delete). Tap opens a small dialog with the
+                        // standard Telegram presets.
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(stringResource(R.string.chat_set_ttl)) },
+                            onClick = {
+                                menuOpen = false
+                                ttlDialogOpen = true
                             }
                         )
                         // For groups/channels show "Leave" instead — you
@@ -1078,10 +1268,12 @@ fun ChatScreen(
                 // straight to the newest message via animateScrollToItem(0).
                 // We read firstVisibleItemIndex through a derivedStateOf so
                 // recomposition only fires when the visibility threshold
-                // actually flips, not on every pixel of scroll.
-                val showJumpToBottom by remember(listState) {
+                // actually flips, not on every pixel of scroll. We also
+                // force-show it when there's an unread backlog so the user
+                // always has a clear path back to "I've read everything".
+                val showJumpToBottom by remember(listState, chatUnreadOnOpen) {
                     androidx.compose.runtime.derivedStateOf {
-                        listState.firstVisibleItemIndex > 3
+                        listState.firstVisibleItemIndex > 3 || chatUnreadOnOpen > 0
                     }
                 }
                 androidx.compose.animation.AnimatedVisibility(
@@ -1094,22 +1286,86 @@ fun ChatScreen(
                         .align(Alignment.BottomEnd)
                         .padding(end = 14.dp, bottom = 14.dp)
                 ) {
-                    androidx.compose.material3.SmallFloatingActionButton(
-                        onClick = {
-                            scope.launch {
-                                runCatching { listState.animateScrollToItem(0) }
+                    // When there's an unread backlog the FAB lights up in
+                    // accent so it reads as a CTA — "tap me to clear the
+                    // unread". Otherwise it stays as a neutral surface
+                    // button. A small numeric badge in the top-right
+                    // corner shows the count, capped visually at 999+.
+                    val unread = chatUnreadOnOpen
+                    val hasUnread = unread > 0
+                    val fabContainer = if (hasUnread)
+                        MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.surface
+                    val fabContent = if (hasUnread)
+                        MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurface
+                    Box {
+                        androidx.compose.material3.SmallFloatingActionButton(
+                            onClick = {
+                                scope.launch {
+                                    runCatching { listState.animateScrollToItem(0) }
+                                    // Reaching the bottom is the user's
+                                    // explicit "I've seen everything"
+                                    // gesture — mark all loaded incoming
+                                    // messages read and drop unread mode.
+                                    if (hasUnread) {
+                                        val ids = messages
+                                            .filter { !it.isOutgoing }
+                                            .map { it.id }
+                                            .toLongArray()
+                                        if (ids.isNotEmpty()) runCatching {
+                                            TdClient.viewMessages(chatId, ids)
+                                        }
+                                        chatUnreadOnOpen = 0
+                                        unreadModeActive = false
+                                    }
+                                }
+                            },
+                            containerColor = fabContainer,
+                            contentColor = fabContent,
+                            elevation = androidx.compose.material3.FloatingActionButtonDefaults
+                                .elevation(defaultElevation = 3.dp)
+                        ) {
+                            Icon(
+                                com.secondream.novagram.ui.icons.PhosphorIcons.CaretDown,
+                                contentDescription = stringResource(R.string.chat_jump_to_bottom),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        // Unread count badge, anchored at the FAB's
+                        // top-right with a small pop-out offset. Lives
+                        // inside the same Box so it inherits the FAB's
+                        // enter/exit animation. The outer ring uses the
+                        // chat background colour so the badge reads as a
+                        // sticker sitting on top of the accent FAB —
+                        // same affordance as Telegram's stock client.
+                        if (hasUnread) {
+                            val badgeText = if (unread > 999) "999+" else unread.toString()
+                            // Badge styled as an inverted-colour sticker:
+                            // FAB is primary, so the badge body uses
+                            // onPrimary (typically white) with the accent
+                            // colour for the number. Matches Telegram's
+                            // own scroll-down counter exactly.
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 4.dp, y = (-4).dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.onPrimary,
+                                        shape = androidx.compose.foundation.shape.CircleShape
+                                    )
+                                    .defaultMinSize(minWidth = 20.dp, minHeight = 20.dp)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    badgeText,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
-                        },
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                        elevation = androidx.compose.material3.FloatingActionButtonDefaults
-                            .elevation(defaultElevation = 3.dp)
-                    ) {
-                        Icon(
-                            com.secondream.novagram.ui.icons.PhosphorIcons.CaretDown,
-                            contentDescription = stringResource(R.string.chat_jump_to_bottom),
-                            modifier = Modifier.size(28.dp)
-                        )
+                        }
                     }
                 }
             }
@@ -1118,7 +1374,7 @@ fun ChatScreen(
             // logic computes the @-query at the cursor; if null the picker
             // is hidden. Members are loaded lazily the first time the user
             // types '@' so we don't pay the round-trip cost on chat open.
-            val mentionQuery = remember(input) { detectMentionQuery(input) }
+            val mentionQuery = remember(input) { detectMentionQuery(input.text) }
             LaunchedEffect(mentionQuery, isGroupChat) {
                 if (mentionQuery != null && isGroupChat && !mentionLoaded) {
                     mentionMembers = loadChatMembers(chatId)
@@ -1130,7 +1386,17 @@ fun ChatScreen(
                     query = mentionQuery,
                     members = mentionMembers,
                     onPick = { user ->
-                        input = applyMentionPick(input, user)
+                        run {
+                            val newText = applyMentionPick(input.text, user)
+                            // Cursor at end so the next character the user
+                            // types lands after the mention token, not in
+                            // the middle of the previous mid-input position
+                            // where they had tapped the @.
+                            input = androidx.compose.ui.text.input.TextFieldValue(
+                                newText,
+                                androidx.compose.ui.text.TextRange(newText.length)
+                            )
+                        }
                     }
                 )
             }
@@ -1138,7 +1404,7 @@ fun ChatScreen(
             // Slash-command picker. Surfaces /commands the bot in this
             // chat (private or group) exposes, filtered live by what the
             // user is typing. Hidden when the input doesn't start with /.
-            val slashQuery = remember(input) { detectSlashQuery(input) }
+            val slashQuery = remember(input) { detectSlashQuery(input.text) }
             if (slashQuery != null && botCommands.isNotEmpty()) {
                 val filtered = botCommands.filter {
                     it.command.startsWith(slashQuery, ignoreCase = true)
@@ -1147,7 +1413,11 @@ fun ChatScreen(
                     BotCommandPicker(
                         commands = filtered,
                         onPick = { cmd ->
-                            input = "/${cmd.command} "
+                            val cmdText = "/" + cmd.command + " "
+                            input = androidx.compose.ui.text.input.TextFieldValue(
+                                cmdText,
+                                androidx.compose.ui.text.TextRange(cmdText.length)
+                            )
                         }
                     )
                 }
@@ -1168,7 +1438,7 @@ fun ChatScreen(
                     message = editTarget!!,
                     onCancel = {
                         editTarget = null
-                        input = ""
+                        input = androidx.compose.ui.text.input.TextFieldValue("")
                     }
                 )
             }
@@ -1185,7 +1455,7 @@ fun ChatScreen(
                     stringResource(R.string.media_caption_hint)
                 else null,
                 onSend = {
-                    val text = input.trim()
+                    val text = input.text.trim()
                     val media = pendingMedia
                     val rid = replyTarget?.id
                     val editing = editTarget
@@ -1206,11 +1476,11 @@ fun ChatScreen(
                                 // Treat empty-on-text as cancel rather than
                                 // surfacing a TDLib error.
                                 editTarget = null
-                                input = ""
+                                input = androidx.compose.ui.text.input.TextFieldValue("")
                             } else {
                                 val captured = editing
                                 editTarget = null
-                                input = ""
+                                input = androidx.compose.ui.text.input.TextFieldValue("")
                                 scope.launch {
                                     runCatching {
                                         if (isTextMsg) {
@@ -1226,7 +1496,7 @@ fun ChatScreen(
                             // Sending media with optional caption — caption may
                             // be blank, that's fine. Always clear local state
                             // before launching so a double-tap doesn't double-send.
-                            input = ""
+                            input = androidx.compose.ui.text.input.TextFieldValue("")
                             pendingMedia = null
                             replyTarget = null
                             val caption = text.ifBlank { null }
@@ -1244,7 +1514,7 @@ fun ChatScreen(
                             }
                         }
                         text.isNotEmpty() -> {
-                            input = ""
+                            input = androidx.compose.ui.text.input.TextFieldValue("")
                             replyTarget = null
                             scope.launch { runCatching { TdClient.sendText(chatId, text, rid) } }
                         }
@@ -1303,7 +1573,8 @@ fun ChatScreen(
                             }
                         }
                     }
-                }
+                },
+                focusRequester = inputFocus
             )
         }
     }
@@ -1454,7 +1725,13 @@ fun ChatScreen(
             onDismiss = { aiTarget = null },
             onUseAsReply = { aiReply ->
                 aiTarget = null
-                input = aiReply
+                run {
+                    val replyText = aiReply
+                    input = androidx.compose.ui.text.input.TextFieldValue(
+                        replyText,
+                        androidx.compose.ui.text.TextRange(replyText.length)
+                    )
+                }
                 replyTarget = target
             },
             onSendDirect = { aiReply ->
@@ -1689,6 +1966,51 @@ fun ChatScreen(
                     }
                 }
                 deleteTarget = null
+            }
+        )
+    }
+
+    // TTL chooser dialog. Five presets matching Telegram's stock UI:
+    // off, 1 minute, 1 hour, 1 day, 1 week. Tap dispatches
+    // SetChatMessageAutoDeleteTime and dismisses; works for any chat
+    // type (the call is a no-op on chats where TDLib doesn't allow it,
+    // wrapped in runCatching).
+    if (ttlDialogOpen) {
+        val ttlOptions = listOf(
+            0 to stringResource(R.string.ttl_off),
+            60 to stringResource(R.string.ttl_1m),
+            3600 to stringResource(R.string.ttl_1h),
+            86400 to stringResource(R.string.ttl_1d),
+            604800 to stringResource(R.string.ttl_1w)
+        )
+        AlertDialog(
+            onDismissRequest = { ttlDialogOpen = false },
+            title = { Text(stringResource(R.string.chat_set_ttl)) },
+            text = {
+                Column {
+                    ttlOptions.forEach { (seconds, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    ttlDialogOpen = false
+                                    scope.launch {
+                                        runCatching {
+                                            TdClient.setMessageAutoDeleteTime(chatId, seconds)
+                                        }
+                                    }
+                                }
+                                .padding(horizontal = 4.dp, vertical = 14.dp)
+                        ) {
+                            Text(label, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { ttlDialogOpen = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
             }
         )
     }
@@ -1957,8 +2279,8 @@ private fun labelMembers(count: Int, channel: Boolean = false): String =
 
 @Composable
 private fun InputBar(
-    value: String,
-    onValueChange: (String) -> Unit,
+    value: androidx.compose.ui.text.input.TextFieldValue,
+    onValueChange: (androidx.compose.ui.text.input.TextFieldValue) -> Unit,
     placeholderText: String?,
     onSend: () -> Unit,
     onAttach: () -> Unit,
@@ -1974,7 +2296,11 @@ private fun InputBar(
     // Called when the IME (Gboard, SwiftKey, etc.) inserts rich content
     // — typically a GIF or sticker. We get a content:// URI from the
     // keyboard and forward it to the chat for upload.
-    onContentReceived: (android.net.Uri) -> Unit = {}
+    onContentReceived: (android.net.Uri) -> Unit = {},
+    // Allows the chat screen to programmatically pop the IME — used when
+    // the user replies via swipe or button so they can start typing
+    // immediately instead of having to tap the field first.
+    focusRequester: androidx.compose.ui.focus.FocusRequester? = null
 ) {
     // Pull the custom input-bar color if the user has set one in the
     // theme builder. Falls back to MaterialTheme.colorScheme.background
@@ -2075,7 +2401,7 @@ private fun InputBar(
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     contentAlignment = Alignment.CenterStart
                 ) {
-                    if (value.isEmpty()) {
+                    if (value.text.isEmpty()) {
                         Text(
                             placeholderText ?: stringResource(R.string.input_placeholder),
                             color = placeholderColor,
@@ -2088,9 +2414,25 @@ private fun InputBar(
                         onValueChange = onValueChange,
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = textColor),
                         cursorBrush = androidx.compose.ui.graphics.SolidColor(cs.primary),
+                        // maxLines=6 caps the field at ~6 lines worth of
+                        // height (matches Telegram); above that the field
+                        // scrolls INTERNALLY which is what makes the
+                        // cursor stay visible while typing. The previous
+                        // outer Modifier.verticalScroll wrapped the whole
+                        // text — that wrapper's scroll state has no idea
+                        // where the caret is, so for long edits the cursor
+                        // could drift off-screen at the bottom while the
+                        // visible area stayed at the top. Removing it lets
+                        // BasicTextField's built-in cursor follow do its
+                        // job.
+                        maxLines = 6,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
+                            .then(
+                                if (focusRequester != null)
+                                    Modifier.focusRequester(focusRequester)
+                                else Modifier
+                            )
                             .contentReceiver { transferableContent ->
                                 // Gboard/SwiftKey hand us a content:// URI for the
                                 // inserted GIF or image. Forward the URI to the
@@ -2111,7 +2453,7 @@ private fun InputBar(
             }
             // Trailing slot. Send button only when NOT recording and there's
             // something to send; otherwise the persistent MicButton.
-            if (!recording && (value.isNotBlank() || hasPendingMedia)) {
+            if (!recording && (value.text.isNotBlank() || hasPendingMedia)) {
                 IconButton(
                     onClick = onSend,
                     modifier = Modifier.size(48.dp)
@@ -2185,7 +2527,19 @@ private fun ChatSearchBar(
     onClose: () -> Unit
 ) {
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        // Two-step "show keyboard": requestFocus() alone moves the
+        // cursor into the TextField but on some Android builds the
+        // IME doesn't pop up until a real touch event. Calling
+        // `.show()` on the keyboard controller right after the focus
+        // event forces it open — same trick stock Telegram uses for
+        // its in-chat search field. The 30ms delay gives the focus
+        // event time to land before we shout for the IME.
+        runCatching { focus.requestFocus() }
+        kotlinx.coroutines.delay(30)
+        runCatching { keyboard?.show() }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2468,7 +2822,7 @@ private fun MessageActionsSheet(
                 if (onAi != null) {
                     add(ActionTile(
                         stringResource(R.string.action_ai),
-                        androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
                         onAi
                     ))
                 }
@@ -2497,13 +2851,13 @@ private fun MessageActionsSheet(
                     com.secondream.novagram.ui.icons.PhosphorIcons.Trash, onDeleteForMe, destructive = true))
                 if (canRevoke) {
                     add(ActionTile(stringResource(R.string.delete_for_everyone),
-                        com.secondream.novagram.ui.icons.PhosphorIcons.TrashForever, onDeleteForEveryone, destructive = true))
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Trash, onDeleteForEveryone, destructive = true))
                 }
                 if (showAdminActions) {
                     add(ActionTile(stringResource(R.string.action_mute_author),
                         com.secondream.novagram.ui.icons.PhosphorIcons.SpeakerSlash, onMuteAuthor))
                     add(ActionTile(stringResource(R.string.action_kick_author),
-                        com.secondream.novagram.ui.icons.PhosphorIcons.UserRemove, onKickAuthor, destructive = true))
+                        com.secondream.novagram.ui.icons.PhosphorIcons.UserMinus, onKickAuthor, destructive = true))
                 }
             }
             // Grid: 3 columns. We row-chunk manually instead of using
@@ -2953,7 +3307,7 @@ private fun MentionPicker(
                 val uname = u.usernames?.editableUsername?.lowercase().orEmpty()
                 q.isBlank() || full.contains(q) || uname.contains(q)
             }
-            .take(6)
+            .take(30)
             .toList()
     }
     if (filtered.isEmpty()) return
@@ -2962,6 +3316,10 @@ private fun MentionPicker(
             .fillMaxWidth()
             .heightIn(max = 240.dp)
             .background(MaterialTheme.colorScheme.surface)
+            // Vertical scroll so groups with many @-matches don't clip
+            // the rows beyond the 240dp cap — the user can flick the
+            // list to reach members further down.
+            .verticalScroll(rememberScrollState())
             .padding(vertical = 6.dp)
     ) {
         filtered.forEach { user ->

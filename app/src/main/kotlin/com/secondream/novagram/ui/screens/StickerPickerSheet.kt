@@ -155,7 +155,7 @@ fun StickerPickerSheet(
                 shape = RoundedCornerShape(20.dp),
                 leadingIcon = {
                     androidx.compose.material3.Icon(
-                        androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass,
                         contentDescription = null
                     )
                 },
@@ -163,7 +163,7 @@ fun StickerPickerSheet(
                     {
                         androidx.compose.material3.IconButton(onClick = { query = "" }) {
                             androidx.compose.material3.Icon(
-                                androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                                com.secondream.novagram.ui.icons.PhosphorIcons.X,
                                 contentDescription = null
                             )
                         }

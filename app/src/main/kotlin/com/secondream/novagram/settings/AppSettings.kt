@@ -79,7 +79,16 @@ data class AppearancePrefs(
      */
     val anthropicApiKey: String? = null,
     /** When true, a 4th "Archiviati" tab appears in the chat list. */
-    val showArchivedTab: Boolean = false
+    val showArchivedTab: Boolean = false,
+    /**
+     * Whether the user wants their own "last seen" / "online" status to
+     * be visible to other Telegram users — drives both the visual UI
+     * (green dot on private chat avatars, "online" subtitle in chat
+     * header) AND the server-side `UserPrivacySettingShowStatus` rule.
+     * Default true so the experience matches stock Telegram out of the
+     * box; flip in Settings → Privacy.
+     */
+    val showLastSeen: Boolean = true
 )
 
 /**
@@ -127,6 +136,7 @@ object AppSettings {
     private val AUTO_DOWNLOAD_MEDIA = androidx.datastore.preferences.core.booleanPreferencesKey("auto_download_media")
     private val ANTHROPIC_API_KEY = androidx.datastore.preferences.core.stringPreferencesKey("anthropic_api_key")
     private val SHOW_ARCHIVED_TAB = androidx.datastore.preferences.core.booleanPreferencesKey("show_archived_tab")
+    private val SHOW_LAST_SEEN = androidx.datastore.preferences.core.booleanPreferencesKey("show_last_seen")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -168,12 +178,23 @@ object AppSettings {
                 textScale = (prefs[TEXT_SCALE] ?: 1.0f).coerceIn(0.85f, 1.35f),
                 autoDownloadMedia = prefs[AUTO_DOWNLOAD_MEDIA] ?: true,
                 anthropicApiKey = prefs[ANTHROPIC_API_KEY]?.takeIf { it.isNotBlank() },
-                showArchivedTab = prefs[SHOW_ARCHIVED_TAB] ?: false
+                showArchivedTab = prefs[SHOW_ARCHIVED_TAB] ?: false,
+                showLastSeen = prefs[SHOW_LAST_SEEN] ?: true
             )
         }
 
     suspend fun setShowArchivedTab(enabled: Boolean) {
         appContext.dataStore.edit { it[SHOW_ARCHIVED_TAB] = enabled }
+    }
+
+    suspend fun setShowLastSeen(enabled: Boolean) {
+        appContext.dataStore.edit { it[SHOW_LAST_SEEN] = enabled }
+        // Forward the same boolean to TDLib as a privacy rule so the
+        // server actually hides the status from peers — without this the
+        // toggle would only affect our own client-side display.
+        runCatching {
+            com.secondream.novagram.td.TdClient.setShowStatusVisibility(enabled)
+        }
     }
 
     suspend fun setAutoDownloadMedia(enabled: Boolean) {

@@ -41,6 +41,7 @@ import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -77,7 +78,11 @@ private data class TgContact(val user: TdApi.User)
 /** Mirror of a phone-book row enriched with the matching Telegram user id (0 = no Telegram). */
 private data class MatchedPhoneContact(
     val contact: PhoneContact,
-    val telegramUserId: Long
+    val telegramUserId: Long,
+    // Profile photo file for the matched Telegram user, if any. Populated
+    // alongside `telegramUserId` once `importContacts` returns; lets the
+    // ContactRow show the real avatar instead of the letter fallback.
+    val photoFile: TdApi.File? = null
 )
 
 @Composable
@@ -89,6 +94,10 @@ fun NewChatScreen(
     val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableStateOf(0) }
     var query by remember { mutableStateOf("") }
+    // Pending tap target: a userId waiting for the user to decide
+    // "normal chat" vs "secret chat" via the dialog below. Null when
+    // no choice is in flight; set when any contact row is tapped.
+    var pendingChatUserId by remember { mutableStateOf<Long?>(null) }
 
     // Telegram contacts
     val telegramContacts = remember { mutableStateListOf<TgContact>() }
@@ -139,7 +148,11 @@ fun NewChatScreen(
         if (matchIds.size == phoneContacts.size) {
             for (i in phoneContacts.indices) {
                 if (matchIds[i] != 0L) {
-                    phoneContacts[i] = phoneContacts[i].copy(telegramUserId = matchIds[i])
+                    val photo = TdClient.getCachedUser(matchIds[i])?.profilePhoto?.small
+                    phoneContacts[i] = phoneContacts[i].copy(
+                        telegramUserId = matchIds[i],
+                        photoFile = photo
+                    )
                 }
             }
         }
@@ -222,10 +235,9 @@ fun NewChatScreen(
                     contacts = filteredTelegram,
                     loading = loadingTelegram,
                     onOpen = { user ->
-                        scope.launch {
-                            val chat = runCatching { TdClient.createPrivateChat(user.id, true) }.getOrNull()
-                            if (chat != null) onOpenChat(chat.id)
-                        }
+                        // Defer the actual chat open: the user picks
+                        // Normal vs Segreta in the dialog below.
+                        pendingChatUserId = user.id
                     }
                 )
                 1 -> PhoneList(
@@ -237,10 +249,7 @@ fun NewChatScreen(
                         permissionLauncher.launch(Manifest.permission.READ_CONTACTS)
                     },
                     onOpenTelegram = { userId ->
-                        scope.launch {
-                            val chat = runCatching { TdClient.createPrivateChat(userId, true) }.getOrNull()
-                            if (chat != null) onOpenChat(chat.id)
-                        }
+                        pendingChatUserId = userId
                     },
                     onInviteSms = { phone ->
                         runCatching {
@@ -255,6 +264,39 @@ fun NewChatScreen(
                 )
             }
         }
+    }
+
+    // Chat-type chooser: shown after the user taps a contact row. Two
+    // outcomes, both close the dialog and the New Chat screen by
+    // forwarding the new chat id up. Normal chat = standard private
+    // (createPrivateChat). Secret chat = end-to-end encrypted
+    // (CreateNewSecretChat), Telegram counts this as a separate row in
+    // the list and the recipient gets a "starting secret chat…" prompt.
+    val pendingUid = pendingChatUserId
+    if (pendingUid != null) {
+        AlertDialog(
+            onDismissRequest = { pendingChatUserId = null },
+            title = { Text(stringResource(R.string.new_chat_choose_type_title)) },
+            text = { Text(stringResource(R.string.new_chat_choose_type_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingChatUserId = null
+                    scope.launch {
+                        val chat = runCatching { TdClient.createPrivateChat(pendingUid, true) }.getOrNull()
+                        if (chat != null) onOpenChat(chat.id)
+                    }
+                }) { Text(stringResource(R.string.new_chat_type_normal)) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    pendingChatUserId = null
+                    scope.launch {
+                        val chat = runCatching { TdClient.createNewSecretChat(pendingUid) }.getOrNull()
+                        if (chat != null) onOpenChat(chat.id)
+                    }
+                }) { Text(stringResource(R.string.new_chat_type_secret)) }
+            }
+        )
     }
 }
 
@@ -399,7 +441,9 @@ private fun TelegramList(
                 title = "${c.user.firstName} ${c.user.lastName}".trim().ifEmpty { c.user.usernames?.editableUsername ?: "?" },
                 subtitle = c.user.usernames?.editableUsername?.let { "@$it" } ?: "",
                 onClick = { onOpen(c.user) },
-                trailing = null
+                trailing = null,
+                photoFile = c.user.profilePhoto?.small,
+                chatIdForBg = c.user.id
             )
             HorizontalDivider(
                 thickness = 0.5.dp,
@@ -510,7 +554,9 @@ private fun PhoneList(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                    }
+                    },
+                    photoFile = p.photoFile,
+                    chatIdForBg = p.telegramUserId
                 )
                 HorizontalDivider(
                     thickness = 0.5.dp,
@@ -527,7 +573,9 @@ private fun ContactRow(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
-    trailing: (@Composable () -> Unit)?
+    trailing: (@Composable () -> Unit)?,
+    photoFile: TdApi.File? = null,
+    chatIdForBg: Long = 0L
 ) {
     Row(
         modifier = Modifier
@@ -536,20 +584,20 @@ private fun ContactRow(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                title.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontStyle = FontStyle.Italic
-            )
-        }
+        // Real profile photo via the shared Avatar component — falls
+        // back to a coloured circle with the first letter when the
+        // server hasn't sent a photo file (or hasn't been downloaded
+        // yet). Same affordance the chat list rows use, so phone-book
+        // entries that ARE on Telegram now look like contacts rather
+        // than letter placeholders.
+        com.secondream.novagram.ui.components.Avatar(
+            file = photoFile,
+            fallbackText = title,
+            bgColor = if (chatIdForBg != 0L)
+                com.secondream.novagram.ui.screens.avatarBackgroundFor(chatIdForBg)
+            else MaterialTheme.colorScheme.surfaceVariant,
+            size = 48.dp
+        )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(

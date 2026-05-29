@@ -666,7 +666,7 @@ private fun MessageContent(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple,
+                                com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple,
                                 null,
                                 tint = androidx.compose.ui.graphics.Color.White,
                                 modifier = Modifier.size(28.dp)
@@ -1104,7 +1104,7 @@ private fun TapToDownloadPlaceholder(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(
-                androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple,
+                com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(36.dp)

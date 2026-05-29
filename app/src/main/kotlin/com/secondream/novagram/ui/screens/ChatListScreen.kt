@@ -90,10 +90,14 @@ private data class TabSpec(
  * behind a Home digest. The Archiviati tab is appended only when the user
  * enables it in Settings.
  */
-private fun buildTabs(showArchive: Boolean): List<TabSpec> = buildList {
+private fun buildTabs(showArchive: Boolean, hasSecret: Boolean): List<TabSpec> = buildList {
     add(TabSpec(ChatKind.Private, R.string.tab_chats))
     add(TabSpec(ChatKind.Group, R.string.tab_groups))
     add(TabSpec(ChatKind.Channel, R.string.tab_channels))
+    // Secret-chats tab is data-driven: appears only when the user has
+    // at least one secret chat, vanishes again when they delete the
+    // last one. Counts as the 5th tab even if Archiviati is also on.
+    if (hasSecret) add(TabSpec(ChatKind.Secret, R.string.tab_secret))
     if (showArchive) add(TabSpec(null, R.string.tab_archived, isArchive = true))
 }
 
@@ -108,9 +112,15 @@ fun ChatListScreen(
     val scope = rememberCoroutineScope()
     val appearance by com.secondream.novagram.settings.AppSettings.appearance
         .collectAsState(initial = com.secondream.novagram.settings.AppearancePrefs())
-    // Tabs are dynamic now: Chat/Gruppi/Canali, plus Archiviati when the
-    // user turns it on in Settings.
-    val tabs = remember(appearance.showArchivedTab) { buildTabs(appearance.showArchivedTab) }
+    // Tabs are dynamic now: Chat/Gruppi/Canali, plus Segrete when the
+    // user has ≥1 secret chat live in their list, plus Archiviati when
+    // they've turned that toggle on in Settings.
+    val hasSecret = remember(allChats) {
+        allChats.any { it.kind == ChatKind.Secret }
+    }
+    val tabs = remember(appearance.showArchivedTab, hasSecret) {
+        buildTabs(appearance.showArchivedTab, hasSecret)
+    }
 
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var searchOpen by remember { mutableStateOf(false) }
@@ -182,7 +192,7 @@ fun ChatListScreen(
                 is org.drinkless.tdlib.TdApi.ChatTypePrivate -> ChatKind.Private
                 is org.drinkless.tdlib.TdApi.ChatTypeBasicGroup -> ChatKind.Group
                 is org.drinkless.tdlib.TdApi.ChatTypeSupergroup -> if (t.isChannel) ChatKind.Channel else ChatKind.Group
-                is org.drinkless.tdlib.TdApi.ChatTypeSecret -> ChatKind.Private
+                is org.drinkless.tdlib.TdApi.ChatTypeSecret -> ChatKind.Secret
                 else -> ChatKind.Private
             }
             k == spec.kind && chat.id != myUserId  // hide self in user results

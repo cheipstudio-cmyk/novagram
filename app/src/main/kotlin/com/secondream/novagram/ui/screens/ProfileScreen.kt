@@ -220,22 +220,11 @@ fun ProfileScreen(onBack: () -> Unit) {
                         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
                 }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary)
-                        .border(3.dp, MaterialTheme.colorScheme.background, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        com.secondream.novagram.ui.icons.PhosphorIcons.Camera,
-                        contentDescription = stringResource(R.string.profile_change_photo),
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+                // Camera badge removed (was redundant): the whole avatar
+                // box is the click target for the photo picker, and we
+                // already show a "Cambia foto" label right below it. The
+                // little circular icon inside the photo was just visual
+                // noise covering the user's actual avatar.
             }
             Spacer(Modifier.height(10.dp))
             Text(

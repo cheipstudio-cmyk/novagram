@@ -148,14 +148,38 @@ object NotificationHelper {
         } ?: false
         if (muted && !isPersonalPing) return
 
-        val chatTitle = chat?.title?.takeIf { it.isNotBlank() } ?: "Novagram"
+        // Skip ALL notifications for archived chats: the archive folder
+        // is the user's "out of sight, out of mind" pile and should not
+        // ping. The position carries an `order > 0` in ChatListArchive
+        // when the chat is actually living in archive (a 0 means TDLib
+        // still has the row but it's not actively listed).
+        val isArchived = chat?.positions?.any { pos ->
+            pos.list is TdApi.ChatListArchive && pos.order != 0L
+        } == true
+        if (isArchived) return
+
+        // Secret chats get an obfuscated notification — Telegram shows
+        // "New message" with no sender / no body / no preview. We mirror
+        // that: the channel still pings + vibrates, but neither the
+        // title bar nor the expanded text leaks the chat name or the
+        // message content. Tapping still opens the right chat because
+        // we keep the chatId on the openIntent.
+        val isSecretChat = chat?.type is TdApi.ChatTypeSecret
+
+        val chatTitle = if (isSecretChat) "Novagram"
+            else chat?.title?.takeIf { it.isNotBlank() } ?: "Novagram"
         val isChannel = (chat?.type as? TdApi.ChatTypeSupergroup)?.isChannel == true
         val isGroup = chat?.type is TdApi.ChatTypeBasicGroup ||
             (chat?.type as? TdApi.ChatTypeSupergroup)?.isChannel == false
-        val preview = previewOf(message)
+        val preview = if (isSecretChat) "1 nuovo messaggio" else previewOf(message)
 
         // For groups (not channels) prepend the sender name to the preview.
-        val content = if (isGroup && !isChannel) {
+        // Secret chats deliberately skip this — the preview is already the
+        // obfuscated "1 nuovo messaggio" and we don't want to leak even
+        // the sender name into the lockscreen.
+        val content = if (isSecretChat) {
+            preview
+        } else if (isGroup && !isChannel) {
             val sender = TdClient.resolveSenderName(message)
             if (sender.isNotBlank()) "$sender: $preview" else preview
         } else {
