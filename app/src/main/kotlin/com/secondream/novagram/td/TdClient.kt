@@ -377,7 +377,16 @@ object TdClient {
             useFileDatabase = true
             useChatInfoDatabase = true
             useMessageDatabase = true
-            useSecretChats = false
+            // Secret chats MUST be enabled here for CreateNewSecretChat
+            // and SecretChat-typed messaging to work end-to-end. With
+            // this flag false (the previous setting) TDLib silently
+            // accepts the create call but leaves the session in a
+            // half-initialised state — the chat appears in the list
+            // but tapping it crashes, and deleting it leaves an
+            // un-finalisable record in the local db that breaks every
+            // subsequent cold start. Turning the flag on lets TDLib
+            // own the encryption handshake and lifecycle correctly.
+            useSecretChats = true
             apiId = cfg.apiId
             apiHash = cfg.apiHash
             systemLanguageCode = java.util.Locale.getDefault().language.ifBlank { "en" }

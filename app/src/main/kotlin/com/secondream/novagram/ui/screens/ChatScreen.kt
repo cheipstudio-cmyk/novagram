@@ -758,6 +758,14 @@ fun ChatScreen(
     // a pinned message older than the loaded window did nothing.
     val jumpToMessage: (Long) -> Unit = { targetId ->
         scope.launch {
+            // Remember whether the target had to be fetched: if it's
+            // already in the loaded window we can ANIMATE the scroll
+            // (which is what the user expects when cycling through
+            // search hits — they want to SEE the chat moving), and
+            // only fall back to the instant snap when we had to pull
+            // history mid-flight, where animating would mean animating
+            // *through* a list whose size has just doubled.
+            val wasAlreadyLoaded = messages.indexOfFirst { it.id == targetId } >= 0
             var idx = messages.indexOfFirst { it.id == targetId }
             // The previous guard of 8×50=400 messages was insufficient: in
             // long chats search hits older than that simply silently
@@ -790,17 +798,24 @@ fun ChatScreen(
                 idx = messages.indexOfFirst { it.id == targetId }
             }
             if (idx >= 0) {
-                // Two-step jump (Telegram-style): SNAP to the target instantly
-                // (no animation) so the user doesn't see jitter from the
-                // history-loading addAlls + a sudden scroll on top of that,
-                // then pulse the target bubble briefly so it's obvious which
-                // message we landed on. animateScrollToItem here would
-                // animate from whatever transient position the list is in
-                // mid-load, which is the "scatto bruttissimo" the user
-                // reported.
                 val viewportH = listState.layoutInfo.viewportSize.height
                 val topOffset = if (viewportH > 0) (viewportH * 6) / 10 else 800
-                runCatching { listState.scrollToItem(idx, topOffset) }
+                if (wasAlreadyLoaded) {
+                    // No pagination happened, list size is stable.
+                    // Animate so the user perceives the scroll motion —
+                    // critical for the in-chat search arrows where
+                    // tapping next/prev needs to feel like the chat is
+                    // moving from one hit to the next, otherwise the
+                    // button looks dead.
+                    runCatching { listState.animateScrollToItem(idx, topOffset) }
+                } else {
+                    // We just paginated history — list grew by 25-50
+                    // items mid-flight. Animating would scroll
+                    // *through* the freshly inserted items which
+                    // produces jitter ("scatto bruttissimo"). Snap
+                    // instantly to the right index instead.
+                    runCatching { listState.scrollToItem(idx, topOffset) }
+                }
                 flashMessageId = targetId
                 // Clear the flash a beat later so the highlight fades out
                 // and the bubble settles back to its normal colour.
@@ -867,6 +882,11 @@ fun ChatScreen(
     // bounces the user out to a browser.
     val openTelegramLink: (android.net.Uri) -> Unit = { uri ->
         scope.launch {
+            // Flip the resolving flag so the overlay spinner draws.
+            // Wrapped in try/finally so even if TDLib throws (network
+            // hiccup, blocked invite) the spinner doesn't get stuck.
+            linkResolving = true
+            try {
             val scheme = uri.scheme.orEmpty()
             val host = uri.host.orEmpty()
             var username: String? = null
@@ -936,12 +956,23 @@ fun ChatScreen(
                     android.widget.Toast.LENGTH_SHORT
                 ).show()
             }
+            } finally {
+                linkResolving = false
+            }
         }
     }
     var menuOpen by remember { mutableStateOf(false) }
     // Controls visibility of the self-destruct timer chooser dialog.
     // Set true by the menu item; the dialog itself clears it.
     var ttlDialogOpen by remember { mutableStateOf(false) }
+    // True while openTelegramLink is in flight resolving a username /
+    // invite via TDLib. First-time resolutions can take 1-3 seconds
+    // (TDLib has to round-trip through the Telegram servers and then
+    // wait for a complete chat record to be emitted) and without
+    // visible feedback the tap looked broken. Renders a centered spinner
+    // overlay while true; cleared in a finally{} so an exception in
+    // the resolution doesn't leave the spinner stuck.
+    var linkResolving by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var leaveOpen by remember { mutableStateOf(false) }
@@ -1098,18 +1129,25 @@ fun ChatScreen(
                                 }
                             }
                         )
-                        // Self-destruct timer. Works for any chat type but is
-                        // most useful in secret chats — TDLib still applies
-                        // the setting to regular chats (server-side message
-                        // auto-delete). Tap opens a small dialog with the
-                        // standard Telegram presets.
-                        androidx.compose.material3.DropdownMenuItem(
-                            text = { Text(stringResource(R.string.chat_set_ttl)) },
-                            onClick = {
-                                menuOpen = false
-                                ttlDialogOpen = true
-                            }
-                        )
+                        // Self-destruct timer. The setting technically
+                        // works on any chat type but exposing it on a
+                        // normal chat is misleading — the official
+                        // Telegram clients only expose it on secret
+                        // chats, and that's what users expect. So we
+                        // gate the menu item by checking the cached
+                        // chat type.
+                        val isSecretChat = remember(chatId) {
+                            TdClient.getCachedChat(chatId)?.type is TdApi.ChatTypeSecret
+                        }
+                        if (isSecretChat) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_set_ttl)) },
+                                onClick = {
+                                    menuOpen = false
+                                    ttlDialogOpen = true
+                                }
+                            )
+                        }
                         // For groups/channels show "Leave" instead — you
                         // can't delete a chat you don't own. Private chats
                         // keep "Delete chat" which wipes history + removes
@@ -1224,13 +1262,15 @@ fun ChatScreen(
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surface)
                         .clickable {
-                            // Open the full pinned-messages list. Same UX as
-                            // Telegram: a single tap on the banner reveals
-                            // every pinned message in the chat so the user
-                            // can pick which one to jump to. Scrolling
-                            // directly to the topmost pinned still happens
-                            // by long-pressing the pin icon below.
-                            pinnedSheetOpen = true
+                            // Single tap on the banner jumps to the
+                            // pinned message — matches the stock
+                            // Telegram client UX. Previously this
+                            // opened the full pinned-list sheet which
+                            // felt redundant (we already show the
+                            // pinned text below — tapping it should
+                            // take you to it). The list sheet is now
+                            // reachable from the right-side icon.
+                            jumpToMessage(pin.id)
                         }
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -1261,7 +1301,19 @@ fun ChatScreen(
                         com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .clickable {
+                                // The pin icon on the right is now the
+                                // entry point to the full pinned-list
+                                // sheet — separates "show me THIS pin"
+                                // (banner body tap) from "show me ALL
+                                // pins" (icon tap), which is how the
+                                // stock Telegram client splits it too.
+                                pinnedSheetOpen = true
+                            }
+                            .padding(5.dp)
                     )
                 }
                 androidx.compose.material3.HorizontalDivider(
@@ -2066,6 +2118,31 @@ fun ChatScreen(
     // SetChatMessageAutoDeleteTime and dismisses; works for any chat
     // type (the call is a no-op on chats where TDLib doesn't allow it,
     // wrapped in runCatching).
+    // Telegram-link resolution overlay. While we're hitting TDLib to
+    // look up a username, invite hash, or chat id behind a t.me URL,
+    // we draw a translucent black scrim over the chat with a spinner
+    // in the middle. Eats touches so the user can't accidentally fire
+    // more taps that queue up additional resolutions. The first resolve
+    // for any given username is the slow one (TDLib has to fetch the
+    // chat record from the network); subsequent taps on the same link
+    // are near-instant because TDLib caches the lookup.
+    if (linkResolving) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.35f))
+                .pointerInput(Unit) {
+                    awaitPointerEventScope { while (true) awaitPointerEvent() }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.material3.CircularProgressIndicator(
+                color = MaterialTheme.colorScheme.primary,
+                strokeWidth = 3.dp
+            )
+        }
+    }
+
     if (ttlDialogOpen) {
         val ttlOptions = listOf(
             0 to stringResource(R.string.ttl_off),

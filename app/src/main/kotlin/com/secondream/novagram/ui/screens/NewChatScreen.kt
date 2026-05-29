@@ -291,8 +291,29 @@ fun NewChatScreen(
                 TextButton(onClick = {
                     pendingChatUserId = null
                     scope.launch {
-                        val chat = runCatching { TdClient.createNewSecretChat(pendingUid) }.getOrNull()
-                        if (chat != null) onOpenChat(chat.id)
+                        // Creating a secret chat is a multi-step
+                        // handshake on TDLib's side: it allocates the
+                        // SecretChat session, exchanges keys, and only
+                        // then emits the UpdateNewChat row for the
+                        // local list. If we navigate to the chat the
+                        // instant CreateNewSecretChat returns, the
+                        // chat row may not yet be in the cache and
+                        // ChatScreen reads will return nulls. Give
+                        // TDLib a beat to settle the row before the
+                        // navigation fires.
+                        val chat = runCatching {
+                            TdClient.createNewSecretChat(pendingUid)
+                        }.onFailure {
+                            android.widget.Toast.makeText(
+                                context,
+                                "Impossibile creare la chat segreta",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }.getOrNull()
+                        if (chat != null) {
+                            kotlinx.coroutines.delay(400)
+                            onOpenChat(chat.id)
+                        }
                     }
                 }) { Text(stringResource(R.string.new_chat_type_secret)) }
             }
