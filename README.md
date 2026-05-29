@@ -1,4 +1,4 @@
-# Turbogram
+# Novagram 
 
 Client Android leggero per Telegram, basato su MTProto via TDLib. Solo Android, solo arm64. Costruito su misura per essere veloce, sobrio e offrire il minimo indispensabile: lista chat, messaggi, invio testo, foto, file e note vocali, gruppi e canali, notifiche locali.
 
@@ -8,7 +8,7 @@ Estetica "Editorial Dark": fondo carboncino profondo, testo crema caldo, accento
 
 ---
 
-## Cosa fa Turbogram
+## Cosa fa Novagram
 
 Chat private, gruppi (basic e supergroup), canali. Invio e ricezione di testo, foto (via system picker, niente permessi storage extra), file generici, note vocali (OGG/Opus 48 kHz mono, formato nativo Telegram, niente transcoding).
 
