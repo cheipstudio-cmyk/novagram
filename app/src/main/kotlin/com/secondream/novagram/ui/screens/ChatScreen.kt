@@ -566,12 +566,21 @@ fun ChatScreen(
                     messages.indexOfFirst { it.id == tgt.id }
                 } ?: -1
                 if (idx >= 0) {
-                    // Land with the first-unread message ~near the top of
-                    // the viewport so the user reads downward into the
-                    // newer content (same affordance Telegram uses).
+                    // Position the first-unread message at (or just
+                    // below) the TOP edge of the viewport, so the
+                    // user reads downward into the unread stream and
+                    // nothing already-read peeks in above. In a
+                    // reverseLayout list the scrollOffset is measured
+                    // from the layout-start (the visual bottom), so a
+                    // large offset close to the viewport height
+                    // shifts the target up toward the visual top.
+                    // We leave a tiny gap (~12% viewport) so a future
+                    // "X messaggi non letti" divider has room to
+                    // render above the first unread bubble.
                     val viewportH = listState.layoutInfo.viewportSize.height
-                    val topOffset = if (viewportH > 0) (viewportH * 7) / 10 else 1000
-                    runCatching { listState.scrollToItem(idx, topOffset) }
+                    val nearTopOffset = if (viewportH > 0)
+                        (viewportH * 88) / 100 else 1400
+                    runCatching { listState.scrollToItem(idx, nearTopOffset) }
                     unreadModeActive = true
                 }
                 // Already-read incoming messages we DID load: those can be
@@ -762,15 +771,18 @@ fun ChatScreen(
                 if (prev != newFirstId) {
                     val first = messages.firstOrNull() ?: return@collect
                     if (first.isOutgoing || listState.firstVisibleItemIndex <= 2) {
-                        // Instant snap rather than animateScrollToItem.
-                        // The new bubble already animates in via
-                        // Modifier.animateItem(); a simultaneous viewport
-                        // animation fought with it and produced the
-                        // full-chat "flash" the user saw. A snap of one
-                        // bubble's height is invisible, so the user only
-                        // perceives the bubble sliding up from the
-                        // bottom — same effect as the official client.
-                        runCatching { listState.scrollToItem(0) }
+                        // Animate the viewport down by one bubble's worth
+                        // when a new message lands and the user is
+                        // already anchored at (or very near) the
+                        // bottom. animateScrollToItem rides the same
+                        // spring rhythm as Modifier.animateItem so the
+                        // bubble entry and the viewport shift land in
+                        // sync — that's what makes new messages feel
+                        // like they FLOW in rather than appearing
+                        // through a "flash". A fixed-duration animate
+                        // would fight the placement spring; this
+                        // shares clock with it.
+                        runCatching { listState.animateScrollToItem(0) }
                     }
                 }
             }
@@ -1415,16 +1427,22 @@ fun ChatScreen(
                             // in from alpha 0 over 220ms, which reads as a
                             // flash when a new message lands or when the
                             // list paginates older history mid-scroll. We
-                            // nuke the fade specs and keep only the spring
-                            // placement animation, so positions slide
-                            // smoothly into place but bubbles never wash
-                            // through a translucent ghost state.
+                            // nuke the fade specs entirely AND drop the
+                            // bouncy ratio in favour of critically-damped
+                            // (NoBouncy) so the bubble slides into place
+                            // without overshoot — the overshoot was the
+                            // remaining "flash" the user kept seeing after
+                            // we'd already removed the fade. StiffnessMedium
+                            // (not MediumLow) tightens the timing so the
+                            // animation completes in ~250ms instead of
+                            // ~400, matching the perceptual rhythm of the
+                            // official client.
                             modifier = Modifier.animateItem(
                                 fadeInSpec = null,
                                 fadeOutSpec = null,
                                 placementSpec = androidx.compose.animation.core.spring(
-                                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
-                                    stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                                    stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
                                 )
                             )
                         ) {
