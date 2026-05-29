@@ -31,7 +31,7 @@ enum class BubbleColor { Default, Amber, Blue, Green, Violet, Rose }
  * else is a BCP-47 tag we pass to AppCompatDelegate.setApplicationLocales.
  */
 data class AppearancePrefs(
-    val themeMode: ThemeMode = ThemeMode.Dark,
+    val themeMode: ThemeMode = ThemeMode.System,
     val accentColor: AccentColor = AccentColor.Amber,
     val languageTag: String = "system",
     val myBubbleColor: BubbleColor = BubbleColor.Default,
@@ -154,7 +154,7 @@ object AppSettings {
     val appearance: Flow<AppearancePrefs>
         get() = appContext.dataStore.data.map { prefs ->
             AppearancePrefs(
-                themeMode = parseEnumOrNull<ThemeMode>(prefs[THEME_MODE]) ?: ThemeMode.Dark,
+                themeMode = parseEnumOrNull<ThemeMode>(prefs[THEME_MODE]) ?: ThemeMode.System,
                 accentColor = parseEnumOrNull<AccentColor>(prefs[ACCENT_COLOR]) ?: AccentColor.Amber,
                 languageTag = prefs[LANGUAGE_TAG] ?: "system",
                 myBubbleColor = parseEnumOrNull<BubbleColor>(prefs[MY_BUBBLE]) ?: BubbleColor.Default,

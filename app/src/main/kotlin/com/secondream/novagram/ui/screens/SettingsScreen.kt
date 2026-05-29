@@ -1359,37 +1359,30 @@ private fun ThemeBuilderDialog(
     var section by remember { mutableStateOf(0) }
     val defaults = listOf(
         0xFFD9A85C.toInt(), // accent
-        0xFF2A4F7A.toInt(), // my bubble
-        0xFF374151.toInt(), // others bubble
+        0xFF2A4F7A.toInt(), // my bubble (legacy, not editable)
+        0xFF374151.toInt(), // others bubble (legacy, not editable)
         0xFF0F1115.toInt(), // bg
-        0xFF1A1D24.toInt()  // input bar
+        0xFF1A1D24.toInt()  // input bar (legacy, derived from bg)
     )
-    // 3-slot color list. The bubble fields stay in SavedTheme for
-    // backward compatibility with old saved themes, but the builder no
-    // longer exposes them — bubbles derive from theme + accent.
-    // Indices: 0 = accent, 1 = bg, 2 = input bar.
+    // 2-slot color list. The bubble + input-bar fields stay in
+    // SavedTheme for backward compatibility with older saved JSON,
+    // but the builder no longer exposes them — bubbles derive from
+    // theme + accent, and the input bar now always paints with the
+    // background colour (per user request: one less knob, surfaces
+    // stay coherent).
+    // Indices: 0 = accent, 1 = bg.
     val initials = listOf(
         initialTheme?.accentArgb ?: defaults[0],
-        initialTheme?.bgArgb ?: defaults[3],
-        initialTheme?.inputBarArgb ?: defaults[4]
+        initialTheme?.bgArgb ?: defaults[3]
     )
     val colors = remember {
         mutableStateListOf<Int>().apply { initials.forEach { add(it) } }
     }
     var name by remember { mutableStateOf(initialTheme?.name ?: "") }
-    // Light vs dark foundation for the theme. Declared at builder scope (not
-    // inside the dialog body) so the confirmButton can read it when saving.
-    var baseLight by remember {
-        mutableStateOf(
-            initialTheme?.isLight
-                ?: (initialTheme?.let { Color(it.bgArgb).luminance() > 0.5f } ?: false)
-        )
-    }
 
     val sectionTitles = listOf(
         stringResource(R.string.theme_section_accent),
-        stringResource(R.string.theme_section_bg),
-        stringResource(R.string.theme_section_input_bar)
+        stringResource(R.string.theme_section_bg)
     )
 
     AlertDialog(
@@ -1404,29 +1397,6 @@ private fun ThemeBuilderDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.height(12.dp))
-
-                // Base mode: whether the theme is built on a light or dark
-                // foundation. Saved into the theme so applying it flips the
-                // app's themeMode and surfaces match.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val applyBase: (light: Boolean, bg: Int, input: Int) -> Unit = { light, bg, input ->
-                        baseLight = light
-                        colors[1] = bg      // background
-                        colors[2] = input   // input bar
-                    }
-                    androidx.compose.material3.OutlinedButton(
-                        onClick = { applyBase(true, 0xFFFBF8F2.toInt(), 0xFFFFFFFF.toInt()) },
-                        modifier = Modifier.weight(1f)
-                    ) { Text(stringResource(R.string.settings_theme_light)) }
-                    androidx.compose.material3.OutlinedButton(
-                        onClick = { applyBase(false, 0xFF0F1115.toInt(), 0xFF1A1D24.toInt()) },
-                        modifier = Modifier.weight(1f)
-                    ) { Text(stringResource(R.string.settings_theme_dark)) }
-                }
                 Spacer(Modifier.height(12.dp))
 
                 androidx.compose.foundation.layout.FlowRow(
@@ -1475,21 +1445,23 @@ private fun ThemeBuilderDialog(
             androidx.compose.material3.TextButton(
                 onClick = {
                     if (name.isBlank()) return@TextButton
+                    // isLight and inputBarArgb were user-editable knobs;
+                    // now they're derived from the background:
+                    //   - isLight = bg has high luminance → light foundation
+                    //   - inputBarArgb = bgArgb  (keeps surfaces coherent)
+                    // The fields still exist on SavedTheme so old saved
+                    // JSON keeps deserialising; we just write the derived
+                    // values instead of asking the user.
+                    val derivedLight = Color(colors[1]).luminance() > 0.5f
                     val theme = com.secondream.novagram.settings.SavedTheme(
                         id = initialTheme?.id ?: java.util.UUID.randomUUID().toString(),
                         name = name.trim(),
                         accentArgb = colors[0],
-                        // Bubble fields kept on the data class for binary
-                        // compatibility with previously-saved JSON, but no
-                        // longer editable in the builder. We pass 0 (or the
-                        // initial theme's previous value if editing) and
-                        // ignore them at render time — bubbleFillFor falls
-                        // back to derive-from-accent in that case.
                         myBubbleArgb = initialTheme?.myBubbleArgb ?: 0,
                         othersBubbleArgb = initialTheme?.othersBubbleArgb ?: 0,
                         bgArgb = colors[1],
-                        inputBarArgb = colors[2],
-                        isLight = baseLight
+                        inputBarArgb = colors[1],
+                        isLight = derivedLight
                     )
                     onSave(theme)
                 },

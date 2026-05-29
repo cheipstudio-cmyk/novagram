@@ -1984,8 +1984,13 @@ private fun InputBar(
     )
     val cs = MaterialTheme.colorScheme
     val isLight = cs.background.luminance() > 0.5f
-    val inputBg = appearance.customInputBarArgb?.let { androidx.compose.ui.graphics.Color(it) }
-        ?: cs.background
+    // Input bar always paints with the chat background colour now —
+    // the separate `customInputBarArgb` knob was removed from the
+    // theme builder since picking a different colour for just the
+    // strip below the messages made the surface feel disjoint. The
+    // pref still exists for backward compat (old saved themes) but
+    // we ignore it at render time.
+    val inputBg = cs.background
     // Bubble that wraps the text field. On light themes we go pure white
     // with black text — matches Telegram's light skin and what Eugenio
     // explicitly asked for. On dark themes we keep the dark elevated
