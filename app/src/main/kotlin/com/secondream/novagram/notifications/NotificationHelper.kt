@@ -142,10 +142,14 @@ object NotificationHelper {
 
         // Skip muted chats (notification settings come from TDLib), unless
         // this specific message is a personal ping for the user.
-        val muted = notifySettings?.let {
-            // muteFor > 0 means muted for that many seconds; 0 means active.
-            it.muteFor > 0
-        } ?: false
+        //
+        // We use TdClient.isChatMuted() rather than reading muteFor
+        // straight off the chat — that helper handles useDefaultMuteFor
+        // by falling back to the SCOPE notification settings (Private /
+        // Group / Channel). Without that, muting "all groups" from
+        // Telegram settings was silently bypassed here because each
+        // affected chat's per-chat muteFor stays 0 with useDefault=true.
+        val muted = TdClient.isChatMuted(chat)
         if (muted && !isPersonalPing) return
 
         // Skip ALL notifications for archived chats: the archive folder

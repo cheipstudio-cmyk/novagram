@@ -95,6 +95,44 @@ object TdClient {
     private val chatCache = mutableMapOf<Long, TdApi.Chat>()
     private val userCache = mutableMapOf<Long, TdApi.User>()
 
+    // Per-scope mute / notification settings. Telegram bundles every chat
+    // into one of three scopes; muting "all groups" or "all channels"
+    // stores the value here rather than on each chat. Updated by the
+    // UpdateScopeNotificationSettings handler. Used by [isChatMuted] so
+    // NotificationHelper respects scope-level mutes for chats whose
+    // per-chat settings say useDefaultMuteFor=true.
+    @Volatile private var scopePrivate: TdApi.ScopeNotificationSettings? = null
+    @Volatile private var scopeGroup: TdApi.ScopeNotificationSettings? = null
+    @Volatile private var scopeChannel: TdApi.ScopeNotificationSettings? = null
+
+    /**
+     * Resolve the effective mute state for [chat] taking BOTH per-chat
+     * and scope settings into account. Returns true if any notification
+     * for this chat should be suppressed by mute (callers still need to
+     * check personal-ping bypasses on top of this).
+     *
+     * Semantics per TDLib: ChatNotificationSettings.useDefaultMuteFor
+     * means "fall back to my scope" — when true, the chat's own muteFor
+     * is meaningless and we must read from the scope. When false, the
+     * per-chat muteFor is authoritative.
+     */
+    fun isChatMuted(chat: TdApi.Chat?): Boolean {
+        if (chat == null) return false
+        val per = chat.notificationSettings ?: return false
+        if (!per.useDefaultMuteFor) return per.muteFor > 0
+        // Fall back to the right scope for this chat type.
+        val scope = when (chat.type) {
+            is TdApi.ChatTypePrivate, is TdApi.ChatTypeSecret -> scopePrivate
+            is TdApi.ChatTypeBasicGroup -> scopeGroup
+            is TdApi.ChatTypeSupergroup -> {
+                val sg = chat.type as TdApi.ChatTypeSupergroup
+                if (sg.isChannel) scopeChannel else scopeGroup
+            }
+            else -> null
+        }
+        return (scope?.muteFor ?: 0) > 0
+    }
+
     fun init(ctx: Context) {
         appContext = ctx.applicationContext
         Client.setLogMessageHandler(0) { verbosity, message ->
@@ -204,6 +242,26 @@ object TdClient {
                 // the latest draft when it opens.
                 chatCache[obj.chatId]?.draftMessage = obj.draftMessage
                 refreshChats()
+            }
+            is TdApi.UpdateScopeNotificationSettings -> {
+                // Telegram exposes THREE mute scopes: Private chats, basic
+                // groups + supergroups, and channels. A user who mutes "all
+                // groups" from settings sets muteFor on the Group scope,
+                // not on every group's per-chat settings — each affected
+                // chat's ChatNotificationSettings keeps muteFor=0 with
+                // useDefaultMuteFor=true, and the scope holds the actual
+                // value. Without caching these, NotificationHelper reads
+                // chat.notificationSettings.muteFor (=0) and fires heads-up
+                // for chats the user muted at scope level — exactly the
+                // bug Eugenio hit.
+                when (obj.scope) {
+                    is TdApi.NotificationSettingsScopePrivateChats ->
+                        scopePrivate = obj.notificationSettings
+                    is TdApi.NotificationSettingsScopeGroupChats ->
+                        scopeGroup = obj.notificationSettings
+                    is TdApi.NotificationSettingsScopeChannelChats ->
+                        scopeChannel = obj.notificationSettings
+                }
             }
             is TdApi.UpdateUser -> {
                 userCache[obj.user.id] = obj.user
