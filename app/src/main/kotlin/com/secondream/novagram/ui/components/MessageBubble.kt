@@ -93,10 +93,16 @@ fun MessageBubble(
     onOpenTelegramLink: (android.net.Uri) -> Unit = {},
     /**
      * Bumped by the parent each time TDLib pushes a new InteractionInfo
-     * for this message. Reading it here pulls this composable into the
-     * snapshot graph so the bubble recomposes when reactions / views /
-     * forwards change, even though the underlying Java Message is
-     * mutated in place rather than re-emitted.
+     * or new content for this message. This is the PRIMARY recompose
+     * trigger for in-place mutations: TdApi.Message is marked stable
+     * via the compose stability config, so strong-skipping would skip
+     * the bubble body when the Message reference is reused (which is
+     * how UpdateMessageContent / UpdateMessageInteractionInfo deliver
+     * changes — mutate then re-assign same ref). Bumping this Int on
+     * every such mutation forces strong-skipping to recompose because
+     * the param value changed. If you add a new mutation path on
+     * TdApi.Message, you MUST bump interactionRevisions[id] alongside
+     * or the bubble will stall on stale data.
      */
     interactionRevision: Int = 0,
     /**

@@ -23,8 +23,8 @@ android {
         applicationId = "com.secondream.novagram"
         minSdk = 26
         targetSdk = 35
-        versionCode = 93
-        versionName = "0.10.30"
+        versionCode = 95
+        versionName = "0.10.32"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -88,6 +88,16 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    // Tell the Compose compiler to treat TdApi.Message as stable for
+    // strong-skipping. Safe because every in-place mutation site on a
+    // Message ALSO bumps interactionRevisions[id], which we pass into
+    // MessageBubble as interactionRevision: Int — that Int change
+    // triggers recompose even when the Message reference is identical.
+    // See app/compose_stability_config.conf for the full contract.
+    composeCompiler {
+        stabilityConfigurationFile =
+            rootProject.layout.projectDirectory.file("app/compose_stability_config.conf")
     }
     packaging {
         resources.excludes += setOf(

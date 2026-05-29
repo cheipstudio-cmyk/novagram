@@ -712,20 +712,19 @@ fun ChatScreen(
                 // Re-assign the same reference back into the
                 // SnapshotStateList slot. This records a write on the
                 // list's snapshot, which the LazyColumn items() iteration
-                // tracker DOES observe (unlike the absent-key reads on
-                // mutableStateMapOf, whose subscription semantics are
-                // inconsistent across Compose versions). Result: the
-                // item content lambda for this msg.id reliably re-runs,
-                // which re-evaluates msg.content fresh and calls
-                // MessageBubble — whose `message` param is unstable, so
-                // Compose recomposes its body and MessageContent picks
-                // up the new bytes. This is the actual mechanism that
-                // makes the bubble update without close+reopen.
+                // tracker observes — the item content lambda for this
+                // msg.id reliably re-runs and reads the latest
+                // interactionRevisions[id] value. We then bump that
+                // counter below, and since MessageBubble takes
+                // interactionRevision as a parameter, strong-skipping
+                // sees the Int change and recomposes the bubble even
+                // though the Message reference is identical (TdApi.Message
+                // is marked stable via the compose stability config).
                 messages[idx] = messages[idx]
-                // Keep the override map + revision counter wired too,
-                // belt-and-suspenders for any downstream reader (e.g.
-                // search highlighting, share previews) that subscribes
-                // to either path.
+                // Override map: alternate read path for downstream
+                // components like search highlighting / share previews
+                // that subscribe to it directly. The revision bump is
+                // the AUTHORITATIVE signal for MessageBubble recompose.
                 messageContentOverrides[upd.messageId] = upd.newContent
                 interactionRevisions[upd.messageId] =
                     (interactionRevisions[upd.messageId] ?: 0) + 1
@@ -3108,6 +3107,7 @@ private fun AttachTile(
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun MessageActionsSheet(
     message: TdApi.Message,

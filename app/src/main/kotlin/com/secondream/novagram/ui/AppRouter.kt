@@ -101,18 +101,18 @@ fun AppRouter(
         }
     }
 
-    // Push-style transitions, now spring-driven. The incoming screen slides
-    // in from the right while the outgoing one shifts slightly left (parallax)
-    // and fades; pop mirrors it. The horizontal motion uses a physics spring
-    // (StiffnessMediumLow, dampingRatio 0.9 = smooth settle, no perceptible
-    // bounce) instead of a fixed-duration tween. A spring carries velocity, so
-    // rapid back-and-forth navigation feels continuous and "alive" rather than
-    // restarting a canned curve each time — the motion vocabulary Material 3
-    // Expressive standardised on. Fades stay short tweens so the cross-dissolve
-    // reads crisp regardless of the spring's natural duration.
+    // Push-style transitions, spring-driven for that physics feel.
+    // StiffnessMedium (instead of MediumLow we used previously) tightens
+    // the slide to ~280ms perceptual duration — fast enough that
+    // tapping a chat feels INSTANT but still smooth enough that a
+    // dampingRatio of 0.85 (slight settle) reads as "alive". A spring
+    // carries velocity across rapid back-and-forth, so opening five
+    // chats in a row never restarts a canned curve from zero.
+    // Fades shortened too: 120ms in / 100ms out — covers the spring's
+    // motion arc without lingering at low alpha (which feels sluggish).
     val slideSpring = androidx.compose.animation.core.spring<androidx.compose.ui.unit.IntOffset>(
-        dampingRatio = 0.9f,
-        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+        dampingRatio = 0.85f,
+        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
     )
     NavHost(
         navController = nav,
@@ -120,26 +120,26 @@ fun AppRouter(
         enterTransition = {
             androidx.compose.animation.slideInHorizontally(
                 animationSpec = slideSpring,
-                initialOffsetX = { fullWidth -> (fullWidth * 0.35f).toInt() }
-            ) + androidx.compose.animation.fadeIn(tween(180))
+                initialOffsetX = { fullWidth -> (fullWidth * 0.30f).toInt() }
+            ) + androidx.compose.animation.fadeIn(tween(120))
         },
         exitTransition = {
             androidx.compose.animation.slideOutHorizontally(
                 animationSpec = slideSpring,
-                targetOffsetX = { fullWidth -> -(fullWidth * 0.18f).toInt() }
-            ) + androidx.compose.animation.fadeOut(tween(140))
+                targetOffsetX = { fullWidth -> -(fullWidth * 0.15f).toInt() }
+            ) + androidx.compose.animation.fadeOut(tween(100))
         },
         popEnterTransition = {
             androidx.compose.animation.slideInHorizontally(
                 animationSpec = slideSpring,
-                initialOffsetX = { fullWidth -> -(fullWidth * 0.18f).toInt() }
-            ) + androidx.compose.animation.fadeIn(tween(180))
+                initialOffsetX = { fullWidth -> -(fullWidth * 0.15f).toInt() }
+            ) + androidx.compose.animation.fadeIn(tween(120))
         },
         popExitTransition = {
             androidx.compose.animation.slideOutHorizontally(
                 animationSpec = slideSpring,
-                targetOffsetX = { fullWidth -> (fullWidth * 0.35f).toInt() }
-            ) + androidx.compose.animation.fadeOut(tween(140))
+                targetOffsetX = { fullWidth -> (fullWidth * 0.30f).toInt() }
+            ) + androidx.compose.animation.fadeOut(tween(100))
         }
     ) {
         composable(Routes.CONFIG) { ApiConfigScreen() }
