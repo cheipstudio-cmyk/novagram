@@ -31,8 +31,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -178,7 +176,7 @@ fun NewChatScreen(
                     navigationIcon = {
                         IconButton(onClick = onBack) {
                             Icon(
-                                Icons.AutoMirrored.Outlined.ArrowBack,
+                                com.secondream.novagram.ui.icons.PhosphorIcons.CaretLeft,
                                 contentDescription = stringResource(R.string.action_back)
                             )
                         }
@@ -342,7 +340,7 @@ private fun SearchInline(value: String, onValueChange: (String) -> Unit) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
-                Icons.Outlined.Search, null,
+                com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass, null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(18.dp)
             )

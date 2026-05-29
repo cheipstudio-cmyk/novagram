@@ -24,10 +24,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowDownward
-import androidx.compose.material.icons.outlined.ArrowUpward
-import androidx.compose.material.icons.outlined.ExpandLess
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -99,8 +95,8 @@ fun TransferPanel(modifier: Modifier = Modifier) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    if (up > 0 && down == 0) Icons.Outlined.ArrowUpward
-                    else Icons.Outlined.ArrowDownward,
+                    if (up > 0 && down == 0) com.secondream.novagram.ui.icons.PhosphorIcons.ArrowUp
+                    else com.secondream.novagram.ui.icons.PhosphorIcons.ArrowDown,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(16.dp)
@@ -114,7 +110,7 @@ fun TransferPanel(modifier: Modifier = Modifier) {
                 )
                 Spacer(Modifier.width(4.dp))
                 Icon(
-                    if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    if (expanded) com.secondream.novagram.ui.icons.PhosphorIcons.CaretUp else com.secondream.novagram.ui.icons.PhosphorIcons.CaretDown,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(16.dp)
@@ -165,7 +161,7 @@ private fun TransferRow(t: TransferTracker.Transfer) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            if (t.isUpload) Icons.Outlined.ArrowUpward else Icons.Outlined.ArrowDownward,
+            if (t.isUpload) com.secondream.novagram.ui.icons.PhosphorIcons.ArrowUp else com.secondream.novagram.ui.icons.PhosphorIcons.ArrowDown,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(20.dp)

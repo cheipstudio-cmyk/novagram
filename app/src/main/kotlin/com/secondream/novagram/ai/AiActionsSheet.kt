@@ -21,9 +21,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -132,7 +129,7 @@ fun AiActionsSheet(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    Icons.Outlined.AutoAwesome,
+                    com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary
                 )
@@ -330,19 +327,19 @@ private fun ResultBody(
     // Action row: 3 tiles like the message-action grid for consistency.
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         AiResultTile(
-            icon = Icons.Outlined.ContentCopy,
+            icon = com.secondream.novagram.ui.icons.PhosphorIcons.Copy,
             label = stringResource(com.secondream.novagram.R.string.ai_action_copy),
             onClick = onCopy,
             modifier = Modifier.weight(1f)
         )
         AiResultTile(
-            icon = Icons.Outlined.Translate,
+            icon = com.secondream.novagram.ui.icons.PhosphorIcons.Translate,
             label = stringResource(com.secondream.novagram.R.string.ai_action_use_reply),
             onClick = onUseAsReply,
             modifier = Modifier.weight(1f)
         )
         AiResultTile(
-            icon = Icons.Outlined.Send,
+            icon = com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight,
             label = stringResource(com.secondream.novagram.R.string.ai_action_send),
             onClick = onSendDirect,
             modifier = Modifier.weight(1f),
@@ -402,27 +399,27 @@ enum class AiPreset(
     Summarise(
         com.secondream.novagram.R.string.ai_preset_summarise,
         com.secondream.novagram.R.string.ai_preset_summarise_desc,
-        Icons.Outlined.AutoAwesome
+        com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle
     ),
     ReplyFormal(
         com.secondream.novagram.R.string.ai_preset_reply_formal,
         com.secondream.novagram.R.string.ai_preset_reply_formal_desc,
-        Icons.Outlined.Send
+        com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight
     ),
     ReplyCasual(
         com.secondream.novagram.R.string.ai_preset_reply_casual,
         com.secondream.novagram.R.string.ai_preset_reply_casual_desc,
-        Icons.Outlined.Send
+        com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight
     ),
     Translate(
         com.secondream.novagram.R.string.ai_preset_translate,
         com.secondream.novagram.R.string.ai_preset_translate_desc,
-        Icons.Outlined.Translate
+        com.secondream.novagram.ui.icons.PhosphorIcons.Translate
     ),
     Explain(
         com.secondream.novagram.R.string.ai_preset_explain,
         com.secondream.novagram.R.string.ai_preset_explain_desc,
-        Icons.Outlined.AutoAwesome
+        com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle
     )
 }
 

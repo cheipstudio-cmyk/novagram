@@ -7,7 +7,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -150,7 +149,7 @@ private fun ForwardComposer(
     ) {
         IconButton(onClick = onBack) {
             Icon(
-                Icons.AutoMirrored.Outlined.ArrowBack,
+                com.secondream.novagram.ui.icons.PhosphorIcons.CaretLeft,
                 contentDescription = null
             )
         }
@@ -236,7 +235,7 @@ private fun ForwardComposer(
         onClick = { onSend(if (hasCaption) caption else null) },
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = null)
+        Icon(com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight, contentDescription = null)
         Spacer(Modifier.width(8.dp))
         Text(
             if (hasCaption) stringResource(R.string.forward_compose_send_with_caption)

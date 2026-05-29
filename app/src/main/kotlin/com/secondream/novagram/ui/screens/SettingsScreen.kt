@@ -7,10 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,7 +24,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -98,7 +94,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.CaretLeft,
                             contentDescription = stringResource(R.string.action_back)
                         )
                     }
@@ -409,7 +405,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                androidx.compose.material.icons.Icons.Outlined.AutoAwesome,
+                                androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(22.dp)
@@ -764,7 +760,7 @@ private fun AccentSwatch(
         ) {
             if (selected) {
                 Icon(
-                    Icons.Outlined.Check,
+                    com.secondream.novagram.ui.icons.PhosphorIcons.Check,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(20.dp)
@@ -810,7 +806,7 @@ private fun LanguageRow(current: String, onPick: (String) -> Unit) {
                 )
                 if (current == opt.tag) {
                     Icon(
-                        Icons.Outlined.Check,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Check,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp)
@@ -868,7 +864,7 @@ private fun BubbleColorRow(
                 ) {
                     if (current == s.color) {
                         Icon(
-                            Icons.Outlined.Check,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Check,
                             contentDescription = null,
                             tint = if (s.color == BubbleColor.Default)
                                 MaterialTheme.colorScheme.onSurface
@@ -993,7 +989,7 @@ private fun CreditsBlock() {
             horizontalArrangement = Arrangement.Center
         ) {
             Icon(
-                androidx.compose.material.icons.Icons.Outlined.Groups,
+                androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier.size(24.dp)
@@ -1180,7 +1176,7 @@ private fun SavedThemeRow(
         )
         if (isActive) {
             Icon(
-                Icons.Outlined.Check,
+                com.secondream.novagram.ui.icons.PhosphorIcons.Check,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(18.dp)
@@ -1190,7 +1186,7 @@ private fun SavedThemeRow(
         Box {
             androidx.compose.material3.IconButton(onClick = { menuOpen = true }) {
                 Icon(
-                    Icons.Outlined.MoreVert,
+                    com.secondream.novagram.ui.icons.PhosphorIcons.DotsThreeVertical,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1549,7 +1545,7 @@ private fun BaseModeListRow(
         )
         if (selected) {
             Icon(
-                Icons.Outlined.Check,
+                com.secondream.novagram.ui.icons.PhosphorIcons.Check,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(20.dp)

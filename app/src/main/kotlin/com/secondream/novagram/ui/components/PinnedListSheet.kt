@@ -82,7 +82,7 @@ fun PinnedListSheet(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    Icons.Outlined.PushPin,
+                    com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary
                 )

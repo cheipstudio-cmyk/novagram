@@ -33,14 +33,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AccountCircle
-import androidx.compose.material.icons.outlined.Campaign
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.PeopleAlt
-import androidx.compose.material.icons.outlined.NotificationsOff
-import androidx.compose.material.icons.automirrored.outlined.ArrowForward
-import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.HorizontalDivider
@@ -206,7 +198,7 @@ fun ChatListScreen(
                 contentColor = MaterialTheme.colorScheme.onPrimary
             ) {
                 Icon(
-                    Icons.Outlined.Edit,
+                    com.secondream.novagram.ui.icons.PhosphorIcons.Plus,
                     contentDescription = stringResource(R.string.action_new_chat)
                 )
             }
@@ -263,14 +255,14 @@ fun ChatListScreen(
                                 searchQuery = ""
                             }) {
                                 Icon(
-                                    Icons.Outlined.Close,
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.X,
                                     contentDescription = stringResource(R.string.search_close)
                                 )
                             }
                         } else {
                             IconButton(onClick = { searchOpen = true }) {
                                 Icon(
-                                    Icons.Outlined.Search,
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass,
                                     contentDescription = stringResource(R.string.search_action)
                                 )
                             }
@@ -284,7 +276,7 @@ fun ChatListScreen(
                             }
                             IconButton(onClick = onOpenSettings) {
                                 Icon(
-                                    Icons.Outlined.Settings,
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.Gear,
                                     contentDescription = stringResource(R.string.action_settings)
                                 )
                             }
@@ -806,7 +798,7 @@ private fun SearchField(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
-                Icons.Outlined.Search, null,
+                com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass, null,
                 tint = iconTint,
                 modifier = Modifier.size(18.dp)
             )
@@ -947,7 +939,7 @@ private fun ChatRow(
                 when (c.kind) {
                     ChatKind.Group -> {
                         Icon(
-                            Icons.Outlined.PeopleAlt,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree,
                             contentDescription = stringResource(R.string.kind_group),
                             modifier = Modifier.size(14.dp).padding(end = 4.dp),
                             tint = Ink.Muted
@@ -955,7 +947,7 @@ private fun ChatRow(
                     }
                     ChatKind.Channel -> {
                         Icon(
-                            Icons.Outlined.Campaign,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Megaphone,
                             contentDescription = stringResource(R.string.kind_channel),
                             modifier = Modifier.size(14.dp).padding(end = 4.dp),
                             tint = Ink.Muted
@@ -977,7 +969,7 @@ private fun ChatRow(
                 val isMuted = (c.chat.notificationSettings?.muteFor ?: 0) > 0
                 if (isMuted) {
                     Icon(
-                        Icons.Outlined.NotificationsOff,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.BellSlash,
                         contentDescription = stringResource(R.string.action_unmute_chat),
                         modifier = Modifier.size(14.dp).padding(start = 6.dp),
                         tint = Ink.Muted
@@ -1207,7 +1199,7 @@ private fun HomePage(
                 // the screen — having both was just noise). Eugenio asked
                 // for the cleaner version.
                 HomeShortcutTile(
-                    icon = Icons.Outlined.BookmarkBorder,
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.BookmarkSimple,
                     label = stringResource(R.string.home_storage_title),
                     onClick = { if (myUserId != 0L) onChatClick(myUserId) },
                     modifier = Modifier.fillMaxWidth()
@@ -1218,7 +1210,7 @@ private fun HomePage(
                     // still checking) we skip the row entirely so the home
                     // stays compact instead of leaving an empty placeholder.
                     HomeShortcutTile(
-                        icon = Icons.Outlined.Campaign,
+                        icon = com.secondream.novagram.ui.icons.PhosphorIcons.Megaphone,
                         label = stringResource(R.string.home_card_join_title),
                         onClick = {
                             val intent = android.content.Intent(

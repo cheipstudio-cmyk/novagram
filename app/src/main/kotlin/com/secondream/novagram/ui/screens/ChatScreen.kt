@@ -38,38 +38,18 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
-import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.DeleteForever
-import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.KeyboardArrowUp
-import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.automirrored.outlined.Forward
-import androidx.compose.material.icons.outlined.AlternateEmail
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Phone
-import androidx.compose.material.icons.outlined.Gif
-import androidx.compose.material.icons.outlined.Mood
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Reply
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.VolumeOff
-import androidx.compose.material.icons.outlined.PersonRemove
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -534,14 +514,28 @@ fun ChatScreen(
     //   - When the user sends a message (outgoing) → always scroll to bottom.
     //   - When an incoming message arrives → only scroll if the user is
     //     already near the bottom, otherwise we'd yank them out of history.
-    LaunchedEffect(listState) {
+    LaunchedEffect(listState, chatId) {
+        // We track the previously-seen first id locally. snapshotFlow always
+        // emits the current value to a fresh collector, and distinctUntilChanged
+        // does NOT skip that first emission — so naively scrolling on every
+        // emit means re-entering ChatScreen (e.g. popping back from
+        // MediaViewer) replays the auto-scroll-to-bottom check against a
+        // momentarily-empty layoutInfo, sees firstVisibleItemIndex=0, and
+        // yanks the user to the bottom. By gating on prev != null we let
+        // the first emission seed the tracker and only auto-scroll when an
+        // ACTUAL new message arrives.
+        var previousFirstId: Long? = null
         snapshotFlow { messages.firstOrNull()?.id }
-            .distinctUntilChanged()
             .filter { it != null }
-            .collect {
-                val first = messages.firstOrNull() ?: return@collect
-                if (first.isOutgoing || listState.firstVisibleItemIndex <= 2) {
-                    runCatching { listState.animateScrollToItem(0) }
+            .collect { newFirstId ->
+                val prev = previousFirstId
+                previousFirstId = newFirstId
+                if (prev == null) return@collect
+                if (prev != newFirstId) {
+                    val first = messages.firstOrNull() ?: return@collect
+                    if (first.isOutgoing || listState.firstVisibleItemIndex <= 2) {
+                        runCatching { listState.animateScrollToItem(0) }
+                    }
                 }
             }
     }
@@ -562,6 +556,14 @@ fun ChatScreen(
                 loadingMore = false
             }
     }
+
+    // Briefly highlights a single message after the user lands on it via
+    // jumpToMessage (reply tap, pinned tap, in-chat search arrows, deep
+    // link). Set to the targetId right after the instant scroll, cleared
+    // after ~1.2s by a delayed coroutine. Threaded down through
+    // MessageBubble so the matching bubble paints an animated accent
+    // overlay that fades out — Telegram-style "this is the message".
+    var flashMessageId by remember(chatId) { mutableStateOf<Long?>(null) }
 
     // Jump to a message by id, loading older history in bounded batches
     // if it isn't in the in-memory window yet (used by same-chat link
@@ -601,16 +603,24 @@ fun ChatScreen(
                 idx = messages.indexOfFirst { it.id == targetId }
             }
             if (idx >= 0) {
-                // The LazyColumn is reverseLayout=true, so animateScrollToItem
-                // with scrollOffset=0 glues the target to the BOTTOM of the
-                // visible area — under the input bar in practice. Pass a
-                // positive offset to push the target ~60% up the viewport so
-                // it lands clearly above the input, with context messages
-                // visible below it (just like Telegram's own "jump to
-                // referenced message").
+                // Two-step jump (Telegram-style): SNAP to the target instantly
+                // (no animation) so the user doesn't see jitter from the
+                // history-loading addAlls + a sudden scroll on top of that,
+                // then pulse the target bubble briefly so it's obvious which
+                // message we landed on. animateScrollToItem here would
+                // animate from whatever transient position the list is in
+                // mid-load, which is the "scatto bruttissimo" the user
+                // reported.
                 val viewportH = listState.layoutInfo.viewportSize.height
                 val topOffset = if (viewportH > 0) (viewportH * 6) / 10 else 800
-                runCatching { listState.animateScrollToItem(idx, topOffset) }
+                runCatching { listState.scrollToItem(idx, topOffset) }
+                flashMessageId = targetId
+                // Clear the flash a beat later so the highlight fades out
+                // and the bubble settles back to its normal colour.
+                scope.launch {
+                    kotlinx.coroutines.delay(1200)
+                    if (flashMessageId == targetId) flashMessageId = null
+                }
             }
         }
     }
@@ -821,7 +831,7 @@ fun ChatScreen(
                                 )
                                 if (isMuted) {
                                     Icon(
-                                        Icons.Outlined.NotificationsOff,
+                                        com.secondream.novagram.ui.icons.PhosphorIcons.BellSlash,
                                         contentDescription = null,
                                         modifier = Modifier
                                             .size(14.dp)
@@ -835,15 +845,15 @@ fun ChatScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, null)
+                        Icon(com.secondream.novagram.ui.icons.PhosphorIcons.CaretLeft, null)
                     }
                 },
                 actions = {
                     IconButton(onClick = { searchOpen = true }) {
-                        Icon(Icons.Outlined.Search, null)
+                        Icon(com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass, null)
                     }
                     IconButton(onClick = { menuOpen = true }) {
-                        Icon(Icons.Outlined.MoreVert, null)
+                        Icon(com.secondream.novagram.ui.icons.PhosphorIcons.DotsThreeVertical, null)
                     }
                     androidx.compose.material3.DropdownMenu(
                         expanded = menuOpen,
@@ -1011,7 +1021,7 @@ fun ChatScreen(
                         )
                     }
                     Icon(
-                        Icons.Outlined.PushPin,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp)
@@ -1055,7 +1065,8 @@ fun ChatScreen(
                                 },
                                 onOpenTelegramLink = openTelegramLink,
                                 interactionRevision = interactionRevisions[msg.id] ?: 0,
-                                highlightQuery = if (searchOpen) searchQuery else null
+                                highlightQuery = if (searchOpen) searchQuery else null,
+                                flashing = (flashMessageId == msg.id)
                             )
                         }
                     }
@@ -1095,7 +1106,7 @@ fun ChatScreen(
                             .elevation(defaultElevation = 3.dp)
                     ) {
                         Icon(
-                            Icons.Outlined.KeyboardArrowDown,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.CaretDown,
                             contentDescription = stringResource(R.string.chat_jump_to_bottom),
                             modifier = Modifier.size(28.dp)
                         )
@@ -1879,21 +1890,21 @@ private fun ChatInfoDialog(chatId: Long, onDismiss: () -> Unit) {
 
             description?.let {
                 ProfileDetailRow(
-                    icon = Icons.Outlined.Info,
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Info,
                     label = stringResource(R.string.chat_info_bio_label),
                     value = it
                 )
             }
             username?.let {
                 ProfileDetailRow(
-                    icon = Icons.Outlined.AlternateEmail,
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.At,
                     label = stringResource(R.string.chat_info_username_label),
                     value = "@$it"
                 )
             }
             phone?.let {
                 ProfileDetailRow(
-                    icon = Icons.Outlined.Phone,
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Phone,
                     label = stringResource(R.string.chat_info_phone_label),
                     value = it
                 )
@@ -2047,7 +2058,7 @@ private fun InputBar(
                     onClick = onAttach,
                     modifier = Modifier.size(48.dp)
                 ) {
-                    Icon(Icons.Outlined.AttachFile, null, tint = iconTint)
+                    Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Paperclip, null, tint = iconTint)
                 }
                 Box(
                     modifier = Modifier
@@ -2108,7 +2119,7 @@ private fun InputBar(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Outlined.Send,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(20.dp)
@@ -2144,7 +2155,7 @@ private fun MicButton(recording: Boolean, onDown: () -> Unit, onUp: (Boolean) ->
         contentAlignment = Alignment.Center
     ) {
         Icon(
-            Icons.Outlined.Mic,
+            com.secondream.novagram.ui.icons.PhosphorIcons.Microphone,
             null,
             tint = if (recording) MaterialTheme.colorScheme.onError
                    else MaterialTheme.colorScheme.onPrimary
@@ -2178,7 +2189,7 @@ private fun ChatSearchBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onClose) {
-            Icon(Icons.Outlined.Close, null)
+            Icon(com.secondream.novagram.ui.icons.PhosphorIcons.X, null)
         }
         androidx.compose.material3.OutlinedTextField(
             value = query,
@@ -2208,10 +2219,10 @@ private fun ChatSearchBar(
             )
         }
         IconButton(onClick = onPrev, enabled = results.isNotEmpty()) {
-            Icon(Icons.Outlined.KeyboardArrowUp, null)
+            Icon(com.secondream.novagram.ui.icons.PhosphorIcons.CaretUp, null)
         }
         IconButton(onClick = onNext, enabled = results.isNotEmpty()) {
-            Icon(Icons.Outlined.KeyboardArrowDown, null)
+            Icon(com.secondream.novagram.ui.icons.PhosphorIcons.CaretDown, null)
         }
     }
 }
@@ -2250,19 +2261,19 @@ private fun AttachSheet(
             ) {
                 AttachTile(
                     label = stringResource(R.string.attach_photo_or_video),
-                    icon = Icons.Outlined.Image,
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Image,
                     onClick = onPickPhoto,
                     modifier = Modifier.weight(1f)
                 )
                 AttachTile(
                     label = stringResource(R.string.attach_document_or_file),
-                    icon = Icons.Outlined.Description,
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.FileText,
                     onClick = onPickDocument,
                     modifier = Modifier.weight(1f)
                 )
                 AttachTile(
                     label = stringResource(R.string.attach_sticker),
-                    icon = Icons.Outlined.Mood,
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Smiley,
                     onClick = onPickSticker,
                     modifier = Modifier.weight(1f)
                 )
@@ -2452,42 +2463,42 @@ private fun MessageActionsSheet(
                 if (onAi != null) {
                     add(ActionTile(
                         stringResource(R.string.action_ai),
-                        androidx.compose.material.icons.Icons.Outlined.AutoAwesome,
+                        androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
                         onAi
                     ))
                 }
-                add(ActionTile(stringResource(R.string.action_reply), Icons.Outlined.Reply, onReply))
+                add(ActionTile(stringResource(R.string.action_reply), com.secondream.novagram.ui.icons.PhosphorIcons.Reply, onReply))
                 if (onTogglePin != null) {
                     add(ActionTile(
                         stringResource(if (isPinned) R.string.action_unpin else R.string.action_pin),
-                        Icons.Outlined.PushPin,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
                         onTogglePin
                     ))
                 }
                 if (onEdit != null && editAllowed) {
-                    add(ActionTile(stringResource(R.string.action_edit), Icons.Outlined.Edit, onEdit))
+                    add(ActionTile(stringResource(R.string.action_edit), com.secondream.novagram.ui.icons.PhosphorIcons.PencilSimple, onEdit))
                 }
                 add(ActionTile(stringResource(R.string.action_forward),
-                    Icons.AutoMirrored.Outlined.Forward, onForward))
+                    com.secondream.novagram.ui.icons.PhosphorIcons.Forward, onForward))
                 if (onCopy != null) {
                     add(ActionTile(stringResource(R.string.action_copy),
-                        Icons.Outlined.ContentCopy, onCopy))
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Copy, onCopy))
                 }
                 if (onSaveToDownloads != null) {
                     add(ActionTile(stringResource(R.string.action_save),
-                        Icons.Outlined.Download, onSaveToDownloads))
+                        com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple, onSaveToDownloads))
                 }
                 add(ActionTile(stringResource(R.string.delete_for_me),
-                    Icons.Outlined.Delete, onDeleteForMe, destructive = true))
+                    com.secondream.novagram.ui.icons.PhosphorIcons.Trash, onDeleteForMe, destructive = true))
                 if (canRevoke) {
                     add(ActionTile(stringResource(R.string.delete_for_everyone),
-                        Icons.Outlined.DeleteForever, onDeleteForEveryone, destructive = true))
+                        com.secondream.novagram.ui.icons.PhosphorIcons.TrashForever, onDeleteForEveryone, destructive = true))
                 }
                 if (showAdminActions) {
                     add(ActionTile(stringResource(R.string.action_mute_author),
-                        Icons.Outlined.VolumeOff, onMuteAuthor))
+                        com.secondream.novagram.ui.icons.PhosphorIcons.SpeakerSlash, onMuteAuthor))
                     add(ActionTile(stringResource(R.string.action_kick_author),
-                        Icons.Outlined.PersonRemove, onKickAuthor, destructive = true))
+                        com.secondream.novagram.ui.icons.PhosphorIcons.UserRemove, onKickAuthor, destructive = true))
                 }
             }
             // Grid: 3 columns. We row-chunk manually instead of using
@@ -2593,7 +2604,7 @@ private fun DeleteOption(
     label: String,
     onClick: () -> Unit,
     destructive: Boolean = false,
-    icon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Outlined.Delete
+    icon: androidx.compose.ui.graphics.vector.ImageVector = com.secondream.novagram.ui.icons.PhosphorIcons.Trash
 ) {
     Row(
         modifier = Modifier
@@ -2706,7 +2717,7 @@ private fun ReplyPreview(message: TdApi.Message, onCancel: () -> Unit) {
         }
         IconButton(onClick = onCancel) {
             Icon(
-                Icons.Outlined.Close,
+                com.secondream.novagram.ui.icons.PhosphorIcons.X,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
@@ -2761,7 +2772,7 @@ private fun EditPreview(message: TdApi.Message, onCancel: () -> Unit) {
         )
         Spacer(Modifier.width(10.dp))
         Icon(
-            Icons.Outlined.Edit,
+            com.secondream.novagram.ui.icons.PhosphorIcons.PencilSimple,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(18.dp)
@@ -2784,7 +2795,7 @@ private fun EditPreview(message: TdApi.Message, onCancel: () -> Unit) {
         }
         IconButton(onClick = onCancel) {
             Icon(
-                Icons.Outlined.Close,
+                com.secondream.novagram.ui.icons.PhosphorIcons.X,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
@@ -3042,14 +3053,14 @@ private fun PendingMediaPreview(media: PendingMediaItem, onCancel: () -> Unit) {
                         modifier = Modifier.fillMaxSize()
                     )
                     Icon(
-                        Icons.Outlined.PlayArrow,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Play,
                         contentDescription = null,
                         tint = androidx.compose.ui.graphics.Color.White,
                         modifier = Modifier.size(28.dp)
                     )
                 }
                 PendingMediaKind.Document -> Icon(
-                    Icons.Outlined.Description,
+                    com.secondream.novagram.ui.icons.PhosphorIcons.FileText,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(28.dp)
@@ -3078,7 +3089,7 @@ private fun PendingMediaPreview(media: PendingMediaItem, onCancel: () -> Unit) {
         }
         IconButton(onClick = onCancel) {
             Icon(
-                Icons.Outlined.Close,
+                com.secondream.novagram.ui.icons.PhosphorIcons.X,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)

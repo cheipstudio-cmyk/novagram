@@ -22,7 +22,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -156,7 +155,7 @@ fun StickerPickerSheet(
                 shape = RoundedCornerShape(20.dp),
                 leadingIcon = {
                     androidx.compose.material3.Icon(
-                        androidx.compose.material.icons.Icons.Outlined.Search,
+                        androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass,
                         contentDescription = null
                     )
                 },
@@ -164,7 +163,7 @@ fun StickerPickerSheet(
                     {
                         androidx.compose.material3.IconButton(onClick = { query = "" }) {
                             androidx.compose.material3.Icon(
-                                androidx.compose.material.icons.Icons.Outlined.Close,
+                                androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.X,
                                 contentDescription = null
                             )
                         }

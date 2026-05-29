@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -165,7 +164,7 @@ fun VoiceNotePlayer(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                if (isPlaying) com.secondream.novagram.ui.icons.PhosphorIcons.Pause else com.secondream.novagram.ui.icons.PhosphorIcons.Play,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier.size(22.dp)

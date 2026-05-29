@@ -38,12 +38,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AudioFile
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -111,7 +106,15 @@ fun MessageBubble(
      * as they cycle through results with the up/down arrows. Null when
      * search is closed.
      */
-    highlightQuery: String? = null
+    highlightQuery: String? = null,
+    /**
+     * True for the brief window after a jumpToMessage (reply tap, pinned
+     * tap, search arrows, deep link) lands on this message. The bubble
+     * paints an accent overlay that fades to transparent over ~1s so the
+     * user can see WHICH message they landed on — replaces the previous
+     * animated scroll which jittered during history-loading.
+     */
+    flashing: Boolean = false
 ) {
     // Read the param so the composable observes it; the value itself isn't
     // used directly anywhere — it's purely a recompose trigger.
@@ -161,9 +164,29 @@ fun MessageBubble(
     val tapScope = androidx.compose.runtime.rememberCoroutineScope()
     val ctx = androidx.compose.ui.platform.LocalContext.current
 
+    // Animated flash overlay for jump-to-message landing. When `flashing`
+    // toggles true the accent paints behind the row at ~32% alpha and
+    // animates back to transparent over ~900ms; the duration is chosen so
+    // the user has time to register WHERE we scrolled them to without the
+    // colour lingering. Easing is Linear here on purpose — a curved decay
+    // looked too "designed", a hard linear fade reads as a quick blink.
+    val flashColorBase = MaterialTheme.colorScheme.primary
+    val flashAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (flashing) 0.32f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(
+            durationMillis = if (flashing) 120 else 900,
+            easing = androidx.compose.animation.core.LinearEasing
+        ),
+        label = "flash-fade"
+    )
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (flashAlpha > 0f) Modifier.background(flashColorBase.copy(alpha = flashAlpha))
+                else Modifier
+            )
             .pointerInput("swipe-${message.id}") {
                 detectHorizontalDragGestures(
                     onDragEnd = {
@@ -239,7 +262,7 @@ fun MessageBubble(
             contentAlignment = Alignment.CenterStart
         ) {
             Icon(
-                Icons.AutoMirrored.Outlined.Reply,
+                com.secondream.novagram.ui.icons.PhosphorIcons.Reply,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary.copy(alpha = revealAlpha),
                 modifier = Modifier.size(22.dp)
@@ -547,7 +570,7 @@ private fun MessageContent(
             val photo = c.photo.sizes.lastOrNull()?.photo
             DownloadingImage(
                 initialFile = photo,
-                placeholderIcon = { Icon(Icons.Outlined.Image, null, tint = Ink.Muted) },
+                placeholderIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Image, null, tint = Ink.Muted) },
                 placeholderLabel = stringResource(R.string.media_photo)
             )
             if (c.caption.text.isNotBlank()) {
@@ -578,7 +601,7 @@ private fun MessageContent(
             Box(contentAlignment = Alignment.Center) {
                 DownloadingImage(
                     initialFile = thumb,
-                    placeholderIcon = { Icon(Icons.Outlined.PlayArrow, null, tint = Ink.Cream) },
+                    placeholderIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Play, null, tint = Ink.Cream) },
                     placeholderLabel = stringResource(R.string.media_video)
                 )
                 // Overlay state-aware progress / play / download icon.
@@ -599,7 +622,7 @@ private fun MessageContent(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                Icons.Outlined.PlayArrow,
+                                com.secondream.novagram.ui.icons.PhosphorIcons.Play,
                                 null,
                                 tint = androidx.compose.ui.graphics.Color.White,
                                 modifier = Modifier.size(32.dp)
@@ -643,7 +666,7 @@ private fun MessageContent(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                androidx.compose.material.icons.Icons.Outlined.Download,
+                                androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple,
                                 null,
                                 tint = androidx.compose.ui.graphics.Color.White,
                                 modifier = Modifier.size(28.dp)
@@ -681,14 +704,14 @@ private fun MessageContent(
             if (isImage) {
                 DownloadingImage(
                     initialFile = c.document.document,
-                    placeholderIcon = { Icon(Icons.Outlined.Image, null, tint = Ink.Muted) },
+                    placeholderIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Image, null, tint = Ink.Muted) },
                     placeholderLabel = c.document.fileName.ifBlank {
                         stringResource(R.string.media_photo)
                     }
                 )
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Description, null, tint = Ink.Amber, modifier = Modifier.size(28.dp))
+                    Icon(com.secondream.novagram.ui.icons.PhosphorIcons.FileText, null, tint = Ink.Amber, modifier = Modifier.size(28.dp))
                     Spacer(Modifier.width(10.dp))
                     Column {
                         Text(
@@ -720,7 +743,7 @@ private fun MessageContent(
         }
         is TdApi.MessageAudio -> {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.AudioFile, null, tint = Ink.Amber, modifier = Modifier.size(28.dp))
+                Icon(com.secondream.novagram.ui.icons.PhosphorIcons.FileAudio, null, tint = Ink.Amber, modifier = Modifier.size(28.dp))
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Text(
@@ -884,7 +907,7 @@ private fun InlineGifPlayer(
             // Thumbnail + tap to play (when auto-download is off).
             DownloadingImage(
                 initialFile = thumbFile,
-                placeholderIcon = { Icon(Icons.Outlined.Image, null, tint = Ink.Muted) },
+                placeholderIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Image, null, tint = Ink.Muted) },
                 placeholderLabel = stringResource(R.string.media_gif)
             )
             Box(
@@ -1081,7 +1104,7 @@ private fun TapToDownloadPlaceholder(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(
-                androidx.compose.material.icons.Icons.Outlined.Download,
+                androidx.compose.material.icons.com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(36.dp)

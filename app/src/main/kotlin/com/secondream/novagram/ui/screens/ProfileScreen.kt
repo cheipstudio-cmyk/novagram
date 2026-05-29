@@ -26,12 +26,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.AlternateEmail
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Phone
-import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -152,7 +148,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.CaretLeft,
                             contentDescription = stringResource(R.string.action_back)
                         )
                     }
@@ -234,7 +230,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        Icons.Outlined.PhotoCamera,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Camera,
                         contentDescription = stringResource(R.string.profile_change_photo),
                         tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(18.dp)
@@ -273,7 +269,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                     value = firstName,
                     onValueChange = { firstName = it },
                     label = { Text(stringResource(R.string.profile_first_name)) },
-                    leadingIcon = { Icon(Icons.Outlined.Person, null) },
+                    leadingIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.User, null) },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     colors = fieldColors,
@@ -284,7 +280,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                     value = lastName,
                     onValueChange = { lastName = it },
                     label = { Text(stringResource(R.string.profile_last_name)) },
-                    leadingIcon = { Icon(Icons.Outlined.Person, null) },
+                    leadingIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.User, null) },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     colors = fieldColors,
@@ -295,7 +291,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                     value = username,
                     onValueChange = { username = it.filter { c -> c.isLetterOrDigit() || c == '_' } },
                     label = { Text(stringResource(R.string.profile_username)) },
-                    leadingIcon = { Icon(Icons.Outlined.AlternateEmail, null) },
+                    leadingIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.At, null) },
                     supportingText = { Text(stringResource(R.string.profile_username_hint)) },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
@@ -307,7 +303,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                     value = bio,
                     onValueChange = { bio = it.take(140) },
                     label = { Text(stringResource(R.string.profile_bio)) },
-                    leadingIcon = { Icon(Icons.Outlined.Info, null) },
+                    leadingIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Info, null) },
                     shape = RoundedCornerShape(14.dp),
                     colors = fieldColors,
                     modifier = Modifier.fillMaxWidth(),
@@ -319,7 +315,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                     value = "+${me?.phoneNumber ?: ""}",
                     onValueChange = {},
                     label = { Text(stringResource(R.string.profile_phone)) },
-                    leadingIcon = { Icon(Icons.Outlined.Phone, null) },
+                    leadingIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Phone, null) },
                     singleLine = true,
                     readOnly = true,
                     enabled = false,

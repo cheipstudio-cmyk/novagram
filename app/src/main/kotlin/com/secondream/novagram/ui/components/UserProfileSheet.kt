@@ -177,7 +177,7 @@ fun UserProfileSheet(
                     enabled = !creatingChat
                 ) {
                     Icon(
-                        Icons.Outlined.Chat,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.ChatCircle,
                         contentDescription = null
                     )
                     Spacer(Modifier.width(8.dp))

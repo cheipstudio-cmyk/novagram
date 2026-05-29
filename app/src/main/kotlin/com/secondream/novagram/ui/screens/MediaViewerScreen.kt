@@ -133,7 +133,7 @@ fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
                 .padding(start = 12.dp, top = 8.dp)
         ) {
             Icon(
-                Icons.Outlined.Close,
+                com.secondream.novagram.ui.icons.PhosphorIcons.X,
                 contentDescription = stringResource(R.string.media_viewer_close),
                 tint = Color.White,
                 modifier = Modifier.size(24.dp)
@@ -212,7 +212,7 @@ private fun VideoViewer(filePath: String, onClose: () -> Unit) {
                 .padding(start = 12.dp, top = 8.dp)
         ) {
             Icon(
-                Icons.Outlined.Close,
+                com.secondream.novagram.ui.icons.PhosphorIcons.X,
                 contentDescription = stringResource(R.string.media_viewer_close),
                 tint = Color.White,
                 modifier = Modifier.size(24.dp)
