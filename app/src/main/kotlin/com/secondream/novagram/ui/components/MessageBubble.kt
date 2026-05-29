@@ -103,7 +103,15 @@ fun MessageBubble(
      * forwards change, even though the underlying Java Message is
      * mutated in place rather than re-emitted.
      */
-    interactionRevision: Int = 0
+    interactionRevision: Int = 0,
+    /**
+     * Query string from the in-chat search bar. When non-null all
+     * case-insensitive substring matches in the message body get a
+     * highlighted background so the user can spot what they searched for
+     * as they cycle through results with the up/down arrows. Null when
+     * search is closed.
+     */
+    highlightQuery: String? = null
 ) {
     // Read the param so the composable observes it; the value itself isn't
     // used directly anywhere — it's purely a recompose trigger.
@@ -433,7 +441,7 @@ fun MessageBubble(
                 )
                 Spacer(Modifier.height(6.dp))
             }
-            MessageContent(message, fill.onBackground, onJumpToMessage, onOpenTelegramLink)
+            MessageContent(message, fill.onBackground, onJumpToMessage, onOpenTelegramLink, highlightQuery)
             // Existing reactions strip. We surface every reaction the
             // message currently carries; tapping toggles your own reaction
             // (add if missing, remove if you've already used it). Updates
@@ -510,16 +518,12 @@ private fun MessageContent(
     message: TdApi.Message,
     onBackground: androidx.compose.ui.graphics.Color,
     onJumpToMessage: (Long) -> Boolean = { false },
-    onOpenTelegramLink: (android.net.Uri) -> Unit = {}
+    onOpenTelegramLink: (android.net.Uri) -> Unit = {},
+    highlightQuery: String? = null
 ) {
     when (val c = message.content) {
         is TdApi.MessageText -> {
             val rawText = c.text.text
-            // Theme-share detection: if the body contains a nova://theme
-            // deeplink, parse it and render a card with an "Applica tema"
-            // button instead of plain text. Falls back to the normal
-            // FormattedTextRendering when parsing fails or the message is
-            // a regular link.
             val themePrefs = remember(rawText) {
                 if (rawText.contains("nova://theme?data=")) {
                     com.secondream.novagram.ui.screens.parseThemeJson(rawText)
@@ -534,7 +538,8 @@ private fun MessageContent(
                     linkColor = MaterialTheme.colorScheme.primary,
                     currentChatId = message.chatId,
                     onJumpToMessage = onJumpToMessage,
-                    onOpenTelegramLink = onOpenTelegramLink
+                    onOpenTelegramLink = onOpenTelegramLink,
+                    highlightQuery = highlightQuery
                 )
             }
         }
@@ -1154,11 +1159,13 @@ private fun FormattedTextRendering(
     linkColor: androidx.compose.ui.graphics.Color,
     currentChatId: Long = 0L,
     onJumpToMessage: (Long) -> Boolean = { false },
-    onOpenTelegramLink: (android.net.Uri) -> Unit = {}
+    onOpenTelegramLink: (android.net.Uri) -> Unit = {},
+    highlightQuery: String? = null
 ) {
     val text = formatted.text
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    val annotated = androidx.compose.runtime.remember(text, formatted.entities) {
+    val highlightBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f)
+    val annotated = androidx.compose.runtime.remember(text, formatted.entities, highlightQuery) {
         androidx.compose.ui.text.buildAnnotatedString {
             append(text)
             val len = text.length
@@ -1209,6 +1216,37 @@ private fun FormattedTextRendering(
                             androidx.compose.ui.text.SpanStyle(color = linkColor),
                             start, end
                         )
+                        // @username mentions are how Telegram users
+                        // *think* of t.me links — they expect tapping
+                        // @claude_codes to open the chat, same as
+                        // tapping t.me/claude_codes. The substring
+                        // strip drops the leading "@" so the URL we
+                        // synthesise resolves cleanly through
+                        // openTelegramLink.
+                        val username = text.substring(start, end).trimStart('@')
+                        if (username.isNotBlank()) {
+                            addStringAnnotation(
+                                "URL",
+                                "https://t.me/$username",
+                                start, end
+                            )
+                        }
+                    }
+                    is TdApi.TextEntityTypeMentionName -> {
+                        // Mention pointing at a user WITHOUT a public
+                        // username (Telegram still renders the display
+                        // name as a tappable mention). The entity
+                        // carries a userId; we encode it in a tg:// URL
+                        // so openTelegramLink can resolve via TDLib.
+                        addStyle(
+                            androidx.compose.ui.text.SpanStyle(color = linkColor),
+                            start, end
+                        )
+                        addStringAnnotation(
+                            "URL",
+                            "tg://user?id=${type.userId}",
+                            start, end
+                        )
                     }
                     is TdApi.TextEntityTypeHashtag -> {
                         addStyle(
@@ -1229,6 +1267,28 @@ private fun FormattedTextRendering(
                     else -> {}
                 }
             }
+            // Search highlight: paint a soft accent background behind
+            // every case-insensitive occurrence of the active search
+            // query. Done as a post-pass so it stacks on top of bold /
+            // italic / link styles without overwriting them. Empty /
+            // null query short-circuits — zero-cost when search is
+            // closed.
+            val q = highlightQuery?.trim().orEmpty()
+            if (q.isNotEmpty() && q.length <= text.length) {
+                val haystack = text.lowercase()
+                val needle = q.lowercase()
+                var from = 0
+                while (true) {
+                    val hit = haystack.indexOf(needle, from)
+                    if (hit < 0) break
+                    val hitEnd = hit + needle.length
+                    addStyle(
+                        androidx.compose.ui.text.SpanStyle(background = highlightBg),
+                        hit, hitEnd
+                    )
+                    from = hitEnd
+                }
+            }
         }
     }
     androidx.compose.foundation.text.ClickableText(
@@ -1238,10 +1298,12 @@ private fun FormattedTextRendering(
             // Try URL, then EMAIL, then PHONE annotation at that offset.
             annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let {
                 runCatching {
-                    val raw = if (it.item.startsWith("http", ignoreCase = true)) it.item else "https://${it.item}"
+                    val raw = if (it.item.startsWith("http", ignoreCase = true) || it.item.startsWith("tg:", ignoreCase = true)) it.item else "https://${it.item}"
                     val uri = android.net.Uri.parse(raw)
                     val host = uri.host?.lowercase().orEmpty()
-                    val isTelegramLink = host == "t.me" || host == "telegram.me" || host == "telegram.dog"
+                    val scheme = uri.scheme?.lowercase().orEmpty()
+                    val isTelegramLink = scheme == "tg" ||
+                        host == "t.me" || host == "telegram.me" || host == "telegram.dog"
 
                     // Same-chat shortcut: if this is a t.me/<chat>/<msgId>
                     // link pointing INTO the current chat, hand the message

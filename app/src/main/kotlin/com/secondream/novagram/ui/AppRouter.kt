@@ -93,33 +93,34 @@ fun AppRouter(
     NavHost(
         navController = nav,
         startDestination = Routes.LOGIN,
-        // Centered scale+fade: each new screen grows in place from 92% to
-        // 100% while fading in, the outgoing one shrinks slightly and
-        // fades out. Feels closer to a modal reveal than to a directional
-        // slide, which matches the "opens at center" feel the user asked
-        // for. Pop reverses the curve symmetrically.
+        // iOS-style horizontal slide with Material 3 easing. The incoming
+        // screen slides in from the right while the outgoing one shifts
+        // slightly left (parallax) and fades out. Pop reverses. Uses the
+        // emphasized easing curve (slow start, fast middle, gentle end)
+        // for a noticeably more "premium" feel than a flat tween — the
+        // standard motion vocabulary in Material 3.
         enterTransition = {
-            androidx.compose.animation.scaleIn(
-                initialScale = 0.92f,
-                animationSpec = tween(durationMs)
+            androidx.compose.animation.slideInHorizontally(
+                animationSpec = tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                initialOffsetX = { fullWidth -> (fullWidth * 0.35f).toInt() }
             ) + androidx.compose.animation.fadeIn(tween(220))
         },
         exitTransition = {
-            androidx.compose.animation.scaleOut(
-                targetScale = 1.04f,
-                animationSpec = tween(durationMs)
+            androidx.compose.animation.slideOutHorizontally(
+                animationSpec = tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                targetOffsetX = { fullWidth -> -(fullWidth * 0.18f).toInt() }
             ) + androidx.compose.animation.fadeOut(tween(180))
         },
         popEnterTransition = {
-            androidx.compose.animation.scaleIn(
-                initialScale = 1.04f,
-                animationSpec = tween(durationMs)
+            androidx.compose.animation.slideInHorizontally(
+                animationSpec = tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                initialOffsetX = { fullWidth -> -(fullWidth * 0.18f).toInt() }
             ) + androidx.compose.animation.fadeIn(tween(220))
         },
         popExitTransition = {
-            androidx.compose.animation.scaleOut(
-                targetScale = 0.92f,
-                animationSpec = tween(durationMs)
+            androidx.compose.animation.slideOutHorizontally(
+                animationSpec = tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                targetOffsetX = { fullWidth -> (fullWidth * 0.35f).toInt() }
             ) + androidx.compose.animation.fadeOut(tween(180))
         }
     ) {

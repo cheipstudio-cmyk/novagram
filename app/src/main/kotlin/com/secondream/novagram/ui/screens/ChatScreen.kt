@@ -674,6 +674,7 @@ fun ChatScreen(
             val host = uri.host.orEmpty()
             var username: String? = null
             var invite: String? = null
+            var directUserId: Long? = null
             // Optional Telegram message id encoded in t.me/<user>/<id>.
             // TDLib message ids are not the raw integer in the URL — they
             // need to be shifted (<<20) to map onto a chat-internal id.
@@ -687,6 +688,9 @@ fun ChatScreen(
                         uri.getQueryParameter("post")?.toLongOrNull()?.let { targetMsg = it shl 20 }
                     }
                     "join" -> uri.getQueryParameter("invite")?.let { invite = "https://t.me/+$it" }
+                    // Synthesised by @mention clicks where the user has no
+                    // public username — we have only the numeric userId.
+                    "user" -> directUserId = uri.getQueryParameter("id")?.toLongOrNull()
                 }
             } else {
                 val segs = uri.pathSegments.orEmpty()
@@ -706,6 +710,11 @@ fun ChatScreen(
                 }
             }
             val resolvedId: Long? = when {
+                directUserId != null -> {
+                    // tg://user?id=N from a nameless @mention → open the
+                    // private chat directly.
+                    runCatching { TdClient.createPrivateChat(directUserId!!).id }.getOrNull()
+                }
                 invite != null -> {
                     val info = runCatching { TdClient.checkChatInviteLink(invite!!) }.getOrNull()
                     val existing = info?.chatId?.takeIf { it != 0L }
@@ -1045,7 +1054,8 @@ fun ChatScreen(
                                     true
                                 },
                                 onOpenTelegramLink = openTelegramLink,
-                                interactionRevision = interactionRevisions[msg.id] ?: 0
+                                interactionRevision = interactionRevisions[msg.id] ?: 0,
+                                highlightQuery = if (searchOpen) searchQuery else null
                             )
                         }
                     }
