@@ -585,6 +585,19 @@ fun ChatScreen(
     val interactionRevisions = remember(chatId) {
         androidx.compose.runtime.mutableStateMapOf<Long, Int>()
     }
+    // Per-message content override map. The flow for edited messages goes
+    // through here instead of mutating Message.content directly on the
+    // TdClient coroutine thread: a snapshot-state write is the only way
+    // to guarantee Compose observes the change AND that the new content
+    // is published to the rendering thread before recomposition reads it.
+    // The items() lambda below applies pending overrides onto the Message
+    // (in-place) during composition on the Main thread, right before
+    // MessageBubble is invoked — so all downstream readers of msg.content
+    // (MessageContent, FormattedTextRendering, etc.) see the fresh value
+    // in the same composition pass.
+    val messageContentOverrides = remember(chatId) {
+        androidx.compose.runtime.mutableStateMapOf<Long, TdApi.MessageContent>()
+    }
     LaunchedEffect(chatId) {
         TdClient.interactionInfoUpdates.collect { upd ->
             if (upd.chatId != chatId) return@collect
@@ -600,15 +613,42 @@ fun ChatScreen(
         }
     }
     // Listen for content updates so edited messages refresh in place.
-    // Same in-place-mutate + bump-revision pattern as interaction info —
-    // the bubble re-reads message.content on recompose, and bumping
-    // interactionRevisions on this id is enough to trigger one.
+    // We route the new content through a SnapshotStateMap (not via direct
+    // JVM field mutation on the IO/main boundary) so Compose's snapshot
+    // system actually observes the change and ensures the write is
+    // published to the recomposition pass. The items() lambda picks the
+    // override up and applies it onto the Message just-in-time before
+    // MessageBubble renders, so the bubble's MessageContent / FormattedText
+    // composition reads the fresh content in the same frame as the update.
     LaunchedEffect(chatId) {
         TdClient.messageContentUpdates.collect { upd ->
             if (upd.chatId != chatId) return@collect
             val idx = messages.indexOfFirst { it.id == upd.messageId }
             if (idx >= 0) {
+                // Mutate the message's content in place (other readers in
+                // the screen like the copy-text resolver at line ~1796 and
+                // the reply-preview at line ~3076 read msg.content
+                // directly, not via the override map — so the field has
+                // to hold the truth too).
                 messages[idx].content = upd.newContent
+                // Re-assign the same reference back into the
+                // SnapshotStateList slot. This records a write on the
+                // list's snapshot, which the LazyColumn items() iteration
+                // tracker DOES observe (unlike the absent-key reads on
+                // mutableStateMapOf, whose subscription semantics are
+                // inconsistent across Compose versions). Result: the
+                // item content lambda for this msg.id reliably re-runs,
+                // which re-evaluates msg.content fresh and calls
+                // MessageBubble — whose `message` param is unstable, so
+                // Compose recomposes its body and MessageContent picks
+                // up the new bytes. This is the actual mechanism that
+                // makes the bubble update without close+reopen.
+                messages[idx] = messages[idx]
+                // Keep the override map + revision counter wired too,
+                // belt-and-suspenders for any downstream reader (e.g.
+                // search highlighting, share previews) that subscribes
+                // to either path.
+                messageContentOverrides[upd.messageId] = upd.newContent
                 interactionRevisions[upd.messageId] =
                     (interactionRevisions[upd.messageId] ?: 0) + 1
             }
@@ -1231,6 +1271,17 @@ fun ChatScreen(
                     contentPadding = PaddingValues(vertical = 8.dp)
                 ) {
                     itemsIndexed(messages, key = { _, m -> m.id }) { _, msg ->
+                        // Apply any pending content override BEFORE rendering.
+                        // The override map is snapshot-state — reading it here
+                        // subscribes this item's scope, so when an edit lands
+                        // (collector above writes to the map) this scope
+                        // invalidates and reruns. The in-place assignment then
+                        // propagates the fresh content to MessageBubble, which
+                        // reads message.content downstream. Guarded by a
+                        // reference check to avoid pointless writes.
+                        messageContentOverrides[msg.id]?.let { fresh ->
+                            if (msg.content !== fresh) msg.content = fresh
+                        }
                         androidx.compose.foundation.layout.Box(
                             modifier = Modifier.animateItem()
                         ) {
@@ -1481,6 +1532,39 @@ fun ChatScreen(
                                 val captured = editing
                                 editTarget = null
                                 input = androidx.compose.ui.text.input.TextFieldValue("")
+                                // OPTIMISTIC UPDATE: write the new content into
+                                // the per-message override map immediately, so
+                                // the bubble redraws on the next frame without
+                                // waiting for TDLib's UpdateMessageContent
+                                // roundtrip (which can be 100-800ms over slow
+                                // links). If the server rejects the edit later
+                                // TDLib will emit a corrective update and the
+                                // bubble will rewind to the original.
+                                if (isTextMsg) {
+                                    val idx = messages.indexOfFirst { it.id == captured.id }
+                                    val newContent = TdApi.MessageText(
+                                        TdApi.FormattedText(text, emptyArray()),
+                                        null,
+                                        null
+                                    )
+                                    if (idx >= 0) {
+                                        // Apply via the same path as the
+                                        // TDLib echo handler so this code
+                                        // and that one stay in lockstep:
+                                        // mutate field + slot reassign +
+                                        // override map + revision bump.
+                                        // The slot reassign is what
+                                        // forces the items() iteration
+                                        // to invalidate (see the
+                                        // UpdateMessageContent collector
+                                        // above for the full rationale).
+                                        messages[idx].content = newContent
+                                        messages[idx] = messages[idx]
+                                    }
+                                    messageContentOverrides[captured.id] = newContent
+                                    interactionRevisions[captured.id] =
+                                        (interactionRevisions[captured.id] ?: 0) + 1
+                                }
                                 scope.launch {
                                     runCatching {
                                         if (isTextMsg) {

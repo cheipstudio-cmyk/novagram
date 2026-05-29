@@ -71,10 +71,10 @@ jobs:
         # not enough. We add 10 GB more on /mnt (which has plenty of disk on
         # GitHub-hosted runners). The two swap files sum, giving ~14 GB swap.
         run: |
-          sudo fallocate -l 10G /mnt/cheipgram-swap
-          sudo chmod 600 /mnt/cheipgram-swap
-          sudo mkswap /mnt/cheipgram-swap
-          sudo swapon /mnt/cheipgram-swap
+          sudo fallocate -l 10G /mnt/novagram-swap
+          sudo chmod 600 /mnt/novagram-swap
+          sudo mkswap /mnt/novagram-swap
+          sudo swapon /mnt/novagram-swap
           free -h
           swapon --show
           echo "Extra swap configured."
@@ -213,14 +213,14 @@ jobs:
           else
             keytool -genkeypair -v \
               -keystore keystore.jks \
-              -alias cheipgram \
+              -alias novagram \
               -keyalg RSA -keysize 2048 -validity 36500 \
               -storepass changeit -keypass changeit \
               -dname "CN=Second Dream, O=Second Dream, C=IT"
             cat > keystore.properties <<EOF
           storeFile=../keystore.jks
           storePassword=changeit
-          keyAlias=cheipgram
+          keyAlias=novagram
           keyPassword=changeit
           EOF
             echo "Using generated ephemeral keystore (set KEYSTORE_BASE64 secret to override)"
@@ -231,29 +231,64 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build release APK
-        run: gradle :app:assembleRelease --no-daemon --stacktrace
+      - name: Build release APK + AAB
+        # assembleRelease produces the standalone APK (for direct
+        # sideload + GitHub Releases distribution); bundleRelease
+        # produces the Android App Bundle for Play Console upload.
+        # Both come out of the same signed build config so the
+        # certificate matches between the two artifacts — important
+        # for Play Console "internal app sharing" continuity.
+        run: gradle :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace
 
       - name: Locate APK
         id: apk
         run: |
           APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n1)
           test -n "$APK"
-          cp "$APK" cheipgram-${GITHUB_REF_NAME}.apk
-          echo "path=cheipgram-${GITHUB_REF_NAME}.apk" >> $GITHUB_OUTPUT
+          cp "$APK" novagram-${GITHUB_REF_NAME}.apk
+          echo "path=novagram-${GITHUB_REF_NAME}.apk" >> $GITHUB_OUTPUT
           ls -lh "$APK"
+
+      - name: Locate AAB
+        id: aab
+        run: |
+          AAB=$(find app/build/outputs/bundle/release -name '*.aab' | head -n1)
+          test -n "$AAB"
+          cp "$AAB" novagram-${GITHUB_REF_NAME}.aab
+          echo "path=novagram-${GITHUB_REF_NAME}.aab" >> $GITHUB_OUTPUT
+          ls -lh "$AAB"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cheipgram-apk
+          name: novagram-apk
           path: ${{ steps.apk.outputs.path }}
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: novagram-aab
+          path: ${{ steps.aab.outputs.path }}
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.apk.outputs.path }}
+          name: Novagram ${{ github.ref_name }}
+          body: |
+            **Novagram ${{ github.ref_name }}** — Anthropic-powered Telegram client built on TDLib.
+
+            ## Files
+            - `novagram-${{ github.ref_name }}.apk` — install/sideload directly on Android
+            - `novagram-${{ github.ref_name }}.aab` — Play Console upload bundle (not user-installable)
+
+            ## Install
+            Download the `.apk` and open it on Android. If you had an older version installed under a different package id, uninstall it first.
+
+            See https://cheipstudio.org for full release notes.
+          files: |
+            ${{ steps.apk.outputs.path }}
+            ${{ steps.aab.outputs.path }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

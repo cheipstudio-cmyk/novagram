@@ -319,7 +319,7 @@
     <string name="new_chat_choose_type_body">Chat normal ou secret ?</string>
     <string name="new_chat_type_normal">Normal</string>
     <string name="new_chat_type_secret">Secret</string>
-    <string name="chat_set_ttl">Minuteur d'autodestruction</string>
+    <string name="chat_set_ttl">Minuteur d\'autodestruction</string>
     <string name="ttl_off">Désactivé</string>
     <string name="ttl_1m">1 minute</string>
     <string name="ttl_1h">1 heure</string>
