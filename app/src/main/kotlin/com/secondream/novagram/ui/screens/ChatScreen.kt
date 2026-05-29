@@ -396,7 +396,14 @@ fun ChatScreen(
             is TdApi.MessageAudio -> c.caption.text
             else -> ""
         }
-        input = existing
+        // input is a TextFieldValue (refactored earlier so mention/slash
+        // pickers can move the caret to end). Build one explicitly with
+        // the cursor placed after the loaded text so the user can keep
+        // typing where the previous content ended.
+        input = androidx.compose.ui.text.input.TextFieldValue(
+            existing,
+            androidx.compose.ui.text.TextRange(existing.length)
+        )
     }
 
     // ── Draft persistence ────────────────────────────────────────────

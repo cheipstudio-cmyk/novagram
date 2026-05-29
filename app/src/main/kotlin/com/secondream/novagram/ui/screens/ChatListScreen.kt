@@ -644,7 +644,13 @@ private fun ChatActionSheet(
                         onClick = onLeaveRequest
                     )
                 }
-                ChatKind.Private -> {
+                ChatKind.Private, ChatKind.Secret -> {
+                    // Secret chats behave like privates here: there is no
+                    // "leave" because they're 1-to-1, and the only
+                    // destructive action is to delete the conversation.
+                    // For secret chats TDLib also closes the encrypted
+                    // session under the hood when the chat is removed,
+                    // which is what we want.
                     ChatActionRow(
                         label = stringResource(R.string.action_delete_chat),
                         destructive = true,
@@ -959,6 +965,17 @@ private fun ChatRow(
                         Icon(
                             com.secondream.novagram.ui.icons.PhosphorIcons.Megaphone,
                             contentDescription = stringResource(R.string.kind_channel),
+                            modifier = Modifier.size(14.dp).padding(end = 4.dp),
+                            tint = Ink.Muted
+                        )
+                    }
+                    ChatKind.Secret -> {
+                        // Lock icon makes the e2e nature of the chat
+                        // visible in the list row, the same way the
+                        // official Telegram client does.
+                        Icon(
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
+                            contentDescription = stringResource(R.string.tab_secret),
                             modifier = Modifier.size(14.dp).padding(end = 4.dp),
                             tint = Ink.Muted
                         )
