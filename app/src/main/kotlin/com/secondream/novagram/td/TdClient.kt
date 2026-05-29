@@ -904,19 +904,6 @@ object TdClient {
         ))
     }
 
-    /**
-     * Fetch a user's current membership status in a chat (admin /
-     * restricted / banned / plain member / etc). The action sheet calls
-     * this on open to figure out whether the admin's mute/ban tiles
-     * should read "Muta / Espelli" or "Smuta / Sblocca", so the toggle
-     * UI mirrors the actual server state.
-     */
-    suspend fun getChatMemberStatus(chatId: Long, userId: Long): TdApi.ChatMemberStatus? {
-        return runCatching {
-            send(TdApi.GetChatMember(chatId, TdApi.MessageSenderUser(userId))).status
-        }.getOrNull()
-    }
-
     // ===== Bot commands =====
 
     /**

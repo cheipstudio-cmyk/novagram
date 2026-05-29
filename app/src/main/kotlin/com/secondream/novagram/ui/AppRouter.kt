@@ -79,9 +79,24 @@ fun AppRouter(
     // Ready so we don't try to navigate while the splash/login flow is still
     // running. After navigation we call onChatOpened to clear the request so
     // a future recomposition (e.g. theme change) doesn't re-open the chat.
+    //
+    // CRITICAL: popUpTo(CHATS, inclusive=false) flattens the stack to
+    // [chats, chatX] every time. Without it, opening 3 different chats
+    // from 3 notifications builds [chats, chatA, chatB, chatC], and the
+    // back button walks the stack one chat at a time instead of always
+    // returning to the chat list (which is what users expect from a
+    // notification tap — "back from notification = home").
+    //
+    // launchSingleTop = true prevents the same chat from being pushed
+    // twice if the user taps the same notification rapidly — the
+    // existing instance is reused so we don't waste a TDLib openChat
+    // pair and so popping out of it never lands on a duplicate.
     LaunchedEffect(pendingChatId, auth) {
         if (pendingChatId != null && pendingChatId != 0L && auth is AuthState.Ready) {
-            nav.navigate(Routes.chat(pendingChatId))
+            nav.navigate(Routes.chat(pendingChatId)) {
+                popUpTo(Routes.CHATS) { inclusive = false }
+                launchSingleTop = true
+            }
             onChatOpened()
         }
     }
@@ -178,6 +193,24 @@ fun AppRouter(
         ) { entry ->
             val id = entry.arguments?.getLong("chatId") ?: 0L
             val msg = entry.arguments?.getLong("msg") ?: 0L
+            // Evict the per-chat message cache when this back-stack
+            // entry is destroyed — i.e. the user really left the chat
+            // (back to the chat list, or popped past it via
+            // popUpTo(CHATS) from a notification tap). Pushing to
+            // MediaViewer / Profile keeps the entry alive in the
+            // stack, so the cache survives that and the scroll
+            // position is restored on pop back. ON_DESTROY only fires
+            // on actual removal, which is exactly the eviction
+            // boundary we want.
+            androidx.compose.runtime.DisposableEffect(entry) {
+                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_DESTROY) {
+                        com.secondream.novagram.ui.screens.ChatMessageCache.evict(id)
+                    }
+                }
+                entry.lifecycle.addObserver(observer)
+                onDispose { entry.lifecycle.removeObserver(observer) }
+            }
             ChatScreen(
                 chatId = id,
                 targetMessageId = msg.takeIf { it != 0L },

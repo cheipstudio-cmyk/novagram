@@ -124,7 +124,7 @@ fun ChatScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
-    val messages = remember { mutableStateListOf<TdApi.Message>() }
+    val messages = remember(chatId) { ChatMessageCache.forChat(chatId) }
     var loading by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
     var noMore by remember { mutableStateOf(false) }
@@ -514,6 +514,19 @@ fun ChatScreen(
     // we keep iterating until that first unread is in the window, capped
     // so we don't try to backfill a thousand-message channel.
     LaunchedEffect(chatId) {
+        // Cache hit: ChatScreen was on this chat before, navigated
+        // away (e.g. pushed to MediaViewer), now popped back. The
+        // SnapshotStateList we got from ChatMessageCache.forChat
+        // still holds our previous window, and the LazyListState's
+        // rememberSaveable will restore the same scroll anchor. Skip
+        // the entire clear/reload/scroll-to-unread dance — running
+        // it again would yank the user to a different position (the
+        // unread count is now zero so we'd snap to the bottom, which
+        // is exactly the "ributtato più in basso" bug from before).
+        if (messages.isNotEmpty()) {
+            loading = false
+            return@LaunchedEffect
+        }
         messages.clear()
         noMore = false
         loading = true
@@ -1041,6 +1054,13 @@ fun ChatScreen(
     var infoOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var leaveOpen by remember { mutableStateOf(false) }
+    // Non-reactive snapshot of the cached chat. Used for header
+    // display reads — photo, type, channel-vs-supergroup — none of
+    // which need to flip mid-screen. The isMuted state below IS
+    // reactive (subscribes to chatUpdates) so muting from the action
+    // sheet flips the bell icon live without losing the rest of this
+    // header snapshot.
+    val cachedChatLive = TdClient.getCachedChat(chatId)
     // Live mute state: subscribes to chatUpdates so toggling mute from
     // the action sheet (or from the chat-list swipe action, or from
     // another device) flips the BellSlash icon in the title immediately
