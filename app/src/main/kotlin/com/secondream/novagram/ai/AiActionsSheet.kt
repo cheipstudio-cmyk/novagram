@@ -333,7 +333,7 @@ private fun ResultBody(
             modifier = Modifier.weight(1f)
         )
         AiResultTile(
-            icon = com.secondream.novagram.ui.icons.PhosphorIcons.Translate,
+            icon = com.secondream.novagram.ui.icons.PhosphorIcons.ArrowDown,
             label = stringResource(com.secondream.novagram.R.string.ai_action_use_reply),
             onClick = onUseAsReply,
             modifier = Modifier.weight(1f)

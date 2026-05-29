@@ -1523,7 +1523,8 @@ private fun ReactionStrip(
     accent: androidx.compose.ui.graphics.Color
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    var showViewers by remember { mutableStateOf(false) }
+    // showViewers state removed in v0.10.34: see the comment at the end
+    // of this composable for why the inline viewers sheet was dropped.
     androidx.compose.foundation.layout.FlowRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -1563,12 +1564,19 @@ private fun ReactionStrip(
                             }
                         },
                         onLongClick = {
-                            // Long-press opens the "who reacted" sheet
-                            // so you can audit the list of users behind
-                            // the chip. Moved here from the single-tap
-                            // gesture because the toggle is the action
-                            // people want 9 times out of 10.
-                            showViewers = true
+                            // No-op. We deliberately don't open a separate
+                            // ReactionViewersSheet from a long-press here:
+                            // the "who reacted with what" list now lives
+                            // INSIDE MessageActionsSheet (long-press the
+                            // message itself), so a parallel surface from
+                            // the chip would be redundant and easy to
+                            // hit by accident while trying to scroll the
+                            // chat. Kept as combinedClickable + empty
+                            // long-press so the tap ripple stays bound
+                            // to the chip surface (a single clickable
+                            // would also work but switching modifiers
+                            // here would re-create the gesture detector
+                            // each composition).
                         }
                     )
                     .padding(horizontal = 8.dp, vertical = 3.dp),
@@ -1587,13 +1595,10 @@ private fun ReactionStrip(
             }
         }
     }
-    if (showViewers) {
-        com.secondream.novagram.ui.components.ReactionViewersSheet(
-            chatId = chatId,
-            messageId = messageId,
-            onDismiss = { showViewers = false }
-        )
-    }
+    // ReactionViewersSheet removed from this strip — the same content
+    // is now surfaced inside MessageActionsSheet at the top, alongside
+    // forward / copy / edit etc., so the user has one entry point
+    // (long-press the message) for all metadata actions.
 }
 
 /**

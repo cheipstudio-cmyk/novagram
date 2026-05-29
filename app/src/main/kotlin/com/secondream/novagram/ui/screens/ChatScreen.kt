@@ -514,17 +514,56 @@ fun ChatScreen(
     // we keep iterating until that first unread is in the window, capped
     // so we don't try to backfill a thousand-message channel.
     LaunchedEffect(chatId) {
-        // Cache hit: ChatScreen was on this chat before, navigated
-        // away (e.g. pushed to MediaViewer), now popped back. The
-        // SnapshotStateList we got from ChatMessageCache.forChat
-        // still holds our previous window, and the LazyListState's
-        // rememberSaveable will restore the same scroll anchor. Skip
-        // the entire clear/reload/scroll-to-unread dance — running
-        // it again would yank the user to a different position (the
-        // unread count is now zero so we'd snap to the bottom, which
-        // is exactly the "ributtato più in basso" bug from before).
+        // Cache hit: ChatScreen was on this chat before — either popped
+        // back from MediaViewer / a sub-screen, or re-entered from the
+        // chat list. Skip the full clear/reload + scroll-to-unread
+        // dance (running it again would yank the user to a different
+        // position because by now unreadCount has hit zero, so we'd
+        // snap to the bottom and lose their scroll anchor).
+        //
+        // BUT we DO need to top up any messages that arrived while
+        // ChatScreen wasn't composed. The TdClient.newMessages flow
+        // has no replay, so any UpdateNewMessage emitted while we were
+        // offscreen is lost to the in-chat collector. Without this
+        // top-up, the user opens a chat with the "unread" badge and
+        // sees stale content with no new bubbles — exactly the
+        // regression Eugenio hit after the cache landed.
+        //
+        // The top-up is cheap: one getChatHistory(fromId=0, limit=30)
+        // returns the latest backwards from the newest. We prepend any
+        // ids strictly newer than our cached head; the LazyListState
+        // anchor stays glued to the existing items since they keep
+        // their relative position, scroll only "ticks down" by the
+        // new-message count which is the same behaviour Telegram has.
         if (messages.isNotEmpty()) {
             loading = false
+            runCatching {
+                val cachedNewestId = messages.firstOrNull()?.id ?: 0L
+                val res = TdClient.getChatHistory(chatId, 0L, 30)
+                val toAdd = res.messages.filter { it.id > cachedNewestId }
+                for (m in toAdd.reversed()) {
+                    if (messages.none { it.id == m.id }) {
+                        messages.add(0, m)
+                    }
+                }
+                if (toAdd.isNotEmpty()) {
+                    runCatching {
+                        TdClient.viewMessages(
+                            chatId,
+                            toAdd.filter { !it.isOutgoing }.map { it.id }.toLongArray()
+                        )
+                    }
+                    // Glide to the newest message so the user actually
+                    // SEES what arrived. Without this they keep their
+                    // last scroll anchor (good for MediaViewer pop
+                    // where nothing new arrived) but the new bubbles
+                    // sit below the viewport invisible — exactly the
+                    // "no new messages when I open the chat" symptom.
+                    // animateScrollToItem rides the same spring as the
+                    // bubble entry so it feels like flow, not a jolt.
+                    runCatching { listState.animateScrollToItem(0) }
+                }
+            }
             return@LaunchedEffect
         }
         messages.clear()
@@ -726,6 +765,27 @@ fun ChatScreen(
                 // that subscribe to it directly. The revision bump is
                 // the AUTHORITATIVE signal for MessageBubble recompose.
                 messageContentOverrides[upd.messageId] = upd.newContent
+                interactionRevisions[upd.messageId] =
+                    (interactionRevisions[upd.messageId] ?: 0) + 1
+            }
+        }
+    }
+    // Edit-metadata sync: TDLib fires UpdateMessageEdited separately from
+    // UpdateMessageContent, carrying editDate (epoch seconds when the
+    // edit happened) and the latest replyMarkup. We mutate both fields
+    // in place and bump the revision counter using the same pattern as
+    // the content collector above. Without this, edits would update the
+    // body but the "modificato" tag — which keys off message.editDate > 0
+    // in MessageBubble — would never appear, and a reader of the chat
+    // would have no visual signal that the message was edited.
+    LaunchedEffect(chatId) {
+        TdClient.messageEdited.collect { upd ->
+            if (upd.chatId != chatId) return@collect
+            val idx = messages.indexOfFirst { it.id == upd.messageId }
+            if (idx >= 0) {
+                messages[idx].editDate = upd.editDate
+                messages[idx].replyMarkup = upd.replyMarkup
+                messages[idx] = messages[idx]
                 interactionRevisions[upd.messageId] =
                     (interactionRevisions[upd.messageId] ?: 0) + 1
             }
@@ -1802,6 +1862,23 @@ fun ChatScreen(
                                         // UpdateMessageContent collector
                                         // above for the full rationale).
                                         messages[idx].content = newContent
+                                        // Stamp editDate immediately so the
+                                        // "modificato" tag renders in the same
+                                        // frame as the new content. TDLib will
+                                        // echo the authoritative editDate via
+                                        // UpdateMessageEdited a few hundred
+                                        // ms later; the collector above will
+                                        // overwrite this value with the
+                                        // server's, which is fine because
+                                        // (a) the tag is binary > 0, not
+                                        // shown timestamp-sensitive, and
+                                        // (b) any small clock skew between
+                                        // device and TDLib doesn't affect
+                                        // rendering. System.currentTimeMillis
+                                        // / 1000 gives epoch seconds matching
+                                        // TDLib's editDate scale.
+                                        messages[idx].editDate =
+                                            (System.currentTimeMillis() / 1000).toInt()
                                         messages[idx] = messages[idx]
                                     }
                                     messageContentOverrides[captured.id] = newContent
@@ -3222,7 +3299,7 @@ private fun MessageActionsSheet(
                 androidx.compose.foundation.layout.FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.padding(bottom = 12.dp)
+                    modifier = Modifier.padding(bottom = 8.dp)
                 ) {
                     for ((emoji, count, chosen) in existingReactions) {
                         Row(
@@ -3249,6 +3326,100 @@ private fun MessageActionsSheet(
                             }
                         }
                     }
+                }
+
+                // Viewers block: for each reaction emoji that has senders
+                // attached (i.e. we know WHO reacted), show a one-line
+                // row with the emoji + horizontal avatar stack of those
+                // users. This replaces the old ReactionViewersSheet which
+                // opened on long-press of a chip — viewers are now always
+                // visible right here in the action sheet, no second tap.
+                //
+                // We fetch viewers on-demand via TDLib's GetMessageAddedReactions
+                // because the embedded `recentSenderIds` only carries the
+                // last 3 reactors. Coroutine scope is tied to the sheet's
+                // composition: if the user dismisses the sheet before
+                // GetMessageAddedReactions completes, the coroutine is
+                // cancelled and we don't leak.
+                val reactionViewers = remember(message.id) {
+                    androidx.compose.runtime.mutableStateMapOf<String, List<TdApi.MessageSender>>()
+                }
+                LaunchedEffect(message.id) {
+                    val reactionsObj = message.interactionInfo?.reactions ?: return@LaunchedEffect
+                    for (r in reactionsObj.reactions) {
+                        val emoji = (r.type as? TdApi.ReactionTypeEmoji)?.emoji ?: continue
+                        val senders = TdClient.getMessageAddedReactions(
+                            message.chatId, message.id, r.type, limit = 12
+                        )
+                        if (senders.isNotEmpty()) reactionViewers[emoji] = senders
+                    }
+                }
+                if (reactionViewers.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        for ((emoji, senders) in reactionViewers) {
+                            if (senders.isEmpty()) continue
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(emoji, style = MaterialTheme.typography.titleMedium)
+                                Spacer(Modifier.width(8.dp))
+                                val shown = senders.take(6)
+                                val remaining = senders.size - shown.size
+                                // Overlapping avatar stack. -6dp horizontal
+                                // offset per index slides successive avatars
+                                // partially under the previous one, mirroring
+                                // the way Telegram packs reactor lists. We
+                                // fetch the user on the fly via getCachedUser
+                                // (synchronous, no IO).
+                                Row {
+                                    shown.forEachIndexed { i, s ->
+                                        val userId = (s as? TdApi.MessageSenderUser)?.userId
+                                        val user = remember(userId) {
+                                            userId?.let { TdClient.getCachedUser(it) }
+                                        }
+                                        val fallback = user?.let {
+                                            listOfNotNull(
+                                                it.firstName.takeIf { n -> n.isNotBlank() },
+                                                it.lastName.takeIf { n -> n.isNotBlank() }
+                                            ).joinToString(" ").ifBlank { "?" }
+                                        } ?: "?"
+                                        Box(
+                                            modifier = Modifier
+                                                .offset(x = (if (i == 0) 0 else -6 * i).dp)
+                                                .size(24.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.surface)
+                                                .padding(1.dp)
+                                        ) {
+                                            com.secondream.novagram.ui.components.Avatar(
+                                                file = user?.profilePhoto?.small,
+                                                fallbackText = fallback,
+                                                size = 22.dp
+                                            )
+                                        }
+                                    }
+                                }
+                                if (remaining > 0) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        "+$remaining",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
                 }
             }
 

@@ -65,6 +65,17 @@ object TdClient {
     val messageContentUpdates = _messageContentUpdates.asSharedFlow()
 
     /**
+     * Emits when TDLib reports a message's editDate / reply markup changed.
+     * Distinct from messageContentUpdates because TDLib emits these on
+     * separate updates: UpdateMessageContent for the body, UpdateMessageEdited
+     * for the metadata. Both need to be applied for the bubble to fully
+     * reflect an edit (content swap + "modificato" tag rendering, which
+     * keys off editDate > 0).
+     */
+    private val _messageEdited = MutableSharedFlow<MessageEditedUpdate>(extraBufferCapacity = 32)
+    val messageEdited = _messageEdited.asSharedFlow()
+
+    /**
      * Emitted when TDLib confirms (or rejects) a message we sent. Carries
      * the original local-only id we put into the list at send time plus
      * the now-authoritative message. ChatScreen uses both to swap the
@@ -269,6 +280,29 @@ object TdClient {
             is TdApi.UpdateMessageContent -> {
                 scope.launch {
                     _messageContentUpdates.emit(MessageContentUpdate(obj.chatId, obj.messageId, obj.newContent))
+                    _chatUpdates.emit(obj.chatId)
+                }
+            }
+            is TdApi.UpdateMessageEdited -> {
+                // TDLib fires this AFTER an edit completes, carrying the
+                // new editDate (and updated replyMarkup if any). Note this
+                // is a DIFFERENT update from UpdateMessageContent — content
+                // changes ride on Content, but the "this message was
+                // edited" metadata only lands here. Without this handler
+                // message.editDate stays at 0 forever, which is why the
+                // "modificato" tag was never appearing under bubbles even
+                // when the content visibly updated.
+                //
+                // We re-emit on the SAME messageContentUpdates flow so
+                // ChatScreen's existing collector picks it up. The
+                // collector ignores the `newContent` of MessageContentUpdate
+                // when it's null; we pass null here to signal "metadata
+                // only — re-fetch the message for editDate and bump the
+                // revision". Cleaner than a separate flow + collector pair
+                // because the downstream behaviour is identical: mutate the
+                // cached Message, bump revision, recompose bubble.
+                scope.launch {
+                    _messageEdited.emit(MessageEditedUpdate(obj.chatId, obj.messageId, obj.editDate, obj.replyMarkup))
                     _chatUpdates.emit(obj.chatId)
                 }
             }
@@ -962,6 +996,24 @@ object TdClient {
         ))
     }
 
+    /**
+     * Fetch the list of users who reacted to a message with a specific
+     * reaction type. Used by MessageActionsSheet to render the avatar
+     * stack next to each reaction chip. limit=12 fits one row of small
+     * avatars on a phone with a "+N" overflow indicator for the rest.
+     * Returns an empty list on any error so the caller can render a
+     * graceful no-viewers state instead of crashing the sheet.
+     */
+    suspend fun getMessageAddedReactions(
+        chatId: Long,
+        messageId: Long,
+        reactionType: TdApi.ReactionType,
+        limit: Int = 12
+    ): List<TdApi.MessageSender> = runCatching {
+        send(TdApi.GetMessageAddedReactions(chatId, messageId, reactionType, "", limit))
+            .reactions.map { it.senderId }
+    }.getOrDefault(emptyList())
+
     // ===== Bot commands =====
 
     /**
@@ -1361,6 +1413,20 @@ data class MessageContentUpdate(
     val chatId: Long,
     val messageId: Long,
     val newContent: TdApi.MessageContent
+)
+
+/**
+ * Metadata side of an edit: editDate (epoch seconds when the message was
+ * last edited; >0 enables the "modificato" tag in MessageBubble) plus
+ * the latest inline keyboard markup if any. Body content travels on
+ * MessageContentUpdate; both can fire for the same edit so the
+ * downstream collector applies them independently.
+ */
+data class MessageEditedUpdate(
+    val chatId: Long,
+    val messageId: Long,
+    val editDate: Int,
+    val replyMarkup: TdApi.ReplyMarkup?
 )
 
 /**

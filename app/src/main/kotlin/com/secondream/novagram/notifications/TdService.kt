@@ -24,7 +24,18 @@ class TdService : Service() {
             startForeground(
                 NotificationHelper.SERVICE_NOTIF_ID,
                 NotificationHelper.buildServiceNotification(),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                // REMOTE_MESSAGING is the foreground service type Android
+                // 14 (API 34) added specifically for messaging clients
+                // that hold an open connection to a chat backend to
+                // deliver incoming messages in real-time. It's the
+                // correct match for what TdService actually does (keep
+                // TDLib's mtproto link alive while the app is
+                // backgrounded so notifications fire instantly), and
+                // crucially the Play Console treats it under the
+                // "Messaging app" foreground-service category — which
+                // is pre-approved without a demo video, unlike the
+                // generic dataSync "Other" bucket we were stuck on.
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING
             )
         } else {
             startForeground(
