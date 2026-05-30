@@ -44,6 +44,7 @@ object Routes {
 @Composable
 fun AppRouter(
     pendingChatId: Long? = null,
+    pendingMsgId: Long? = null,
     onChatOpened: () -> Unit = {}
 ) {
     val nav = rememberNavController()
@@ -91,9 +92,9 @@ fun AppRouter(
     // twice if the user taps the same notification rapidly — the
     // existing instance is reused so we don't waste a TDLib openChat
     // pair and so popping out of it never lands on a duplicate.
-    LaunchedEffect(pendingChatId, auth) {
+    LaunchedEffect(pendingChatId, pendingMsgId, auth) {
         if (pendingChatId != null && pendingChatId != 0L && auth is AuthState.Ready) {
-            nav.navigate(Routes.chat(pendingChatId)) {
+            nav.navigate(Routes.chat(pendingChatId, pendingMsgId)) {
                 popUpTo(Routes.CHATS) { inclusive = false }
                 launchSingleTop = true
             }

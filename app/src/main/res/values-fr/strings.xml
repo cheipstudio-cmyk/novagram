@@ -337,4 +337,8 @@
     <string name="settings_swap_swipe_reply">Inverser le balayage pour répondre</string>
     <string name="settings_swap_swipe_reply_desc">Balayer vers la gauche au lieu de la droite pour répondre</string>
     <string name="action_join_channel">Rejoindre la chaîne</string>
+    <string name="saved_messages">Messages enregistrés</string>
+    <string name="service_notif_title">Novagram</string>
+    <string name="service_notif_body">Un processus en arrière-plan fonctionne pour vous envoyer des notifications en temps réel</string>
+    <string name="notification_self_label">Vous</string>
 </resources>

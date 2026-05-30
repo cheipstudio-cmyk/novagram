@@ -351,4 +351,8 @@
     <string name="settings_swap_swipe_reply">Inverti swipe per rispondere</string>
     <string name="settings_swap_swipe_reply_desc">Scorri a sinistra invece che a destra per rispondere a un messaggio</string>
     <string name="action_join_channel">Unisciti al canale</string>
+    <string name="saved_messages">Messaggi salvati</string>
+    <string name="service_notif_title">Novagram</string>
+    <string name="service_notif_body">È in esecuzione un processo in background per inviarti notifiche in tempo reale</string>
+    <string name="notification_self_label">Tu</string>
 </resources>

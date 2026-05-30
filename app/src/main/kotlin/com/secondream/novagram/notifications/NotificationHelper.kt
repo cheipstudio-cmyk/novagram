@@ -24,6 +24,24 @@ object NotificationHelper {
     const val CHANNEL_SERVICE = "novagram_service"
     const val SERVICE_NOTIF_ID = 9999
     private const val GROUP_KEY_MESSAGES = "novagram_messages_group"
+    private const val MAX_BUNDLED_PER_CHAT = 8
+
+    /**
+     * Per-chat queue of pending MessagingStyle.Message entries — the
+     * data the system shows when the user expands a notification with
+     * MessagingStyle. We accumulate here so consecutive new messages in
+     * the same chat appear stacked (Telegram-style) rather than the
+     * latest one overwriting all previous content. Capped at
+     * [MAX_BUNDLED_PER_CHAT] so a noisy group doesn't unboundedly grow
+     * the in-memory list before dismissForChat clears it.
+     *
+     * Concurrent access is guarded by per-deque synchronized blocks at
+     * the call sites — the outer ConcurrentHashMap handles get/put
+     * races between simultaneous newMessages emissions for different
+     * chats, and the per-deque synchronized handles same-chat races.
+     */
+    private val pendingMessagesByChat =
+        java.util.concurrent.ConcurrentHashMap<Long, ArrayDeque<NotificationCompat.MessagingStyle.Message>>()
 
     private lateinit var appContext: Context
 
@@ -98,8 +116,19 @@ object NotificationHelper {
         )
         return NotificationCompat.Builder(appContext, CHANNEL_SERVICE)
             .setSmallIcon(R.drawable.ic_stat_messenger)
-            .setContentTitle("Nova attivo")
-            .setContentText("In ascolto per nuovi messaggi")
+            .setContentTitle(appContext.getString(R.string.service_notif_title))
+            .setContentText(appContext.getString(R.string.service_notif_body))
+            // Long-form expansion: the body line is intentionally
+            // detailed because users see this notification in their
+            // status bar permanently while the app is alive. A clear
+            // explanation of WHY the process is running ("delivering
+            // notifications in real time") prevents the "this app is
+            // tracking me" panic that vague ongoing-service notices
+            // tend to provoke.
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText(appContext.getString(R.string.service_notif_body))
+            )
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setOngoing(true)
             .setSilent(true)
@@ -190,6 +219,37 @@ object NotificationHelper {
             preview
         }
 
+        // MESSAGING STYLE: rather than overwriting the visible body with
+        // each new message (the old BigTextStyle path lost everything but
+        // the latest), we accumulate per-chat in `pendingMessagesByChat`
+        // and rebuild a MessagingStyle that lists ALL recent unread
+        // messages. The user sees the most recent line in the collapsed
+        // notification and can swipe down to read the full thread —
+        // identical to Telegram and what audit #4 was asking for.
+        val displayName = if (isSecretChat) "Novagram"
+            else if (isGroup && !isChannel) TdClient.resolveSenderName(message).ifBlank { "Novagram" }
+            else chatTitle
+        val person = androidx.core.app.Person.Builder()
+            .setName(displayName)
+            .setKey(message.senderId.let { s ->
+                when (s) {
+                    is TdApi.MessageSenderUser -> "user:${s.userId}"
+                    is TdApi.MessageSenderChat -> "chat:${s.chatId}"
+                    else -> "u:${message.chatId}"
+                }
+            })
+            .build()
+        val newMsg = NotificationCompat.MessagingStyle.Message(
+            preview,
+            message.date.toLong() * 1000L,
+            person
+        )
+        val queue = pendingMessagesByChat.getOrPut(message.chatId) { ArrayDeque() }
+        synchronized(queue) {
+            queue.addLast(newMsg)
+            while (queue.size > MAX_BUNDLED_PER_CHAT) queue.removeFirst()
+        }
+
         val openIntent = PendingIntent.getActivity(
             appContext,
             message.chatId.hashCode(),
@@ -225,11 +285,26 @@ object NotificationHelper {
             .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
             .build()
 
+        // "You" is the Person representing the LOCAL user in the
+        // MessagingStyle thread — required by the API. We don't expose
+        // it as a sender (we only ever receive in notifications, never
+        // send), but the style asks for a self-Person regardless.
+        val selfPerson = androidx.core.app.Person.Builder()
+            .setName(appContext.getString(R.string.notification_self_label))
+            .setKey("self")
+            .build()
+        val style = NotificationCompat.MessagingStyle(selfPerson)
+            .setGroupConversation(isGroup || isChannel)
+            .also { s ->
+                if (isGroup || isChannel) s.conversationTitle = chatTitle
+                synchronized(queue) {
+                    queue.forEach { s.addMessage(it) }
+                }
+            }
+
         val notif = NotificationCompat.Builder(appContext, CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_stat_messenger)
-            .setContentTitle(chatTitle)
-            .setContentText(content)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(content))
+            .setStyle(style)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
@@ -259,6 +334,11 @@ object NotificationHelper {
      * cancel to crash the chat scroll.
      */
     fun dismissForChat(chatId: Long) {
+        // Drop the in-memory MessagingStyle history for this chat so the
+        // next incoming notification starts fresh — without this the
+        // user would re-see the just-read messages stacked back when a
+        // new one lands.
+        pendingMessagesByChat.remove(chatId)
         NotificationManagerCompat.from(appContext).runCatching {
             cancel(chatId.hashCode())
         }

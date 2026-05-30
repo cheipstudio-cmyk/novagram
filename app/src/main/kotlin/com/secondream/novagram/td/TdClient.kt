@@ -248,6 +248,25 @@ object TdClient {
                 chatCache[obj.chatId]?.lastReadOutboxMessageId = obj.lastReadOutboxMessageId
                 scope.launch { _chatUpdates.emit(obj.chatId) }
             }
+            is TdApi.UpdateChatIsMarkedAsUnread -> {
+                // The "Mark as unread" flag is server-side and independent
+                // of the unreadCount — a chat with 0 unread messages can
+                // still carry isMarkedAsUnread=true after the user
+                // explicitly marked it on another device. Without this
+                // handler the chat row would render no badge even though
+                // the server says "unread" — exactly the gap audit #3
+                // called out.
+                chatCache[obj.chatId]?.isMarkedAsUnread = obj.isMarkedAsUnread
+                refreshChats()
+            }
+            is TdApi.UpdateChatUnreadMentionCount -> {
+                chatCache[obj.chatId]?.unreadMentionCount = obj.unreadMentionCount
+                refreshChats()
+            }
+            is TdApi.UpdateChatUnreadReactionCount -> {
+                chatCache[obj.chatId]?.unreadReactionCount = obj.unreadReactionCount
+                refreshChats()
+            }
             is TdApi.UpdateChatNotificationSettings -> {
                 // After setChatMuted(...) TDLib echoes the new settings back
                 // via this update. Without this handler the cached chat keeps
@@ -400,6 +419,9 @@ object TdClient {
                     // via TdApi.ToggleChatIsPinned; TDLib reflects the
                     // state back through UpdateChatPosition.
                     isPinned = pos.isPinned,
+                    isMarkedAsUnread = chat.isMarkedAsUnread,
+                    unreadMentionCount = chat.unreadMentionCount,
+                    unreadReactionCount = chat.unreadReactionCount,
                     revision = rev
                 )
             }
@@ -615,6 +637,42 @@ object TdClient {
     }
 
     suspend fun getChat(chatId: Long): TdApi.Chat = send(TdApi.GetChat(chatId))
+
+    /**
+     * Register this device's FCM token with TDLib so the Telegram
+     * backend pushes notifications to it. Called from
+     * NovagramFcmService.onNewToken AND from app startup once Firebase
+     * has resolved the cached token. Idempotent — re-registering the
+     * same token is a no-op on the server. Wrapped in runCatching so
+     * a failure during the auth-not-ready window (token arrives before
+     * the user has finished login) silently drops the call; we'll
+     * re-register on next token rotation or app start.
+     */
+    suspend fun registerDeviceForFcm(token: String) {
+        runCatching {
+            // DeviceTokenFirebaseCloudMessaging:
+            //  - token: the FCM registration token
+            //  - encrypt: true → Telegram encrypts the push payload
+            //    end-to-end. The recommended default; means processing
+            //    requires TDLib to decrypt server-side.
+            send(
+                TdApi.RegisterDevice(
+                    TdApi.DeviceTokenFirebaseCloudMessaging(token, true),
+                    longArrayOf()
+                )
+            )
+        }
+    }
+
+    /**
+     * Forward an FCM data payload (as JSON string) to TDLib's push
+     * processor. TDLib decrypts, fetches the linked message, and emits
+     * UpdateNewMessage — at which point our existing NotificationHelper
+     * shows the local notification through the regular channel.
+     */
+    suspend fun processPushNotification(payloadJson: String) {
+        runCatching { send(TdApi.ProcessPushNotification(payloadJson)) }
+    }
 
     suspend fun getChatHistory(
         chatId: Long,
@@ -1485,6 +1543,18 @@ data class ChatSummary(
     val isArchived: Boolean = false,
     /** True when the user has pinned this chat to the top of the list. */
     val isPinned: Boolean = false,
+    /**
+     * Server-side "Mark as unread" flag. When true the chat shows the
+     * unread affordance even when the actual message-unread count is
+     * zero — e.g. the user marked the chat unread from another device
+     * after reading the last message. Without this the badge would
+     * never render in that case.
+     */
+    val isMarkedAsUnread: Boolean = false,
+    /** Count of unread @-mentions or replies-to-me in this chat. */
+    val unreadMentionCount: Int = 0,
+    /** Count of unread reactions to the user's own messages in this chat. */
+    val unreadReactionCount: Int = 0,
     val revision: Long = 0L
 )
 

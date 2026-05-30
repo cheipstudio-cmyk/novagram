@@ -446,7 +446,8 @@ fun ChatListScreen(
                             c,
                             onClick = { onChatClick(c.id) },
                             onLongClick = { chatActionTarget = c },
-                            modifier = Modifier.animateItem()
+                            modifier = Modifier.animateItem(),
+                            myUserId = myUserId
                         )
                         HorizontalDivider(
                             color = MaterialTheme.colorScheme.outline,
@@ -1021,8 +1022,13 @@ private fun ChatRow(
     c: ChatSummary,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Current user's id. When the chat id matches, the row renders as
+     *  the "Saved Messages" pseudo-chat (bookmark icon + localized
+     *  label) instead of the user's own avatar + name. */
+    myUserId: Long = 0L
 ) {
+    val isSavedMessages = myUserId != 0L && c.id == myUserId
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -1030,13 +1036,33 @@ private fun ChatRow(
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        val bg = avatarBackgroundFor(c.id)
-        Avatar(
-            file = c.chat.photo?.small,
-            fallbackText = c.title,
-            bgColor = bg,
-            size = 48.dp
-        )
+        if (isSavedMessages) {
+            // Saved Messages avatar: solid accent disc with a bookmark
+            // glyph centered. Mirrors official Telegram's treatment so
+            // the chat is recognizable across clients.
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    com.secondream.novagram.ui.icons.PhosphorIcons.BookmarkSimple,
+                    contentDescription = stringResource(R.string.saved_messages),
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+        } else {
+            val bg = avatarBackgroundFor(c.id)
+            Avatar(
+                file = c.chat.photo?.small,
+                fallbackText = c.title,
+                bgColor = bg,
+                size = 48.dp
+            )
+        }
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1071,12 +1097,24 @@ private fun ChatRow(
                     ChatKind.Private -> Unit
                 }
                 Text(
-                    c.title,
+                    if (isSavedMessages) stringResource(R.string.saved_messages) else c.title,
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                // Pinned-to-top indicator. Sits to the right of the title,
+                // before the mute bell + timestamp. Matches Telegram's
+                // visual cue that this chat was explicitly anchored at
+                // the top of the list by the user.
+                if (c.isPinned) {
+                    Icon(
+                        com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
+                        contentDescription = stringResource(R.string.action_pin_chat),
+                        modifier = Modifier.size(14.dp).padding(start = 6.dp),
+                        tint = Ink.Muted
+                    )
+                }
                 // Show a "bell off" icon if the chat is muted, between title
                 // and timestamp. Reads live from chat.notificationSettings,
                 // which is refreshed via the UpdateChatNotificationSettings
@@ -1109,25 +1147,58 @@ private fun ChatRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (c.unread > 0) {
+                // Three independent badges that can stack in the row:
+                // @-mentions, ♥-reactions, and the numeric unread count.
+                // Mentions / reactions always render in accent (Telegram
+                // doesn't gray these out even for muted chats — they're
+                // direct pings to YOU). The numeric badge follows the
+                // mute rules from before.
+                val muted = TdClient.isChatMuted(c.chat)
+                val hasMentions = c.unreadMentionCount > 0
+                val hasReactions = c.unreadReactionCount > 0
+                val showNumericBadge = c.unread > 0
+                val showMarkedDot = !showNumericBadge && c.isMarkedAsUnread
+                if (hasMentions) {
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(MaterialTheme.colorScheme.primary),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "@",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                if (hasReactions) {
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(MaterialTheme.colorScheme.primary),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Smiley,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                }
+                if (showNumericBadge) {
                     Spacer(Modifier.width(8.dp))
                     // Muted chats get a neutral badge; only un-muted chats keep
                     // the accent colour, so a glance down the list shows which
                     // conversations actually pinged you (same language official
                     // Telegram uses). Pill shape with a min size grows cleanly
                     // for 2–3 digit counts instead of cramming "99+" into a dot.
-                    //
-                    // We route through TdClient.isChatMuted rather than reading
-                    // chat.notificationSettings.muteFor directly because the
-                    // per-chat value stays 0 with useDefaultMuteFor=true when
-                    // the user mutes at the SCOPE level (e.g. "Mute all
-                    // groups" in Telegram global settings, or muting a private
-                    // chat that inherits from the Private scope). Reading
-                    // muteFor only saw explicit per-chat mutes and kept
-                    // showing the accent badge for scope-muted privates —
-                    // exactly the "chat privata silenziata mostra accent
-                    // invece di grigio" bug Eugenio hit.
-                    val muted = TdClient.isChatMuted(c.chat)
                     val badgeBg = if (muted) MaterialTheme.colorScheme.surfaceVariant
                                   else MaterialTheme.colorScheme.primary
                     val badgeFg = if (muted) MaterialTheme.colorScheme.onSurfaceVariant
@@ -1147,6 +1218,20 @@ private fun ChatRow(
                             fontWeight = FontWeight.Bold
                         )
                     }
+                } else if (showMarkedDot) {
+                    // "Mark as unread" with no actual unread messages:
+                    // render a 10dp dot in accent / surfaceVariant so the
+                    // user still sees the unread affordance even though
+                    // there's nothing to count. Mirrors Telegram exactly.
+                    Spacer(Modifier.width(8.dp))
+                    val dotBg = if (muted) MaterialTheme.colorScheme.surfaceVariant
+                                else MaterialTheme.colorScheme.primary
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(dotBg)
+                    )
                 }
             }
         }

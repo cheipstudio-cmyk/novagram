@@ -337,4 +337,8 @@
     <string name="settings_swap_swipe_reply">Wischen zum Antworten umkehren</string>
     <string name="settings_swap_swipe_reply_desc">Nach links statt rechts wischen, um zu antworten</string>
     <string name="action_join_channel">Kanal beitreten</string>
+    <string name="saved_messages">Gespeicherte Nachrichten</string>
+    <string name="service_notif_title">Novagram</string>
+    <string name="service_notif_body">Ein Hintergrundprozess läuft, um Benachrichtigungen in Echtzeit zu liefern</string>
+    <string name="notification_self_label">Du</string>
 </resources>

@@ -23,8 +23,8 @@ android {
         applicationId = "com.secondream.novagram"
         minSdk = 26
         targetSdk = 35
-        versionCode = 104
-        versionName = "0.10.41"
+        versionCode = 109
+        versionName = "0.10.46"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -160,5 +160,31 @@ dependencies {
 
     implementation("androidx.documentfile:documentfile:1.0.1")
 
+    // Firebase Cloud Messaging — DORMANT until google-services.json is
+    // dropped into app/. We add the library so all the FCM-handling
+    // code (NovagramFcmService, TdClient.registerDeviceForFcm,
+    // ProcessPushNotification handler) compiles and ships in every
+    // build. Without google-services.json on disk, Firebase silently
+    // refuses to initialize at runtime (our init wraps every call in
+    // try/catch) and the app falls back to foreground-service-only
+    // delivery — exactly the current production behavior. Once Eugenio
+    // sets up Firebase Console and adds google-services.json next to
+    // build.gradle.kts, the conditional `apply plugin` block below
+    // activates auto-init and FCM lights up without any further code
+    // changes.
+    implementation("com.google.firebase:firebase-messaging:24.0.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
+}
+
+// Conditionally apply the google-services plugin only when the JSON
+// config file actually exists. Without this guard, every build without
+// google-services.json would fail at the gradle plugin-load step
+// (`File google-services.json is missing`) — which is exactly the
+// breakage we're trying to avoid. The plugin block must live OUTSIDE
+// the `plugins { }` declaration at the top because that block doesn't
+// support runtime conditionals; `apply(plugin = ...)` is the gradle-
+// supported way to gate plugin application.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }

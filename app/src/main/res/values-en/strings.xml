@@ -337,4 +337,8 @@
     <string name="settings_swap_swipe_reply">Invert reply swipe</string>
     <string name="settings_swap_swipe_reply_desc">Swipe left instead of right to reply to a message</string>
     <string name="action_join_channel">Join channel</string>
+    <string name="saved_messages">Saved Messages</string>
+    <string name="service_notif_title">Novagram</string>
+    <string name="service_notif_body">A background process is running to deliver real-time notifications</string>
+    <string name="notification_self_label">You</string>
 </resources>

@@ -37,7 +37,17 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* user choice handled implicitly */ }
 
-    private val pendingChatId = MutableStateFlow<Long?>(null)
+    /**
+     * Carries the chat to open and (optionally) the in-chat message to
+     * scroll to. Used by the deep-link path so t.me/<user>/<msg> can
+     * thread the msg id all the way into ChatScreen.targetMessageId —
+     * previously this was Long? with only chatId and the msg id was
+     * silently dropped at parse time, leaving the link broken on the
+     * message-jump dimension.
+     */
+    private data class PendingOpen(val chatId: Long, val msgId: Long? = null)
+
+    private val pendingChatId = MutableStateFlow<PendingOpen?>(null)
 
     /**
      * Apply the user's per-app locale before any onCreate runs, so resource
@@ -71,7 +81,9 @@ class MainActivity : ComponentActivity() {
                 .first().autoDownloadMedia
             runCatching { com.secondream.novagram.td.TdClient.applyAutoDownloadSetting(pref) }
         }
-        pendingChatId.value = intent?.getLongExtra("chatId", 0L)?.takeIf { it != 0L }
+        pendingChatId.value = intent?.getLongExtra("chatId", 0L)
+            ?.takeIf { it != 0L }
+            ?.let { PendingOpen(it) }
         handleThemeDeeplink(intent)
         handleTmeDeeplink(intent)
 
@@ -118,7 +130,8 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize()
                     ) {
                         AppRouter(
-                            pendingChatId = chatToOpen,
+                            pendingChatId = chatToOpen?.chatId,
+                            pendingMsgId = chatToOpen?.msgId,
                             onChatOpened = { pendingChatId.value = null }
                         )
                         // Anchored to the TOP (notification-banner style) so
@@ -142,7 +155,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         val cid = intent.getLongExtra("chatId", 0L)
-        if (cid != 0L) pendingChatId.value = cid
+        if (cid != 0L) pendingChatId.value = PendingOpen(cid)
         handleThemeDeeplink(intent)
         handleTmeDeeplink(intent)
     }
@@ -155,12 +168,22 @@ class MainActivity : ComponentActivity() {
      * there.
      *
      * Supported forms:
-     *  - t.me/USERNAME                 → public chat
-     *  - t.me/USERNAME/123             → public chat (msg id ignored for now)
-     *  - t.me/joinchat/HASH            → join private group/channel
-     *  - t.me/+HASH                    → idem (newer Telegram format)
-     *  - tg://resolve?domain=USERNAME  → public chat
-     *  - tg://join?invite=HASH         → join private
+     *  - t.me/USERNAME                       → public chat
+     *  - t.me/USERNAME/123                   → public chat + scroll to msg 123
+     *  - t.me/c/123456/789                   → private supergroup msg 789
+     *  - t.me/joinchat/HASH                  → join private group/channel
+     *  - t.me/+HASH                          → idem (newer Telegram format)
+     *  - tg://resolve?domain=USERNAME        → public chat
+     *  - tg://resolve?domain=USERNAME&post=N → public chat + scroll to msg N
+     *  - tg://join?invite=HASH               → join private
+     *
+     * For msg-id forms, the server-side id from the URL is shifted left
+     * 20 bits before being passed downstream — TDLib stores the canonical
+     * message id as (serverId shl 20), reserving the low 20 bits for
+     * channel-subdivision routing. Without the shift, the jump target
+     * never matches anything in the loaded window and the scroll bails
+     * out silently — exactly what the previous code did when it dropped
+     * segments[1] entirely.
      *
      * Anything else (sticker sets, settings deeplinks, etc.) is silently
      * ignored — we don't want to throw at the user, just no-op.
@@ -179,8 +202,24 @@ class MainActivity : ComponentActivity() {
         // Pull username / joinHash out of the URL.
         var username: String? = null
         var inviteLink: String? = null
+        // Server-side message id pulled from the deep-link, if any. We
+        // translate to TDLib's internal representation below (server id
+        // is shifted left 20 bits — TDLib reserves the lower 20 bits
+        // for channel subdivision routing; without the shift, the id
+        // we'd hand to ChatScreen.targetMessageId / getChatHistory
+        // doesn't match anything in the loaded window and the jump
+        // bails out silently). Stays null when the URL only points
+        // to a chat, no specific message.
+        var serverMessageId: Long? = null
+        // For private channels (/c/<internalId>/<msgId>) the chat is
+        // identified by an internal numeric id, not a username. We
+        // resolve via TDLib's getSupergroup using `1000000000000L +
+        // internalId` which is the canonical chatId encoding for
+        // supergroups, then jump to the linked msg.
+        var privateChannelInternalId: Long? = null
         if (isWeb) {
-            // path looks like "/USERNAME" or "/joinchat/HASH" or "/+HASH"
+            // path looks like "/USERNAME", "/USERNAME/123",
+            // "/joinchat/HASH", "/+HASH", or "/c/<id>/<msg>".
             val segments = data.pathSegments.orEmpty()
             val first = segments.firstOrNull()
             when {
@@ -189,11 +228,34 @@ class MainActivity : ComponentActivity() {
                     inviteLink = "https://t.me/joinchat/${segments[1]}"
                 first.startsWith("+") ->
                     inviteLink = "https://t.me/$first"
-                else -> username = first
+                // Private channel deep-link form: /c/<internalId>/<msgId>.
+                // The numeric internalId is the supergroup id without the
+                // -100... prefix; TDLib chatId = -100<internalId>·10^N
+                // for the canonical conversion. We parse and let the
+                // resolver below convert to chatId via getSupergroup.
+                first == "c" && segments.size >= 2 -> {
+                    privateChannelInternalId = segments[1].toLongOrNull()
+                    if (segments.size >= 3) {
+                        serverMessageId = segments[2].toLongOrNull()
+                    }
+                }
+                else -> {
+                    username = first
+                    // segments[1] (when present) is the public message id
+                    // — e.g. t.me/durov/123 → username=durov, msg=123.
+                    if (segments.size >= 2) {
+                        serverMessageId = segments[1].toLongOrNull()
+                    }
+                }
             }
         } else {
             when (data.host) {
-                "resolve" -> username = data.getQueryParameter("domain")
+                "resolve" -> {
+                    username = data.getQueryParameter("domain")
+                    // tg://resolve?domain=USERNAME&post=123 — same
+                    // server-id semantics as the web /USERNAME/123 form.
+                    serverMessageId = data.getQueryParameter("post")?.toLongOrNull()
+                }
                 "join" -> {
                     val invite = data.getQueryParameter("invite")
                     if (invite != null) inviteLink = "https://t.me/+$invite"
@@ -209,6 +271,15 @@ class MainActivity : ComponentActivity() {
                         com.secondream.novagram.td.TdClient
                             .joinChatByInviteLink(inviteLink).id
                     }
+                    privateChannelInternalId != null -> {
+                        // The canonical supergroup chatId for internalId N
+                        // is -1_000_000_000_000 - N (TDLib convention).
+                        // We open it directly; if we're not a member yet
+                        // ChatScreen will show the Join CTA upstream.
+                        val cid = -1_000_000_000_000L - privateChannelInternalId
+                        runCatching { com.secondream.novagram.td.TdClient.getChat(cid) }
+                        cid
+                    }
                     username != null -> {
                         com.secondream.novagram.td.TdClient
                             .searchPublicChat(username).id
@@ -217,7 +288,12 @@ class MainActivity : ComponentActivity() {
                 }
             }.getOrNull()
             if (chatId != null && chatId != 0L) {
-                pendingChatId.value = chatId
+                // Apply the shl 20 transform iff we have a server-side
+                // msg id from the URL. ChatScreen.targetMessageId then
+                // matches what getChatHistory returns and the jump
+                // lands correctly.
+                val tdMsgId = serverMessageId?.takeIf { it > 0 }?.let { it shl 20 }
+                pendingChatId.value = PendingOpen(chatId, tdMsgId)
             }
         }
     }

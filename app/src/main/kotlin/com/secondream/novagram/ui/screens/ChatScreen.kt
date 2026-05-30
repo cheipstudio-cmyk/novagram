@@ -217,7 +217,25 @@ fun ChatScreen(
     val recorder = remember { VoiceRecorder(context) }
 
     val defaultChatTitle = stringResource(R.string.chat_default_title)
-    val chatTitle by produceState(initialValue = defaultChatTitle, chatId) {
+    val savedMessagesLabel = stringResource(R.string.saved_messages)
+    // Self user id — needed to detect the Saved Messages pseudo-chat
+    // (the private chat where chat.id == my user id). When matched the
+    // header replaces the standard avatar+title pair with a bookmark
+    // glyph + localized "Messaggi salvati" label, matching the list-
+    // row treatment so the chat is unmistakably recognized as the
+    // "notes to self" surface and not, say, a chat with someone who
+    // happens to share your name.
+    val myUserId by produceState(initialValue = 0L, Unit) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { TdClient.getMe().id }.getOrDefault(0L)
+        }
+    }
+    val isSavedMessages = myUserId != 0L && chatId == myUserId
+    val chatTitle by produceState(initialValue = defaultChatTitle, chatId, isSavedMessages, savedMessagesLabel) {
+        if (isSavedMessages) {
+            value = savedMessagesLabel
+            return@produceState
+        }
         value = withContext(Dispatchers.IO) {
             runCatching { TdClient.getChat(chatId).title }.getOrDefault(defaultChatTitle)
         }
@@ -655,7 +673,15 @@ fun ChatScreen(
                     if (consecutiveEmpty < 2) delay(350)
                 } else {
                     consecutiveEmpty = 0
-                    messages.addAll(res.messages.toList())
+                    // Dedupe against in-memory messages — a concurrent
+                    // newMessages emission could have inserted one of these
+                    // ids already, and LazyColumn items(key = m.id) crashes
+                    // hard on duplicate keys. We compute the lookup set once
+                    // per batch instead of per-message contains() to avoid
+                    // O(N²) on big channels.
+                    val existing = messages.mapTo(HashSet()) { it.id }
+                    val toAppend = res.messages.filter { it.id !in existing }
+                    if (toAppend.isNotEmpty()) messages.addAll(toAppend)
                     fromId = res.messages.last().id
                 }
                 attempts++
@@ -763,7 +789,11 @@ fun ChatScreen(
     LaunchedEffect(chatId) {
         TdClient.newMessages.collect { msg ->
             if (msg.chatId == chatId) {
-                messages.add(0, msg)
+                // Dedupe: avoid double-insertion when getChatHistory and
+                // UpdateNewMessage race over the same message id.
+                if (messages.none { it.id == msg.id }) {
+                    messages.add(0, msg)
+                }
                 if (!msg.isOutgoing) {
                     runCatching { TdClient.viewMessages(chatId, longArrayOf(msg.id)) }
                 }
@@ -981,18 +1011,41 @@ fun ChatScreen(
             }
     }
 
-    // Auto load older when scroll near top of reversed list (i.e. bottom of memory).
+    // Auto load older when scroll near top of reversed list (i.e. bottom
+    // of memory). Gated on `!loading` so it cannot fire while the initial
+    // chat load is still iterating getChatHistory — two concurrent
+    // `messages.addAll(...)` flows on the same SnapshotStateList tripped
+    // an IndexOutOfBounds inside LazyColumn under fast scroll on chats
+    // never opened before (cache-miss path), bringing the activity down
+    // with it. `!loadingMore` still guards against re-entry of THIS flow.
     LaunchedEffect(listState, chatId) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
             .distinctUntilChanged()
-            .filter { it >= messages.size - 5 && messages.isNotEmpty() && !loadingMore && !noMore }
+            .filter {
+                it >= messages.size - 5 &&
+                    messages.isNotEmpty() &&
+                    !loading &&
+                    !loadingMore &&
+                    !noMore
+            }
             .collect {
                 loadingMore = true
                 val oldest = messages.lastOrNull()?.id ?: 0L
                 runCatching {
                     val res = TdClient.getChatHistory(chatId, oldest, 30)
                     if (res.messages.isEmpty()) noMore = true
-                    else messages.addAll(res.messages.toList())
+                    else {
+                        // Filter out anything already in the window — fast
+                        // scroll + concurrent newMessages emissions can
+                        // produce overlap with the in-memory tail; without
+                        // this dedupe the list ends up with duplicate-id
+                        // bubbles which then crash inside items(key = id)
+                        // because the LazyList contract requires unique
+                        // keys per item.
+                        val existing = messages.mapTo(HashSet()) { it.id }
+                        val toAppend = res.messages.filter { it.id !in existing }
+                        if (toAppend.isNotEmpty()) messages.addAll(toAppend)
+                    }
                 }
                 loadingMore = false
             }
@@ -1337,27 +1390,44 @@ fun ChatScreen(
                         // it being a private chat — groups never get a
                         // dot.
                         Box {
-                            com.secondream.novagram.ui.components.Avatar(
-                                file = cachedChatLive?.photo?.small,
-                                fallbackText = chatTitle,
-                                bgColor = com.secondream.novagram.ui.screens.avatarBackgroundFor(chatId),
-                                size = 36.dp
-                            )
-                            if (!isGroupChat && peerOnline && appearance.showLastSeen) {
+                            if (isSavedMessages) {
                                 Box(
                                     modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .size(12.dp)
-                                        .background(
-                                            MaterialTheme.colorScheme.background,
-                                            shape = androidx.compose.foundation.shape.CircleShape
-                                        )
-                                        .padding(2.dp)
-                                        .background(
-                                            Color(0xFF22C55E),
-                                            shape = androidx.compose.foundation.shape.CircleShape
-                                        )
+                                        .size(36.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        com.secondream.novagram.ui.icons.PhosphorIcons.BookmarkSimple,
+                                        contentDescription = savedMessagesLabel,
+                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            } else {
+                                com.secondream.novagram.ui.components.Avatar(
+                                    file = cachedChatLive?.photo?.small,
+                                    fallbackText = chatTitle,
+                                    bgColor = com.secondream.novagram.ui.screens.avatarBackgroundFor(chatId),
+                                    size = 36.dp
                                 )
+                                if (!isGroupChat && peerOnline && appearance.showLastSeen) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .size(12.dp)
+                                            .background(
+                                                MaterialTheme.colorScheme.background,
+                                                shape = androidx.compose.foundation.shape.CircleShape
+                                            )
+                                            .padding(2.dp)
+                                            .background(
+                                                Color(0xFF22C55E),
+                                                shape = androidx.compose.foundation.shape.CircleShape
+                                            )
+                                    )
+                                }
                             }
                         }
                         Spacer(Modifier.width(10.dp))

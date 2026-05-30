@@ -131,6 +131,23 @@
             </intent-filter>
         </receiver>
 
+        <!--
+            FCM message handler. Dormant until google-services.json is
+            present in app/: without the JSON, FirebaseApp never
+            initializes at runtime and the system FCM dispatcher never
+            wakes this service up. The intent-filter is the standard
+            FirebaseMessagingService one — Android resolves FCM
+            deliveries to whatever component declares it. Not exported:
+            only the system can target us.
+        -->
+        <service
+            android:name=".notifications.NovagramFcmService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "61605895826",
+    "project_id": "novagram-37ffc",
+    "storage_bucket": "novagram-37ffc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:61605895826:android:f1ae7b73fdc7a0ac3b904b",
+        "android_client_info": {
+          "package_name": "com.secondream.novagram"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDgufvfyCksRlbnDT285t-3ZvDwIFddOxE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

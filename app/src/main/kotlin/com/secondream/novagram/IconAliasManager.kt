@@ -65,17 +65,65 @@ object IconAliasManager {
         val darkComp = ComponentName(ctx, ALIAS_DARK)
         val lightComp = ComponentName(ctx, ALIAS_LIGHT)
         val useDark = shouldUseDark(ctx, mode)
+
+        // Idempotency check: PackageManager.setComponentEnabledSetting
+        // is NOT free on a hot path — every call goes to system_server,
+        // serializes through a binder transaction, and (despite the
+        // DONT_KILL_APP flag) can still kill our process when the
+        // currently-active LAUNCHER alias is the one being disabled.
+        // That kill is exactly what Eugenio kept hitting on every
+        // theme switch: the activity died mid-recreate, taking the
+        // user back to the launcher with a freshly-changed icon and
+        // forcing them to reopen the app.
+        //
+        // The fix is dual:
+        //   (1) skip the work entirely when both aliases are already
+        //       in the desired state — most theme switches involve no
+        //       icon swap at all (e.g. Dark → Amoled, Light → System
+        //       on a phone in light mode).
+        //   (2) ENABLE the new variant BEFORE DISABLING the old one,
+        //       so the OS always sees at least one launcher entry
+        //       point alive and never decides we have no home screen
+        //       presence to keep alive.
         runCatching {
+            val curDark = pm.getComponentEnabledSetting(darkComp)
+            val curLight = pm.getComponentEnabledSetting(lightComp)
+            val wantDarkEnabled = useDark
+            val wantLightEnabled = !useDark
+
+            // PackageManager returns DEFAULT (0) before any explicit
+            // setting; we treat DEFAULT as "follows the manifest"
+            // which for ic_launcher_dark is enabled=true (declared
+            // as the active alias in the manifest), and for
+            // ic_launcher_light enabled=false. Map to a concrete
+            // boolean so the comparison below is well-defined.
+            fun resolve(state: Int, manifestDefault: Boolean): Boolean = when (state) {
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> true
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED -> false
+                else -> manifestDefault
+            }
+            val isDarkEnabled = resolve(curDark, manifestDefault = true)
+            val isLightEnabled = resolve(curLight, manifestDefault = false)
+
+            if (isDarkEnabled == wantDarkEnabled && isLightEnabled == wantLightEnabled) {
+                Log.i(TAG, "icon variant unchanged (mode=$mode, useDark=$useDark) — skipping pm call")
+                return@runCatching
+            }
+
+            // Enable target FIRST so a LAUNCHER intent-filter is always
+            // alive, THEN disable the other. This sequencing minimises
+            // the "no launcher entry point" window that can trip the
+            // process-kill heuristic.
+            val toEnable = if (useDark) darkComp else lightComp
+            val toDisable = if (useDark) lightComp else darkComp
             pm.setComponentEnabledSetting(
-                darkComp,
-                if (useDark) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                toEnable,
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                 PackageManager.DONT_KILL_APP
             )
             pm.setComponentEnabledSetting(
-                lightComp,
-                if (useDark) PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-                else PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                toDisable,
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP
             )
             Log.i(TAG, "icon variant applied: ${if (useDark) "dark" else "light"} (mode=$mode)")
