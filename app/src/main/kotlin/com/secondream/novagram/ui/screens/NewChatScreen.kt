@@ -49,6 +49,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,7 +58,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
@@ -176,9 +183,48 @@ fun NewChatScreen(
         }
     }
 
+    // Collapsing top-nav on scroll — same parallax pattern as
+    // ChatListScreen. The contacts list inside the pager scrolls; its
+    // pre-scroll deltas flow through the Scaffold's nestedScroll
+    // connection and the topBar Column collapses/expands its
+    // measured height, freeing screen real estate as the user scans
+    // deeper into the contact list.
+    val headerOffsetPx = remember { mutableIntStateOf(0) }
+    var headerNaturalHeightPx by remember { mutableIntStateOf(0) }
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val natural = headerNaturalHeightPx
+                if (natural == 0) return Offset.Zero
+                val delta = available.y.toInt()
+                val cur = headerOffsetPx.intValue
+                val newOffset = (cur + delta).coerceIn(-natural, 0)
+                val consumed = newOffset - cur
+                headerOffsetPx.intValue = newOffset
+                return Offset(0f, consumed.toFloat())
+            }
+        }
+    }
+
     Scaffold(
+        modifier = Modifier.nestedScroll(nestedScrollConnection),
         topBar = {
-            Column {
+            Column(
+                modifier = Modifier
+                    .clipToBounds()
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints)
+                        val natural = placeable.height
+                        if (headerNaturalHeightPx != natural) {
+                            headerNaturalHeightPx = natural
+                        }
+                        val offset = headerOffsetPx.intValue
+                        val visibleH = (natural + offset).coerceIn(0, natural)
+                        layout(placeable.width, visibleH) {
+                            placeable.place(0, offset)
+                        }
+                    }
+            ) {
                 TopAppBar(
                     title = {
                         Text(

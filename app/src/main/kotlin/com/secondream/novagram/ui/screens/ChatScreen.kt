@@ -792,39 +792,6 @@ fun ChatScreen(
             }
     }
 
-    // Auto-clear @-mention and reaction badges when the user actually
-    // engages with the chat. Background: TDLib's ViewMessages with
-    // forceRead=true updates the chat's main unreadCount but does NOT
-    // decrement unreadMentionCount / unreadReactionCount — those are
-    // separate server-side counters that only respond to the explicit
-    // ReadAllChatMentions / ReadAllChatReactions calls (or to the
-    // per-mention Click flow which isn't what we want here).
-    //
-    // Without this effect, Eugenio's complaint was that opening a chat
-    // with a mention or reaction left the @ / 🎉 chip and the per-row
-    // badge stuck on the chat list even after the user had scrolled
-    // through and seen the message. The v0.10.55 chip-dismiss fix
-    // covered the case where the user TAPPED the chip, but not the
-    // case where they just scrolled past the message normally.
-    //
-    // Behaviour: 1.5s after entering the chat (long enough that the
-    // chip is registered visually if the user wants to navigate to a
-    // specific mention via tap), if the chat still has unread
-    // mentions or reactions, mark them all as read. TDLib echoes the
-    // update via UpdateChatUnreadMentionCount/ReactionCount, our
-    // handler propagates to chatCache + refreshChats + chatUpdates,
-    // the chip hides and the per-row badge in the chat list clears.
-    LaunchedEffect(chatId) {
-        kotlinx.coroutines.delay(1500)
-        val c = TdClient.getCachedChat(chatId)
-        if ((c?.unreadMentionCount ?: 0) > 0) {
-            runCatching { TdClient.readAllChatMentions(chatId) }
-        }
-        if ((c?.unreadReactionCount ?: 0) > 0) {
-            runCatching { TdClient.readAllChatReactions(chatId) }
-        }
-    }
-
     // Listen for new messages in this chat.
     LaunchedEffect(chatId) {
         TdClient.newMessages.collect { msg ->
@@ -1914,8 +1881,23 @@ fun ChatScreen(
                                         val msg = runCatching {
                                             TdClient.findFirstUnreadMention(chatId)
                                         }.getOrNull()
-                                        if (msg != null) jumpToMessage(msg.id)
-                                        runCatching { TdClient.readAllChatMentions(chatId) }
+                                        if (msg != null) {
+                                            jumpToMessage(msg.id)
+                                            // Mark this single mention as
+                                            // read on the server (viewMessages
+                                            // on the specific id) and
+                                            // decrement the local cache count
+                                            // immediately so the chip's count
+                                            // updates without waiting for
+                                            // TDLib's UpdateChatUnreadMentionCount
+                                            // echo. Each tap consumes ONE
+                                            // mention — Telegram-style
+                                            // per-mention navigation.
+                                            runCatching {
+                                                TdClient.viewMessages(chatId, longArrayOf(msg.id))
+                                            }
+                                            TdClient.decrementChatMentionCount(chatId)
+                                        }
                                     }
                                 },
                                 containerColor = MaterialTheme.colorScheme.primary,
@@ -1937,8 +1919,13 @@ fun ChatScreen(
                                         val msg = runCatching {
                                             TdClient.findFirstUnreadReaction(chatId)
                                         }.getOrNull()
-                                        if (msg != null) jumpToMessage(msg.id)
-                                        runCatching { TdClient.readAllChatReactions(chatId) }
+                                        if (msg != null) {
+                                            jumpToMessage(msg.id)
+                                            runCatching {
+                                                TdClient.viewMessages(chatId, longArrayOf(msg.id))
+                                            }
+                                            TdClient.decrementChatReactionCount(chatId)
+                                        }
                                     }
                                 },
                                 containerColor = MaterialTheme.colorScheme.primary,

@@ -1484,6 +1484,40 @@ object TdClient {
     }
 
     /**
+     * Locally decrement the chat's unread mention count by 1 and notify
+     * subscribers. Used by the @-mention chip click flow: tapping the
+     * chip navigates to ONE specific mention message — the chip should
+     * update immediately to reflect that one mention has been
+     * "consumed", even though TDLib's server-side decrement (via
+     * ViewMessages on the visited message) is async and can lag.
+     *
+     * Without this local patch, the chip stayed visible after a tap
+     * because the StateFlow had not yet observed the count drop —
+     * Eugenio's complaint that "il badge non si rimuove una volta
+     * cliccato". The TDLib echo via UpdateChatUnreadMentionCount still
+     * arrives later and tops up to whatever the server thinks; if we
+     * over-decremented (very unlikely race), the next echo corrects.
+     */
+    fun decrementChatMentionCount(chatId: Long) {
+        val c = chatCache[chatId] ?: return
+        if (c.unreadMentionCount > 0) {
+            c.unreadMentionCount = c.unreadMentionCount - 1
+            scope.launch { _chatUpdates.emit(chatId) }
+            refreshChats()
+        }
+    }
+
+    /** Reaction-side companion of [decrementChatMentionCount]. */
+    fun decrementChatReactionCount(chatId: Long) {
+        val c = chatCache[chatId] ?: return
+        if (c.unreadReactionCount > 0) {
+            c.unreadReactionCount = c.unreadReactionCount - 1
+            scope.launch { _chatUpdates.emit(chatId) }
+            refreshChats()
+        }
+    }
+
+    /**
      * Resolve public chats by username/title query. Returns the cached Chat
      * objects so callers can read title, type, photo, etc. Used by the
      * home-page "Join Nova" card to detect membership.

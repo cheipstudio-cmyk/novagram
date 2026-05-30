@@ -54,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
@@ -63,8 +64,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -234,7 +241,40 @@ fun ChatListScreen(
         publicSearching = false
     }
 
+    // Collapsing top-nav (TopAppBar + tabs + offline banner) on scroll.
+    // Parallax-style: scrolling DOWN inside the chat list pushes the
+    // header up out of view (the LazyColumn gets the freed space —
+    // more chats visible at once); scrolling UP brings it straight
+    // back. Telegram-style "enter-always" behaviour: the header
+    // reappears the instant the user reverses direction, regardless
+    // of scroll position, so it's never more than a small upward
+    // flick away.
+    //
+    // Mechanism: a NestedScrollConnection intercepts pre-scroll deltas
+    // from the LazyColumn (Scaffold dispatches through the modifier
+    // attached below). We track `headerOffsetPx` in [-naturalHeight, 0]
+    // and a `Modifier.layout` on the topBar Column reports a SHRUNK
+    // height to Scaffold — so the content area genuinely expands,
+    // it's not just a visual translation that leaves a gap.
+    val headerOffsetPx = remember { mutableIntStateOf(0) }
+    var headerNaturalHeightPx by remember { mutableIntStateOf(0) }
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val natural = headerNaturalHeightPx
+                if (natural == 0) return Offset.Zero
+                val delta = available.y.toInt()
+                val cur = headerOffsetPx.intValue
+                val newOffset = (cur + delta).coerceIn(-natural, 0)
+                val consumed = newOffset - cur
+                headerOffsetPx.intValue = newOffset
+                return Offset(0f, consumed.toFloat())
+            }
+        }
+    }
+
     Scaffold(
+        modifier = Modifier.nestedScroll(nestedScrollConnection),
         floatingActionButton = {
             // Springy press feedback: the FAB dips to 88% under the finger and
             // springs back on release. The scale runs through a graphicsLayer
@@ -267,7 +307,27 @@ fun ChatListScreen(
             }
         },
         topBar = {
-            Column {
+            Column(
+                modifier = Modifier
+                    .clipToBounds()
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints)
+                        val natural = placeable.height
+                        // Cache the natural (fully-expanded) height so
+                        // the NestedScrollConnection knows the
+                        // collapse clamp. Idempotent write — Compose
+                        // skips the snapshot mutation if the value
+                        // matches the current one.
+                        if (headerNaturalHeightPx != natural) {
+                            headerNaturalHeightPx = natural
+                        }
+                        val offset = headerOffsetPx.intValue
+                        val visibleH = (natural + offset).coerceIn(0, natural)
+                        layout(placeable.width, visibleH) {
+                            placeable.place(0, offset)
+                        }
+                    }
+            ) {
                 TopAppBar(
                     title = {
                         if (searchOpen) {
@@ -486,57 +546,21 @@ fun ChatListScreen(
                     )
                 }
             } else {
-                // Saved Messages is split out from the regular pageChats
-                // list and rendered as a stickyHeader so it stays anchored
-                // to the top of the viewport regardless of scroll position.
-                // Telegram pins the Saved Messages pseudo-chat the same
-                // way — it's the "notes to self" surface, the user
-                // expects to find it always at hand no matter how deep
-                // they've scrolled into their chat list. Without the
-                // sticky behavior, returning from a chat would land the
-                // user at their previous scroll position, with Saved
-                // Messages potentially scrolled off-screen above.
-                val savedMsgsChat = remember(pageChats, myUserId) {
-                    if (myUserId != 0L) pageChats.firstOrNull { it.id == myUserId } else null
-                }
-                val otherChats = remember(pageChats, savedMsgsChat) {
-                    if (savedMsgsChat != null) pageChats.filter { it.id != savedMsgsChat.id }
-                    else pageChats
-                }
+                // Saved Messages is the first item in pageChats (the
+                // sort upstream pinned it there): we render the whole
+                // list with a single items(pageChats) block, so the
+                // Saved Messages row scrolls naturally with the rest
+                // of the chat list. Previous v0.10.55 implementation
+                // wrapped it in a stickyHeader so it stayed anchored
+                // to the top regardless of scroll — Eugenio asked for
+                // that behaviour to be removed: he wants the row to
+                // behave like any other chat entry and disappear off-
+                // screen as the user scrolls down.
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(vertical = 4.dp)
                 ) {
-                    if (savedMsgsChat != null) {
-                        stickyHeader(key = "saved_messages_sticky") {
-                            // Wrap in a Box with explicit background so
-                            // the row reads as a solid card sitting above
-                            // the scrolling items — without the bg, the
-                            // sticky header would show the items
-                            // bleeding through underneath as they scroll
-                            // past, breaking the "always at top" illusion.
-                            androidx.compose.foundation.layout.Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.background)
-                            ) {
-                                Column {
-                                    ChatRow(
-                                        savedMsgsChat,
-                                        onClick = { onChatClick(savedMsgsChat.id) },
-                                        onLongClick = { chatActionTarget = savedMsgsChat },
-                                        myUserId = myUserId
-                                    )
-                                    HorizontalDivider(
-                                        color = MaterialTheme.colorScheme.outline,
-                                        thickness = 0.5.dp,
-                                        modifier = Modifier.padding(start = 88.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    items(otherChats, key = { it.id }) { c ->
+                    items(pageChats, key = { it.id }) { c ->
                         ChatRow(
                             c,
                             onClick = { onChatClick(c.id) },
