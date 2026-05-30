@@ -1032,6 +1032,15 @@ private fun ChatRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            // Pinned-chat highlight: 6% accent overlay so the row stands
+            // out at a glance without competing with the unread badges
+            // or the title text. Sits BEHIND the click ripple, so the
+            // click feedback still reads cleanly on top of the tint.
+            .then(
+                if (c.isPinned)
+                    Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.06f))
+                else Modifier
+            )
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically

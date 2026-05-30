@@ -849,18 +849,17 @@ fun ChatScreen(
                 // directly, not via the override map — so the field has
                 // to hold the truth too).
                 messages[idx].content = upd.newContent
-                // Re-assign the same reference back into the
-                // SnapshotStateList slot. This records a write on the
-                // list's snapshot, which the LazyColumn items() iteration
-                // tracker observes — the item content lambda for this
-                // msg.id reliably re-runs and reads the latest
-                // interactionRevisions[id] value. We then bump that
-                // counter below, and since MessageBubble takes
-                // interactionRevision as a parameter, strong-skipping
-                // sees the Int change and recomposes the bubble even
-                // though the Message reference is identical (TdApi.Message
-                // is marked stable via the compose stability config).
-                messages[idx] = messages[idx]
+                // Force a SnapshotStateList write. `messages[idx] =
+                // messages[idx]` is a NO-OP because PersistentList.set
+                // returns the same list when newRef === oldRef and
+                // Compose's snapshot transaction bails on identity-equal
+                // updates — so the items() iteration never invalidates
+                // and the bubble keeps rendering the stale content until
+                // the screen re-mounts. remove+add at the same index
+                // is two distinct snapshot writes that always register;
+                // the stable `key = m.id` on itemsIndexed means the
+                // item slot is reused, no remount.
+                run { val m = messages[idx]; messages.removeAt(idx); messages.add(idx, m) }
                 // Override map: alternate read path for downstream
                 // components like search highlighting / share previews
                 // that subscribe to it directly. The revision bump is
@@ -886,7 +885,7 @@ fun ChatScreen(
             if (idx >= 0) {
                 messages[idx].editDate = upd.editDate
                 messages[idx].replyMarkup = upd.replyMarkup
-                messages[idx] = messages[idx]
+                run { val m = messages[idx]; messages.removeAt(idx); messages.add(idx, m) }
                 interactionRevisions[upd.messageId] =
                     (interactionRevisions[upd.messageId] ?: 0) + 1
                 // Safety net: TDLib normally emits UpdateMessageContent
@@ -916,7 +915,7 @@ fun ChatScreen(
                     if (curIdx < 0) return@launch
                     if (messages[curIdx].content !== fresh.content) {
                         messages[curIdx].content = fresh.content
-                        messages[curIdx] = messages[curIdx]
+                        run { val m = messages[curIdx]; messages.removeAt(curIdx); messages.add(curIdx, m) }
                         messageContentOverrides[upd.messageId] = fresh.content
                         interactionRevisions[upd.messageId] =
                             (interactionRevisions[upd.messageId] ?: 0) + 1
@@ -1758,6 +1757,132 @@ fun ChatScreen(
                         }
                     }
                 }
+                // Floating "unread mentions / reactions" chips, anchored
+                // above the scroll-to-bottom FAB. Each chip is shown
+                // independently when its respective count > 0, mirrors
+                // Telegram's @N / ♥N affordances. Tapping jumps to the
+                // first unread occurrence (TDLib's
+                // SearchMessagesFilterUnreadMention / UnreadReaction)
+                // and marks all read so the chip auto-dismisses.
+                //
+                // Reads live from chatUpdates so the chips appear/hide
+                // in real-time as reactions/mentions land or get read
+                // from another device. We keep the chip's enter/exit
+                // separate from the FAB's because the user can have a
+                // pending reaction while sitting at the bottom of the
+                // chat (no FAB) — we still want the chip visible.
+                val liveMentions by remember(chatId) {
+                    kotlinx.coroutines.flow.flow {
+                        emit(TdClient.getCachedChat(chatId)?.unreadMentionCount ?: 0)
+                        TdClient.chatUpdates.collect { cid ->
+                            if (cid == chatId) {
+                                emit(TdClient.getCachedChat(chatId)?.unreadMentionCount ?: 0)
+                            }
+                        }
+                    }
+                }.collectAsState(initial = TdClient.getCachedChat(chatId)?.unreadMentionCount ?: 0)
+                val liveReactions by remember(chatId) {
+                    kotlinx.coroutines.flow.flow {
+                        emit(TdClient.getCachedChat(chatId)?.unreadReactionCount ?: 0)
+                        TdClient.chatUpdates.collect { cid ->
+                            if (cid == chatId) {
+                                emit(TdClient.getCachedChat(chatId)?.unreadReactionCount ?: 0)
+                            }
+                        }
+                    }
+                }.collectAsState(initial = TdClient.getCachedChat(chatId)?.unreadReactionCount ?: 0)
+                val hasMentions = liveMentions > 0
+                val hasReactions = liveReactions > 0
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = hasMentions || hasReactions,
+                    enter = androidx.compose.animation.fadeIn() +
+                        androidx.compose.animation.scaleIn(initialScale = 0.8f),
+                    exit = androidx.compose.animation.fadeOut() +
+                        androidx.compose.animation.scaleOut(targetScale = 0.8f),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        // 80dp lifts the chip above the FAB (which is 40dp
+                        // SmallFAB + 14dp bottom padding + a 26dp gap).
+                        .padding(end = 14.dp, bottom = 80.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (hasMentions) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
+                                    .clickable {
+                                        scope.launch {
+                                            val msg = runCatching {
+                                                TdClient.findFirstUnreadMention(chatId)
+                                            }.getOrNull()
+                                            if (msg != null) jumpToMessage(msg.id)
+                                            runCatching { TdClient.readAllChatMentions(chatId) }
+                                        }
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "@",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    if (liveMentions > 1) {
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            liveMentions.toString(),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (hasReactions) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
+                                    .clickable {
+                                        scope.launch {
+                                            val msg = runCatching {
+                                                TdClient.findFirstUnreadReaction(chatId)
+                                            }.getOrNull()
+                                            if (msg != null) jumpToMessage(msg.id)
+                                            runCatching { TdClient.readAllChatReactions(chatId) }
+                                        }
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        com.secondream.novagram.ui.icons.PhosphorIcons.Smiley,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    if (liveReactions > 1) {
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            liveReactions.toString(),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // Scroll-to-bottom button. Appears as soon as the user has
                 // scrolled up at least a few messages from the bottom of
                 // the chat (reverseLayout=true means firstVisibleItemIndex
@@ -2117,7 +2242,7 @@ fun ChatScreen(
                                         // TDLib's editDate scale.
                                         messages[idx].editDate =
                                             (System.currentTimeMillis() / 1000).toInt()
-                                        messages[idx] = messages[idx]
+                                        run { val m = messages[idx]; messages.removeAt(idx); messages.add(idx, m) }
                                     }
                                     messageContentOverrides[captured.id] = newContent
                                     interactionRevisions[captured.id] =

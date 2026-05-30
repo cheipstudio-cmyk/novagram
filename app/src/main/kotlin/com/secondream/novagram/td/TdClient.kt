@@ -1390,6 +1390,60 @@ object TdClient {
     }
 
     /**
+     * Find the FIRST unread @-mention or reply-to-me message in a chat.
+     * Used by the in-chat "@N" chip that lets the user jump straight to
+     * a pending mention without scrolling manually. Returns null when
+     * there is no unread mention (the chip is hidden in that case).
+     */
+    suspend fun findFirstUnreadMention(chatId: Long): TdApi.Message? {
+        val res = runCatching {
+            send(TdApi.SearchChatMessages(
+                chatId,
+                null,
+                "",
+                null,
+                0L,
+                0,
+                1,
+                TdApi.SearchMessagesFilterUnreadMention()
+            ))
+        }.getOrNull() ?: return null
+        return res.messages.firstOrNull()
+    }
+
+    /**
+     * Find the first unread reaction TO YOUR messages in a chat. Used
+     * by the "♥N" chip alongside findFirstUnreadMention. TDLib returns
+     * the message id; the caller jumps to it via the existing
+     * jumpToMessage path and marks reactions read.
+     */
+    suspend fun findFirstUnreadReaction(chatId: Long): TdApi.Message? {
+        val res = runCatching {
+            send(TdApi.SearchChatMessages(
+                chatId,
+                null,
+                "",
+                null,
+                0L,
+                0,
+                1,
+                TdApi.SearchMessagesFilterUnreadReaction()
+            ))
+        }.getOrNull() ?: return null
+        return res.messages.firstOrNull()
+    }
+
+    /** Mark all @-mentions in a chat as read. */
+    suspend fun readAllChatMentions(chatId: Long) {
+        runCatching { send(TdApi.ReadAllChatMentions(chatId)) }
+    }
+
+    /** Mark all reactions in a chat as read. */
+    suspend fun readAllChatReactions(chatId: Long) {
+        runCatching { send(TdApi.ReadAllChatReactions(chatId)) }
+    }
+
+    /**
      * Resolve public chats by username/title query. Returns the cached Chat
      * objects so callers can read title, type, photo, etc. Used by the
      * home-page "Join Nova" card to detect membership.
