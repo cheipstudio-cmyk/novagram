@@ -141,7 +141,17 @@ object TdClient {
             }
             else -> null
         }
-        return (scope?.muteFor ?: 0) > 0
+        // SAFER DEFAULT: when scope is null (not yet received from
+        // TDLib — happens during the brief window between auth-ready
+        // and the first UpdateScopeNotificationSettings push) we
+        // prefer to SKIP the notification rather than let it leak
+        // through. Without this default, any message arriving in a
+        // scope-muted chat during app startup would fire heads-up
+        // even though the user had explicitly muted it (e.g. "Mute
+        // all groups" in Telegram settings, then a group msg lands
+        // before TDLib has pushed the group scope back to us).
+        if (scope == null) return true
+        return scope.muteFor > 0
     }
 
     fun init(ctx: Context) {
@@ -474,6 +484,39 @@ object TdClient {
             is TdApi.AuthorizationStateReady -> {
                 _authState.value = AuthState.Ready
                 scope.launch { loadChats(100) }
+                // Eagerly populate scope notification settings cache.
+                // TDLib also pushes these via UpdateScopeNotificationSettings
+                // but the timing isn't deterministic — without prefetch
+                // there's a window between auth-ready and the first push
+                // where a new message in a scope-muted chat would slip
+                // through. Three concurrent get calls remove that race.
+                scope.launch {
+                    runCatching {
+                        scopePrivate = send(
+                            TdApi.GetScopeNotificationSettings(
+                                TdApi.NotificationSettingsScopePrivateChats()
+                            )
+                        )
+                    }
+                }
+                scope.launch {
+                    runCatching {
+                        scopeGroup = send(
+                            TdApi.GetScopeNotificationSettings(
+                                TdApi.NotificationSettingsScopeGroupChats()
+                            )
+                        )
+                    }
+                }
+                scope.launch {
+                    runCatching {
+                        scopeChannel = send(
+                            TdApi.GetScopeNotificationSettings(
+                                TdApi.NotificationSettingsScopeChannelChats()
+                            )
+                        )
+                    }
+                }
             }
             is TdApi.AuthorizationStateLoggingOut -> {
                 _authState.value = AuthState.LoggingOut

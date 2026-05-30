@@ -261,7 +261,7 @@
     <string name="bubble_edited_tag">modificato</string>
     <string name="chat_pinned_list_title">Messaggi fissati</string>
     <string name="chat_pinned_list_empty">Nessun messaggio fissato</string>
-    <string name="settings_section_media">Media</string>
+    <string name="settings_section_media">Varie</string>
     <string name="settings_media_autodownload">Download automatico durante lo scroll</string>
     <string name="settings_media_autodownload_desc">Se disattivato, foto/video/file vanno scaricati manualmente prima di essere visti</string>
     <string name="media_tap_to_download">Tocca per scaricare</string>
@@ -350,4 +350,5 @@
     <string name="settings_show_all_tab_desc">Mostra una scheda unica con tutte le chat in alto</string>
     <string name="settings_swap_swipe_reply">Inverti swipe per rispondere</string>
     <string name="settings_swap_swipe_reply_desc">Scorri a sinistra invece che a destra per rispondere a un messaggio</string>
+    <string name="action_join_channel">Unisciti al canale</string>
 </resources>

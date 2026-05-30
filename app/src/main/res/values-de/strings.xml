@@ -246,7 +246,7 @@
     <string name="bubble_edited_tag">bearbeitet</string>
     <string name="chat_pinned_list_title">Angeheftete Nachrichten</string>
     <string name="chat_pinned_list_empty">Keine angehefteten Nachrichten</string>
-    <string name="settings_section_media">Medien</string>
+    <string name="settings_section_media">Sonstiges</string>
     <string name="settings_media_autodownload">Automatischer Download beim Scrollen</string>
     <string name="settings_media_autodownload_desc">Wenn aus, müssen Fotos/Videos/Dateien vor dem Ansehen manuell heruntergeladen werden</string>
     <string name="media_tap_to_download">Zum Herunterladen tippen</string>
@@ -336,4 +336,5 @@
     <string name="settings_show_all_tab_desc">Einen einzelnen Tab mit allen Chats oben anzeigen</string>
     <string name="settings_swap_swipe_reply">Wischen zum Antworten umkehren</string>
     <string name="settings_swap_swipe_reply_desc">Nach links statt rechts wischen, um zu antworten</string>
+    <string name="action_join_channel">Kanal beitreten</string>
 </resources>

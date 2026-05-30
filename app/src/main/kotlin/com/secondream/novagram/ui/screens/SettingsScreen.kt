@@ -812,33 +812,84 @@ private val LANGUAGE_OPTIONS = listOf(
     LanguageOption("de", R.string.settings_language_de)
 )
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun LanguageRow(current: String, onPick: (String) -> Unit) {
-    Column(modifier = Modifier.padding(vertical = 6.dp)) {
-        LANGUAGE_OPTIONS.forEachIndexed { i, opt ->
-            Row(
+    var pickerOpen by remember { mutableStateOf(false) }
+    val currentLabel = LANGUAGE_OPTIONS.firstOrNull { it.tag == current }?.labelRes
+        ?: R.string.settings_language_system
+    // Collapsed card: shows the active language + chevron, tap opens
+    // the bottom-sheet picker. Replaces the previous "always-expanded
+    // list of 6 rows with checkmark" because at 6 entries it ate too
+    // much vertical space in the Settings screen and made the rest of
+    // the page scroll past the fold on mid-size devices.
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = { pickerOpen = true })
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            stringResource(currentLabel),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(
+            com.secondream.novagram.ui.icons.PhosphorIcons.CaretDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            modifier = Modifier.size(18.dp)
+        )
+    }
+    if (pickerOpen) {
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { pickerOpen = false },
+            sheetState = androidx.compose.material3.rememberModalBottomSheetState(),
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = { onPick(opt.tag) })
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 8.dp)
+                    .navigationBarsPadding()
             ) {
                 Text(
-                    stringResource(opt.labelRes),
-                    style = MaterialTheme.typography.bodyLarge,
+                    stringResource(R.string.settings_section_language),
+                    style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                 )
-                if (current == opt.tag) {
-                    Icon(
-                        com.secondream.novagram.ui.icons.PhosphorIcons.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
+                LANGUAGE_OPTIONS.forEach { opt ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = {
+                                onPick(opt.tag)
+                                pickerOpen = false
+                            })
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            stringResource(opt.labelRes),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (current == opt.tag) {
+                            Icon(
+                                com.secondream.novagram.ui.icons.PhosphorIcons.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
                 }
+                Spacer(Modifier.height(8.dp))
             }
-            if (i < LANGUAGE_OPTIONS.lastIndex) Divider()
         }
     }
 }
@@ -980,6 +1031,24 @@ private fun CreditsBlock() {
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Nova brand glyph — sits above the credits + CTAs as a quiet
+        // signature mark for the page footer. We pick the dark / light
+        // PNG variant by whether the current theme background is light
+        // or dark, since each PNG is colour-baked: the "dark" file is a
+        // dark glyph meant for light surfaces, and vice-versa. Keeping
+        // them as raster PNGs (rather than tintable vectors) preserves
+        // the gold-foil highlight on the diagonal stroke that's part of
+        // the brand identity.
+        val isLightTheme = MaterialTheme.colorScheme.background.luminance() > 0.5f
+        val novaIcon = if (isLightTheme) R.drawable.ic_novagram_dark
+                       else R.drawable.ic_novagram_light
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(novaIcon),
+            contentDescription = "Novagram",
+            modifier = Modifier
+                .size(64.dp)
+                .padding(bottom = 4.dp)
+        )
         Text(
             stringResource(R.string.credits_built_by),
             style = MaterialTheme.typography.bodyMedium,

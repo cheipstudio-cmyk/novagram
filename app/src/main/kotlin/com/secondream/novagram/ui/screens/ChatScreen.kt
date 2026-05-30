@@ -561,39 +561,56 @@ fun ChatScreen(
                         messages.add(0, m)
                     }
                 }
-                if (toAdd.isNotEmpty()) {
-                    // We DID get new messages while offscreen. Where to land
-                    // depends on whether those new messages are actually
-                    // unread (chat may have been already-read on another
-                    // device, in which case we just want the user at the
-                    // bottom seeing what's new).
-                    val freshChatInfo = runCatching { TdClient.getChat(chatId) }.getOrNull()
-                    val freshUnread = freshChatInfo?.unreadCount ?: 0
-                    val freshLastReadId = freshChatInfo?.lastReadInboxMessageId ?: 0L
+                // ALWAYS check the authoritative server state for unread
+                // — not just when we appended fresh messages. The user
+                // may have opened a chat from notification where the
+                // unread messages were ALREADY in cache (so toAdd is
+                // empty), but they still expect to land on the first
+                // unread. The previous gating on `toAdd.isNotEmpty()`
+                // skipped this case and dumped the user wherever
+                // listState was last anchored.
+                val freshChatInfo = runCatching { TdClient.getChat(chatId) }.getOrNull()
+                val freshUnread = freshChatInfo?.unreadCount ?: 0
+                val freshLastReadId = freshChatInfo?.lastReadInboxMessageId ?: 0L
 
-                    if (freshUnread > 0 && freshLastReadId > 0L) {
-                        // First-unread = smallest id strictly greater than
-                        // lastReadInboxMessageId among incoming messages
-                        // currently in our window. Land the user there so
-                        // already-read context sits above, unread below.
-                        val firstUnreadIdx = messages
-                            .withIndex()
-                            .filter { (_, m) -> !m.isOutgoing && m.id > freshLastReadId }
-                            .minByOrNull { it.value.id }
-                            ?.index
-                        if (firstUnreadIdx != null) {
-                            val viewportH = listState.layoutInfo.viewportSize.height
-                            val nearTopOffset = if (viewportH > 0) -(viewportH * 88 / 100) else -1600
-                            runCatching { listState.scrollToItem(firstUnreadIdx, nearTopOffset) }
-                            chatUnreadOnOpen = freshUnread
-                            unreadModeActive = true
-                            return@runCatching
-                        }
+                if (freshUnread > 0 && freshLastReadId > 0L) {
+                    // First-unread = smallest id strictly greater than
+                    // lastReadInboxMessageId among incoming messages
+                    // currently in our window. Land the user there so
+                    // already-read context sits above, unread below.
+                    val firstUnreadIdx = messages
+                        .withIndex()
+                        .filter { (_, m) -> !m.isOutgoing && m.id > freshLastReadId }
+                        .minByOrNull { it.value.id }
+                        ?.index
+                    if (firstUnreadIdx != null) {
+                        // Position the first-unread message at (or just
+                        // below) the TOP edge of the viewport. With
+                        // reverseLayout=true the scrollOffset is measured
+                        // from the layout-start (which is the visual
+                        // BOTTOM of the viewport), so a large POSITIVE
+                        // offset shifts the target upward visually. 88%
+                        // viewportH lands the first-unread bubble near
+                        // the top of the screen with the unread stream
+                        // flowing downward into the rest of the
+                        // viewport — identical to the cache-miss path.
+                        // (v0.10.39 used NEGATIVE 88% by mistake, which
+                        // scrolled to the wrong position — exactly the
+                        // "non mi porta al primo non letto" Eugenio kept
+                        // hitting.)
+                        val viewportH = listState.layoutInfo.viewportSize.height
+                        val nearTopOffset = if (viewportH > 0)
+                            (viewportH * 88) / 100 else 1400
+                        runCatching { listState.scrollToItem(firstUnreadIdx, nearTopOffset) }
+                        chatUnreadOnOpen = freshUnread
+                        unreadModeActive = true
+                        return@runCatching
                     }
-                    // No first-unread to land on (either chat fully read on
-                    // another device, or no incoming new messages — only our
-                    // own sends echoing back). Mark anything incoming as read
-                    // and glide to the bottom so the user sees what arrived.
+                }
+                if (toAdd.isNotEmpty()) {
+                    // No first-unread (chat fully read on another device)
+                    // but we DID receive new content offscreen — mark it
+                    // read and glide to the bottom so the user sees it.
                     runCatching {
                         TdClient.viewMessages(
                             chatId,
@@ -602,10 +619,10 @@ fun ChatScreen(
                     }
                     runCatching { listState.animateScrollToItem(0) }
                 }
-                // toAdd empty: pop-from-subscreen with no new content arrived
-                // while we were offscreen. Preserve scroll position exactly
-                // as the user left it — the listState already has the right
-                // anchor, doing nothing is the right answer.
+                // toAdd empty AND no fresh-unread: pop-from-subscreen
+                // with nothing changed. Preserve scroll position exactly
+                // as the user left it — the listState already has the
+                // right anchor, doing nothing is the right answer.
             }
             return@LaunchedEffect
         }
@@ -1053,7 +1070,7 @@ fun ChatScreen(
             if (idx < 0) return@launch
             run {
                 val viewportH = listState.layoutInfo.viewportSize.height
-                val topOffset = if (viewportH > 0) (viewportH * 6) / 10 else 800
+                val topOffset = if (viewportH > 0) (viewportH * 3) / 10 else 400
                 if (wasAlreadyLoaded) {
                     // No pagination happened, list size is stable.
                     // Animate so the user perceives the scroll motion —
@@ -1703,7 +1720,28 @@ fun ChatScreen(
                     // unread". Otherwise it stays as a neutral surface
                     // button. A small numeric badge in the top-right
                     // corner shows the count, capped visually at 999+.
-                    val unread = chatUnreadOnOpen
+                    //
+                    // We derive `unread` from the LIVE chat unreadCount
+                    // (re-read on every TdClient.chatUpdates emission for
+                    // this chatId) rather than the static
+                    // `chatUnreadOnOpen` snapshot. As the per-visible-item
+                    // viewMessages flow marks messages read progressively
+                    // while the user scrolls, TDLib pushes
+                    // UpdateChatReadInbox → chatCache.unreadCount drops →
+                    // this state updates → the FAB un-colors and the
+                    // badge hides the moment the backlog clears, without
+                    // forcing the user to actually reach index 0.
+                    val liveUnread by remember(chatId) {
+                        kotlinx.coroutines.flow.flow {
+                            emit(TdClient.getCachedChat(chatId)?.unreadCount ?: 0)
+                            TdClient.chatUpdates.collect { cid ->
+                                if (cid == chatId) {
+                                    emit(TdClient.getCachedChat(chatId)?.unreadCount ?: 0)
+                                }
+                            }
+                        }
+                    }.collectAsState(initial = TdClient.getCachedChat(chatId)?.unreadCount ?: 0)
+                    val unread = liveUnread
                     val hasUnread = unread > 0
                     val fabContainer = if (hasUnread)
                         MaterialTheme.colorScheme.primary
@@ -1915,8 +1953,19 @@ fun ChatScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                         } else {
+                            // Channel vs group CTA. Telegram users expect
+                            // the right word for the right surface — a
+                            // broadcast supergroup with isChannel=true is
+                            // "Canale" in the UI everywhere else; the join
+                            // button should match.
+                            val cachedForJoin = TdClient.getCachedChat(chatId)
+                            val isChannelHere = cachedForJoin?.type is TdApi.ChatTypeSupergroup &&
+                                (cachedForJoin.type as TdApi.ChatTypeSupergroup).isChannel
                             Text(
-                                stringResource(R.string.action_join_group),
+                                stringResource(
+                                    if (isChannelHere) R.string.action_join_channel
+                                    else R.string.action_join_group
+                                ),
                                 fontWeight = FontWeight.SemiBold
                             )
                         }

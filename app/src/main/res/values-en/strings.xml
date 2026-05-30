@@ -246,7 +246,7 @@
     <string name="bubble_edited_tag">edited</string>
     <string name="chat_pinned_list_title">Pinned messages</string>
     <string name="chat_pinned_list_empty">No pinned messages</string>
-    <string name="settings_section_media">Media</string>
+    <string name="settings_section_media">Other</string>
     <string name="settings_media_autodownload">Auto-download while scrolling</string>
     <string name="settings_media_autodownload_desc">When off, photos/videos/files require a tap to download before viewing</string>
     <string name="media_tap_to_download">Tap to download</string>
@@ -336,4 +336,5 @@
     <string name="settings_show_all_tab_desc">Show a single tab with all chats at the top</string>
     <string name="settings_swap_swipe_reply">Invert reply swipe</string>
     <string name="settings_swap_swipe_reply_desc">Swipe left instead of right to reply to a message</string>
+    <string name="action_join_channel">Join channel</string>
 </resources>

@@ -246,7 +246,7 @@
     <string name="bubble_edited_tag">editado</string>
     <string name="chat_pinned_list_title">Mensajes fijados</string>
     <string name="chat_pinned_list_empty">Sin mensajes fijados</string>
-    <string name="settings_section_media">Medios</string>
+    <string name="settings_section_media">Otros</string>
     <string name="settings_media_autodownload">Descarga automática al desplazar</string>
     <string name="settings_media_autodownload_desc">Si está desactivado, fotos/vídeos/archivos requieren un toque para descargarse antes de verlos</string>
     <string name="media_tap_to_download">Tocar para descargar</string>
@@ -336,4 +336,5 @@
     <string name="settings_show_all_tab_desc">Mostrar una sola pestaña con todos los chats en la parte superior</string>
     <string name="settings_swap_swipe_reply">Invertir deslizar para responder</string>
     <string name="settings_swap_swipe_reply_desc">Desliza a la izquierda en lugar de a la derecha para responder</string>
+    <string name="action_join_channel">Unirse al canal</string>
 </resources>

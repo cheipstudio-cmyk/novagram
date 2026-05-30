@@ -1116,7 +1116,18 @@ private fun ChatRow(
                     // conversations actually pinged you (same language official
                     // Telegram uses). Pill shape with a min size grows cleanly
                     // for 2–3 digit counts instead of cramming "99+" into a dot.
-                    val muted = (c.chat.notificationSettings?.muteFor ?: 0) > 0
+                    //
+                    // We route through TdClient.isChatMuted rather than reading
+                    // chat.notificationSettings.muteFor directly because the
+                    // per-chat value stays 0 with useDefaultMuteFor=true when
+                    // the user mutes at the SCOPE level (e.g. "Mute all
+                    // groups" in Telegram global settings, or muting a private
+                    // chat that inherits from the Private scope). Reading
+                    // muteFor only saw explicit per-chat mutes and kept
+                    // showing the accent badge for scope-muted privates —
+                    // exactly the "chat privata silenziata mostra accent
+                    // invece di grigio" bug Eugenio hit.
+                    val muted = TdClient.isChatMuted(c.chat)
                     val badgeBg = if (muted) MaterialTheme.colorScheme.surfaceVariant
                                   else MaterialTheme.colorScheme.primary
                     val badgeFg = if (muted) MaterialTheme.colorScheme.onSurfaceVariant
