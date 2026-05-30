@@ -607,7 +607,7 @@ fun ChatScreen(
                         // clamped to 0 for bubbles taller than 2/3 of
                         // the viewport.
                         val viewportH0 = listState.layoutInfo.viewportSize.height
-                        val roughOffset = if (viewportH0 > 0) viewportH0 / 3 else 200
+                        val roughOffset = if (viewportH0 > 0) viewportH0 / 2 else 200
                         runCatching { listState.scrollToItem(firstUnreadIdx, roughOffset) }
                         repeat(3) {
                             kotlinx.coroutines.delay(16)
@@ -615,7 +615,7 @@ fun ChatScreen(
                             val item = listState.layoutInfo.visibleItemsInfo
                                 .find { it.index == firstUnreadIdx }
                             if (vp > 0 && item != null) {
-                                val precise = (2 * vp / 3 - item.size).coerceAtLeast(0)
+                                val precise = ((vp - item.size) / 2).coerceAtLeast(0)
                                 runCatching { listState.scrollToItem(firstUnreadIdx, precise) }
                                 return@repeat
                             }
@@ -713,7 +713,7 @@ fun ChatScreen(
                     // offset which clipped tall content above the
                     // visible area.
                     val viewportH0 = listState.layoutInfo.viewportSize.height
-                    val roughOffset = if (viewportH0 > 0) viewportH0 / 3 else 200
+                    val roughOffset = if (viewportH0 > 0) viewportH0 / 2 else 200
                     runCatching { listState.scrollToItem(idx, roughOffset) }
                     repeat(3) {
                         kotlinx.coroutines.delay(16)
@@ -721,7 +721,7 @@ fun ChatScreen(
                         val item = listState.layoutInfo.visibleItemsInfo
                             .find { it.index == idx }
                         if (vp > 0 && item != null) {
-                            val precise = (2 * vp / 3 - item.size).coerceAtLeast(0)
+                            val precise = ((vp - item.size) / 2).coerceAtLeast(0)
                             runCatching { listState.scrollToItem(idx, precise) }
                             return@repeat
                         }
@@ -1130,28 +1130,32 @@ fun ChatScreen(
             run {
                 // Two-phase precise scroll. Rationale: a fixed fraction
                 // of viewportH as scrollOffset (the previous viewportH/4
-                // approach) can only approximate "centered" for one
-                // specific bubble height — short bubbles end up too low,
-                // tall bubbles (image / video / file) end up clipped
-                // because the offset was measured against the wrong
-                // height. Eugenio kept hitting it as "ci mette sempre
-                // un po' sopra" across all jump entry points (mention
+                // and viewportH/3 attempts) can only approximate
+                // "centered" for one specific bubble height — short
+                // bubbles end up biased to one side, tall bubbles
+                // (image / video / file) end up clipped because the
+                // offset was measured against the wrong height. Eugenio
+                // kept hitting it as "ci porta sempre un po' troppo in
+                // alto, bisogna scorrere in basso per vedere il
+                // messaggio" across all jump entry points (mention
                 // chip, reaction chip, t.me deeplink, pinned-message
                 // list, in-chat search arrows). The fix is to measure
                 // the ACTUAL height of the target after layout and then
-                // compute the exact offset that places the target's
-                // visual TOP at viewportH/3 — Telegram convention,
-                // upper-third with more context below (newer messages)
-                // than above. For bubbles taller than 2/3 of the
-                // viewport we clamp at 0 so the bubble's bottom sits
-                // flush with the viewport bottom and what fits extends
-                // upward into the screen.
+                // compute the exact offset that CENTERS it vertically
+                // in the viewport — equal context above and below, so
+                // the highlight flash sits squarely in the middle of
+                // the screen where the eye naturally lands. Formula:
+                // scrollOffset = (viewportH - targetH) / 2, clamped to
+                // 0 for bubbles taller than the viewport (in which
+                // case the bottom of the target sits flush with the
+                // viewport bottom and the visible portion extends up).
                 //
-                // Phase 1: rough scroll using a small offset so the
-                // target lands somewhere visible. Phase 2 (after a
-                // single-frame delay for layout to place the target)
-                // reads layoutInfo.visibleItemsInfo for the actual
-                // measured size and refines to the precise offset.
+                // Phase 1: rough scroll using viewportH/2 so the
+                // target lands roughly in the middle area. Phase 2
+                // (after a single-frame delay for layout to place the
+                // target) reads layoutInfo.visibleItemsInfo for the
+                // actual measured size and refines to the exact
+                // centered offset.
                 //
                 // The animate-vs-snap choice from the legacy code is
                 // preserved: animate for the already-loaded case (so
@@ -1170,7 +1174,7 @@ fun ChatScreen(
                             .find { it.index == idx }
                         if (vp > 0 && item != null) {
                             val targetH = item.size
-                            val precise = (2 * vp / 3 - targetH).coerceAtLeast(0)
+                            val precise = ((vp - targetH) / 2).coerceAtLeast(0)
                             // Snap for refinement: the rough scroll
                             // already animated/snapped to the
                             // approximate region, the refine is a
@@ -1194,10 +1198,10 @@ fun ChatScreen(
                 val existing = listState.layoutInfo.visibleItemsInfo
                     .find { it.index == idx }
                 if (existing != null && viewportH0 > 0 && wasAlreadyLoaded) {
-                    val precise = (2 * viewportH0 / 3 - existing.size).coerceAtLeast(0)
+                    val precise = ((viewportH0 - existing.size) / 2).coerceAtLeast(0)
                     runCatching { listState.animateScrollToItem(idx, precise) }
                 } else {
-                    val roughOffset = if (viewportH0 > 0) viewportH0 / 3 else 200
+                    val roughOffset = if (viewportH0 > 0) viewportH0 / 2 else 200
                     if (wasAlreadyLoaded) {
                         runCatching { listState.animateScrollToItem(idx, roughOffset) }
                     } else {
@@ -1645,8 +1649,22 @@ fun ChatScreen(
             // lands near the top of the visible area.
             androidx.compose.animation.AnimatedVisibility(
                 visible = searchOpen,
-                enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
-                exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut()
+                enter = androidx.compose.animation.expandVertically(
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 320,
+                        easing = androidx.compose.animation.core.CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
+                    )
+                ) + androidx.compose.animation.fadeIn(
+                    animationSpec = androidx.compose.animation.core.tween(280, delayMillis = 40)
+                ),
+                exit = androidx.compose.animation.shrinkVertically(
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 260,
+                        easing = androidx.compose.animation.core.CubicBezierEasing(0.3f, 0.0f, 0.8f, 0.15f)
+                    )
+                ) + androidx.compose.animation.fadeOut(
+                    animationSpec = androidx.compose.animation.core.tween(180)
+                )
             ) {
                 ChatSearchBar(
                     query = searchQuery,
@@ -1860,10 +1878,21 @@ fun ChatScreen(
                 val hasReactions = liveReactions > 0
                 androidx.compose.animation.AnimatedVisibility(
                     visible = hasMentions || hasReactions,
-                    enter = androidx.compose.animation.fadeIn() +
-                        androidx.compose.animation.scaleIn(initialScale = 0.8f),
-                    exit = androidx.compose.animation.fadeOut() +
-                        androidx.compose.animation.scaleOut(targetScale = 0.8f),
+                    enter = androidx.compose.animation.fadeIn(
+                        animationSpec = androidx.compose.animation.core.tween(280)
+                    ) + androidx.compose.animation.scaleIn(
+                        initialScale = 0.6f,
+                        animationSpec = androidx.compose.animation.core.spring(
+                            dampingRatio = 0.55f,
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                        )
+                    ),
+                    exit = androidx.compose.animation.fadeOut(
+                        animationSpec = androidx.compose.animation.core.tween(220)
+                    ) + androidx.compose.animation.scaleOut(
+                        targetScale = 0.6f,
+                        animationSpec = androidx.compose.animation.core.tween(220)
+                    ),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         // 80dp lifts the chip above the FAB (which is 40dp
@@ -1959,10 +1988,21 @@ fun ChatScreen(
                 }
                 androidx.compose.animation.AnimatedVisibility(
                     visible = showJumpToBottom,
-                    enter = androidx.compose.animation.fadeIn() +
-                        androidx.compose.animation.scaleIn(initialScale = 0.8f),
-                    exit = androidx.compose.animation.fadeOut() +
-                        androidx.compose.animation.scaleOut(targetScale = 0.8f),
+                    enter = androidx.compose.animation.fadeIn(
+                        animationSpec = androidx.compose.animation.core.tween(280)
+                    ) + androidx.compose.animation.scaleIn(
+                        initialScale = 0.6f,
+                        animationSpec = androidx.compose.animation.core.spring(
+                            dampingRatio = 0.55f,
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                        )
+                    ),
+                    exit = androidx.compose.animation.fadeOut(
+                        animationSpec = androidx.compose.animation.core.tween(220)
+                    ) + androidx.compose.animation.scaleOut(
+                        targetScale = 0.6f,
+                        animationSpec = androidx.compose.animation.core.tween(220)
+                    ),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(end = 14.dp, bottom = 14.dp)

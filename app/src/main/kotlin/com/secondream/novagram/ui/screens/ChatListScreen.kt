@@ -241,21 +241,23 @@ fun ChatListScreen(
         publicSearching = false
     }
 
-    // Collapsing top-nav (TopAppBar + tabs + offline banner) on scroll.
-    // Parallax-style: scrolling DOWN inside the chat list pushes the
-    // header up out of view (the LazyColumn gets the freed space —
-    // more chats visible at once); scrolling UP brings it straight
-    // back. Telegram-style "enter-always" behaviour: the header
-    // reappears the instant the user reverses direction, regardless
-    // of scroll position, so it's never more than a small upward
-    // flick away.
+    // Collapsing pill-tabs on scroll. Parallax-style: scrolling DOWN
+    // inside the chat list pushes the tab pill row up under the
+    // TopAppBar (which itself stays full-size and always visible —
+    // the title, search, avatar, settings stay reachable at all
+    // times); scrolling UP brings the pills straight back into view.
+    // Telegram-style "enter-always" behaviour: the pill row reappears
+    // the instant the user reverses direction, regardless of scroll
+    // depth, so it's never more than a small upward flick away.
     //
     // Mechanism: a NestedScrollConnection intercepts pre-scroll deltas
     // from the LazyColumn (Scaffold dispatches through the modifier
     // attached below). We track `headerOffsetPx` in [-naturalHeight, 0]
-    // and a `Modifier.layout` on the topBar Column reports a SHRUNK
-    // height to Scaffold — so the content area genuinely expands,
-    // it's not just a visual translation that leaves a gap.
+    // and a `Modifier.layout` on the pill Box reports a SHRUNK height
+    // to its parent Column — so the chat list area genuinely expands,
+    // it's not just a visual translation that leaves a gap. Only the
+    // pill Box collapses; the TopAppBar sibling above it stays
+    // unaffected (it doesn't participate in the layout shrinkage).
     val headerOffsetPx = remember { mutableIntStateOf(0) }
     var headerNaturalHeightPx by remember { mutableIntStateOf(0) }
     val nestedScrollConnection = remember {
@@ -276,17 +278,22 @@ fun ChatListScreen(
     Scaffold(
         modifier = Modifier.nestedScroll(nestedScrollConnection),
         floatingActionButton = {
-            // Springy press feedback: the FAB dips to 88% under the finger and
-            // springs back on release. The scale runs through a graphicsLayer
-            // block (layer-only, no recomposition) and the low damping ratio
-            // gives a small, satisfying rebound without looking toy-ish.
+            // Springy press feedback: the FAB dips to 85% under the
+            // finger and springs back on release. dampingRatio = 0.5f
+            // gives a clearly perceivable rebound (one-and-a-half
+            // overshoots) without feeling toy-ish; StiffnessMediumLow
+            // stretches the motion out to ~350ms perceptual duration
+            // so the bounce reads as deliberate physics, not a quick
+            // twitch. graphicsLayer-only invalidation keeps the scale
+            // off the recomposition path — animation cost is one
+            // matrix multiply per frame.
             val fabInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
             val fabPressed by fabInteraction.collectIsPressedAsState()
             val fabScale by androidx.compose.animation.core.animateFloatAsState(
-                targetValue = if (fabPressed) 0.88f else 1f,
+                targetValue = if (fabPressed) 0.85f else 1f,
                 animationSpec = androidx.compose.animation.core.spring(
-                    dampingRatio = 0.55f,
-                    stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+                    dampingRatio = 0.50f,
+                    stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
                 ),
                 label = "fabScale"
             )
@@ -307,27 +314,7 @@ fun ChatListScreen(
             }
         },
         topBar = {
-            Column(
-                modifier = Modifier
-                    .clipToBounds()
-                    .layout { measurable, constraints ->
-                        val placeable = measurable.measure(constraints)
-                        val natural = placeable.height
-                        // Cache the natural (fully-expanded) height so
-                        // the NestedScrollConnection knows the
-                        // collapse clamp. Idempotent write — Compose
-                        // skips the snapshot mutation if the value
-                        // matches the current one.
-                        if (headerNaturalHeightPx != natural) {
-                            headerNaturalHeightPx = natural
-                        }
-                        val offset = headerOffsetPx.intValue
-                        val visibleH = (natural + offset).coerceIn(0, natural)
-                        layout(placeable.width, visibleH) {
-                            placeable.place(0, offset)
-                        }
-                    }
-            ) {
+            Column {
                 TopAppBar(
                     title = {
                         if (searchOpen) {
@@ -451,13 +438,30 @@ fun ChatListScreen(
                         }
                     }
                 }
-                PillTabs(
-                    icons = tabs.map { it.icon },
-                    contentDescriptions = tabs.map { stringResource(it.labelRes) },
-                    badges = tabBadges,
-                    selected = selectedTab.coerceIn(0, tabs.lastIndex),
-                    onSelect = { selectedTab = it }
-                )
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .clipToBounds()
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints)
+                            val natural = placeable.height
+                            if (headerNaturalHeightPx != natural) {
+                                headerNaturalHeightPx = natural
+                            }
+                            val offset = headerOffsetPx.intValue
+                            val visibleH = (natural + offset).coerceIn(0, natural)
+                            layout(placeable.width, visibleH) {
+                                placeable.place(0, offset)
+                            }
+                        }
+                ) {
+                    PillTabs(
+                        icons = tabs.map { it.icon },
+                        contentDescriptions = tabs.map { stringResource(it.labelRes) },
+                        badges = tabBadges,
+                        selected = selectedTab.coerceIn(0, tabs.lastIndex),
+                        onSelect = { selectedTab = it }
+                    )
+                }
             }
         }
     ) { padding ->

@@ -71,6 +71,18 @@ class App : Application(), ImageLoaderFactory {
                 // the banner / send-gating accurate the instant the user
                 // returns to the app, independent of callback timing.
                 com.secondream.novagram.connectivity.ConnectivityState.recheck()
+                // Re-run the GitHub release check on every foreground
+                // entry. The check inside onCreate above only fires on
+                // cold start, but Android can keep this process alive
+                // for days across many app->home->app cycles. Without a
+                // re-check the accent dot on Settings would still show
+                // the version we saw at process start, missing fresh
+                // builds the user shipped while the app was backgrounded.
+                // 60 req/h anonymous rate limit + once-per-foreground
+                // frequency = plenty of headroom.
+                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    com.secondream.novagram.update.UpdateChecker.check()
+                }
             }
             override fun onStop(owner: LifecycleOwner) { AppForegroundState.isInForeground = false }
         })

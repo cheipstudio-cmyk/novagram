@@ -183,12 +183,13 @@ fun NewChatScreen(
         }
     }
 
-    // Collapsing top-nav on scroll — same parallax pattern as
+    // Collapsing pill-tabs on scroll — same parallax pattern as
     // ChatListScreen. The contacts list inside the pager scrolls; its
     // pre-scroll deltas flow through the Scaffold's nestedScroll
-    // connection and the topBar Column collapses/expands its
-    // measured height, freeing screen real estate as the user scans
-    // deeper into the contact list.
+    // connection and the PILL ROW (only — not the TopAppBar above it,
+    // not the search bar) collapses up out of the way, giving the
+    // contact list its full height. Pills come back the moment the
+    // user reverses scroll direction.
     val headerOffsetPx = remember { mutableIntStateOf(0) }
     var headerNaturalHeightPx by remember { mutableIntStateOf(0) }
     val nestedScrollConnection = remember {
@@ -209,22 +210,7 @@ fun NewChatScreen(
     Scaffold(
         modifier = Modifier.nestedScroll(nestedScrollConnection),
         topBar = {
-            Column(
-                modifier = Modifier
-                    .clipToBounds()
-                    .layout { measurable, constraints ->
-                        val placeable = measurable.measure(constraints)
-                        val natural = placeable.height
-                        if (headerNaturalHeightPx != natural) {
-                            headerNaturalHeightPx = natural
-                        }
-                        val offset = headerOffsetPx.intValue
-                        val visibleH = (natural + offset).coerceIn(0, natural)
-                        layout(placeable.width, visibleH) {
-                            placeable.place(0, offset)
-                        }
-                    }
-            ) {
+            Column {
                 TopAppBar(
                     title = {
                         Text(
@@ -248,18 +234,35 @@ fun NewChatScreen(
                 Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                     SearchInline(value = query, onValueChange = { query = it })
                 }
-                PillTabs(
-                    icons = listOf(
-                        com.secondream.novagram.ui.icons.PhosphorIcons.User,
-                        com.secondream.novagram.ui.icons.PhosphorIcons.Phone
-                    ),
-                    contentDescriptions = listOf(
-                        stringResource(R.string.new_chat_tab_telegram),
-                        stringResource(R.string.new_chat_tab_phone)
-                    ),
-                    selected = selectedTab,
-                    onSelect = { selectedTab = it }
-                )
+                Box(
+                    modifier = Modifier
+                        .clipToBounds()
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints)
+                            val natural = placeable.height
+                            if (headerNaturalHeightPx != natural) {
+                                headerNaturalHeightPx = natural
+                            }
+                            val offset = headerOffsetPx.intValue
+                            val visibleH = (natural + offset).coerceIn(0, natural)
+                            layout(placeable.width, visibleH) {
+                                placeable.place(0, offset)
+                            }
+                        }
+                ) {
+                    PillTabs(
+                        icons = listOf(
+                            com.secondream.novagram.ui.icons.PhosphorIcons.User,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Phone
+                        ),
+                        contentDescriptions = listOf(
+                            stringResource(R.string.new_chat_tab_telegram),
+                            stringResource(R.string.new_chat_tab_phone)
+                        ),
+                        selected = selectedTab,
+                        onSelect = { selectedTab = it }
+                    )
+                }
             }
         }
     ) { padding ->

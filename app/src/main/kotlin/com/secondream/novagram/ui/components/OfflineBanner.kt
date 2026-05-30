@@ -39,8 +39,22 @@ fun OfflineBanner(modifier: Modifier = Modifier) {
     val online by ConnectivityState.isOnline.collectAsState()
     AnimatedVisibility(
         visible = !online,
-        enter = expandVertically() + fadeIn(),
-        exit = shrinkVertically() + fadeOut(),
+        enter = expandVertically(
+            animationSpec = androidx.compose.animation.core.tween(
+                durationMillis = 360,
+                easing = androidx.compose.animation.core.CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
+            )
+        ) + fadeIn(
+            animationSpec = androidx.compose.animation.core.tween(320, delayMillis = 40)
+        ),
+        exit = shrinkVertically(
+            animationSpec = androidx.compose.animation.core.tween(
+                durationMillis = 280,
+                easing = androidx.compose.animation.core.CubicBezierEasing(0.3f, 0.0f, 0.8f, 0.15f)
+            )
+        ) + fadeOut(
+            animationSpec = androidx.compose.animation.core.tween(200)
+        ),
         modifier = modifier
     ) {
         Box(
