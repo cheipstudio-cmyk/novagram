@@ -62,7 +62,16 @@ class App : Application(), ImageLoaderFactory {
         // become invisible (with a small grace period for rotation etc.) so
         // we don't flap on configuration changes.
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) { AppForegroundState.isInForeground = true }
+            override fun onStart(owner: LifecycleOwner) {
+                AppForegroundState.isInForeground = true
+                // Re-read connectivity state on foreground entry. Some OEM
+                // ROMs throttle our NetworkCallback while the app is
+                // backgrounded so a transition that happened during that
+                // window can be missed. A synchronous re-read here makes
+                // the banner / send-gating accurate the instant the user
+                // returns to the app, independent of callback timing.
+                com.secondream.novagram.connectivity.ConnectivityState.recheck()
+            }
             override fun onStop(owner: LifecycleOwner) { AppForegroundState.isInForeground = false }
         })
 
@@ -77,6 +86,30 @@ class App : Application(), ImageLoaderFactory {
         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             IconAliasManager.applyFromSettings(this@App)
         }
+
+        // Re-apply the launcher icon every time the app goes BACKGROUND.
+        // Reason: the v0.10.51 fix removed the runtime icon swap from
+        // setThemeMode (to stop the mid-session crash), so the icon
+        // only re-evaluates on cold start. But Android frequently keeps
+        // the process alive between recents-swipe-away and re-open, so
+        // a user who changes theme + reopens the app fast never gets a
+        // fresh onCreate and the launcher icon stays on the old variant.
+        // ProcessLifecycleOwner.ON_STOP fires when the LAST visible
+        // surface leaves the screen — i.e. the user is now on the home
+        // screen / another app, not in Novagram. That's exactly the
+        // moment when pm.setComponentEnabledSetting is safe to call:
+        // any kill it triggers on hostile OEM ROMs happens invisibly,
+        // and the next time the user opens the app from the launcher,
+        // they see the right icon already applied.
+        androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(
+            androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        IconAliasManager.applyFromSettings(this@App)
+                    }
+                }
+            }
+        )
 
         // Update check against GitHub Releases — pure background, the
         // result lands in UpdateChecker.updateAvailable which the chat-

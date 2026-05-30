@@ -1056,6 +1056,64 @@ private fun CreditsBlock() {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(14.dp))
+        // Check for updates — opens the Play Store listing. Gains an
+        // accent dot at top-right when UpdateChecker.updateAvailable
+        // is true, matching the dot that shows on the topbar Settings
+        // gear in the chat list. The dot is the same visual signal at
+        // both entry points so the user can see "there's an update" at
+        // a glance and then act on it here.
+        val updateAvailable by com.secondream.novagram.update
+            .UpdateChecker.updateAvailable
+            .collectAsState()
+        androidx.compose.foundation.layout.Box {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable {
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(
+                                        com.secondream.novagram.update
+                                            .UpdateChecker.RELEASES_PAGE
+                                    )
+                                )
+                            )
+                        }
+                    }
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    stringResource(R.string.action_check_updates),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            if (updateAvailable) {
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 12.dp, end = 16.dp)
+                        .size(10.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
         // Join the Nova Telegram community. Opens the group link
         // INSIDE this app (setPackage) so it doesn't bounce to a browser.
         Row(

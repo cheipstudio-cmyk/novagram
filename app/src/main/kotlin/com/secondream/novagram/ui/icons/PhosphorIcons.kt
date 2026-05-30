@@ -37,6 +37,31 @@ private fun phosphor(
         )
     }.build()
 
+/**
+ * Build a Phosphor-Bold ImageVector from multiple stacked filled
+ * sub-paths. Each entry in [paths] becomes its own addPath() call on
+ * the builder, drawn in order — so later entries paint over earlier
+ * ones. Use this for icons like Chats (two bubbles, front overlays
+ * back) or Archive (lid + hollow body + slot handle) where a single
+ * complex path with EvenOdd holes either becomes unreadable at small
+ * sizes or fails to render correctly across some renderers.
+ */
+private fun phosphorLayers(name: String, vararg paths: String): ImageVector =
+    ImageVector.Builder(
+        name = "Phosphor.Bold.$name",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 256f,
+        viewportHeight = 256f
+    ).apply {
+        paths.forEach { p ->
+            addPath(
+                pathData = PathParser().parsePathString(p).toNodes(),
+                fill = SolidColor(Color.Black)
+            )
+        }
+    }.build()
+
 object PhosphorIcons {
     // --- Navigation & chrome ---
     val MagnifyingGlass: ImageVector by lazy { phosphor("MagnifyingGlass",
@@ -172,43 +197,41 @@ object PhosphorIcons {
 
     /**
      * Two overlapping speech bubbles — the "all chats" / "chat group"
-     * icon. Drawn with EvenOdd fill so each bubble has a hollow
-     * interior (the Phosphor Bold "outlined" look): the outer rounded-
-     * rect + tail subpath fills, then the inner rounded-rect subpath
-     * carves it out. Back bubble's tail points down-right, front
-     * bubble's tail points down-left — matches Phosphor's upstream
-     * Chats icon orientation.
+     * icon. Each bubble is drawn as a ring (outer rounded-rect-with-tail
+     * + inner rect with opposite winding so NonZero fill cancels the
+     * interior). The front bubble's path is added after the back, so
+     * Compose paints front over back, producing the classic two-bubble
+     * silhouette of Phosphor Bold Chats.
      */
     val Chats: ImageVector by lazy {
-        phosphor(
+        phosphorLayers(
             "Chats",
-            // Back bubble (outer + inner cutout):
-            "M88,40H216a12,12,0,0,1,12,12V148a12,12,0,0,1-12,12H188v32l-32-32H100a12,12,0,0,1-12-12V52A12,12,0,0,1,88,40Z" +
-            "M104,60V148h60l16,16V148h32V60Z" +
-            // Front bubble (outer + inner cutout):
-            "M40,88H168a12,12,0,0,1,12,12V168a12,12,0,0,1-12,12H100L68,212V180H40a12,12,0,0,1-12-12V100A12,12,0,0,1,40,88Z" +
-            "M56,108V180h28v8l16-8h64V108Z",
-            fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
+            // Back bubble: rounded-rect at top-right with tail
+            // pointing down-right. Outer traced CW, inner cutout
+            // traced CCW so NonZero fill leaves a clean ring.
+            "M92,40H220a12,12,0,0,1,12,12V148a12,12,0,0,1-12,12H192L208,184L184,160H104a12,12,0,0,1-12-12V52A12,12,0,0,1,92,40ZM108,56V144H216V56Z",
+            // Front bubble: rounded-rect at bottom-left with tail
+            // pointing down-left.
+            "M52,80H180a12,12,0,0,1,12,12V188a12,12,0,0,1-12,12H96L72,224L80,200H52a12,12,0,0,1-12,-12V92A12,12,0,0,1,52,80ZM56,96V184H176V96Z"
         )
     }
 
     /**
-     * Archive box — filled lid on top, hollow body underneath with a
-     * pill-shaped slot/handle in the middle. EvenOdd fill: the outer
-     * silhouette (lid + body together) fills solid, then the body
-     * interior carves out, then the slot fills back in. Three
-     * subpaths, three winding levels.
+     * Archive box — three stacked layers: filled lid on top, hollow
+     * body ring below, small pill-shaped slot handle inside the body.
+     * Drawing them as separate paths (rather than one EvenOdd path)
+     * keeps the silhouette crisp at small sizes and matches how
+     * Phosphor Bold renders the icon upstream.
      */
     val Archive: ImageVector by lazy {
-        phosphor(
+        phosphorLayers(
             "Archive",
-            // Outer silhouette (lid + body together):
-            "M40,68H216a12,12,0,0,1,12,12v32a12,12,0,0,1-12,12h-4V200a16,16,0,0,1-16,16H60a16,16,0,0,1-16-16V124H40a12,12,0,0,1-12-12V80A12,12,0,0,1,40,68Z" +
-            // Body interior cutout:
-            "M68,124V192H188V124Z" +
-            // Slot handle (filled pill inside body cutout):
-            "M104,148a12,12,0,0,1,12-12h24a12,12,0,0,1,0,24H116A12,12,0,0,1,104,148Z",
-            fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
+            // Lid (filled rounded rectangle)
+            "M40,56H216a12,12,0,0,1,12,12v32a12,12,0,0,1-12,12H40a12,12,0,0,1-12-12V68A12,12,0,0,1,40,56Z",
+            // Body (outer CW + inner CCW cancellation → ring)
+            "M44,124H212V200a16,16,0,0,1-16,16H60a16,16,0,0,1-16-16ZM68,140V200H188V140Z",
+            // Slot handle (filled pill inside the body)
+            "M104,168a12,12,0,0,1,12-12h24a12,12,0,0,1,0,24H116A12,12,0,0,1,104,168Z"
         )
     }
 }

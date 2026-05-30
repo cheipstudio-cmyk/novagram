@@ -329,30 +329,28 @@ fun ChatListScreen(
                                     contentDescription = stringResource(R.string.search_action)
                                 )
                             }
-                            // Download button — opens GitHub releases page
-                            // in browser. Decorated with an accent dot when
-                            // UpdateChecker has flagged a newer release as
-                            // available. The Box wraps the IconButton so
-                            // the dot can be anchored at TopEnd of the
-                            // icon's bounding box, just outside the glyph.
+                            IconButton(onClick = onOpenProfile) {
+                                Avatar(
+                                    file = myAvatarFile,
+                                    fallbackText = myInitial,
+                                    bgColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    size = 32.dp
+                                )
+                            }
+                            // Settings gear — gets an accent dot at top-
+                            // right when UpdateChecker has flagged a
+                            // newer release. The download button used
+                            // to live in this slot; we moved the actual
+                            // update affordance into the settings screen
+                            // (Info section) so the topbar stays clean.
                             val updateAvailable by com.secondream.novagram.update
                                 .UpdateChecker.updateAvailable
                                 .collectAsState()
-                            val updateCtx = LocalContext.current
                             androidx.compose.foundation.layout.Box {
-                                IconButton(onClick = {
-                                    val intent = android.content.Intent(
-                                        android.content.Intent.ACTION_VIEW,
-                                        android.net.Uri.parse(
-                                            com.secondream.novagram.update
-                                                .UpdateChecker.RELEASES_PAGE
-                                        )
-                                    )
-                                    runCatching { updateCtx.startActivity(intent) }
-                                }) {
+                                IconButton(onClick = onOpenSettings) {
                                     Icon(
-                                        com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple,
-                                        contentDescription = stringResource(R.string.action_check_updates)
+                                        com.secondream.novagram.ui.icons.PhosphorIcons.Gear,
+                                        contentDescription = stringResource(R.string.action_settings)
                                     )
                                 }
                                 if (updateAvailable) {
@@ -366,20 +364,6 @@ fun ChatListScreen(
                                     )
                                 }
                             }
-                            IconButton(onClick = onOpenProfile) {
-                                Avatar(
-                                    file = myAvatarFile,
-                                    fallbackText = myInitial,
-                                    bgColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    size = 32.dp
-                                )
-                            }
-                            IconButton(onClick = onOpenSettings) {
-                                Icon(
-                                    com.secondream.novagram.ui.icons.PhosphorIcons.Gear,
-                                    contentDescription = stringResource(R.string.action_settings)
-                                )
-                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -389,14 +373,21 @@ fun ChatListScreen(
                 )
                 com.secondream.novagram.ui.components.OfflineBanner()
                 // Per-tab unread totals (sum of unread across chats in
-                // that category). Archive sums archived chats; the others
-                // sum their kind among non-archived chats.
+                // that category). MUTED chats are excluded from the
+                // aggregate: their per-row badge still shows so the user
+                // can see "you have N unread in this muted group", but
+                // they don't inflate the top-of-tab count. Matches the
+                // user's mental model that the tab badge represents
+                // "stuff I should look at" — muted chats by definition
+                // are stuff they've deprioritized. Archive tab follows
+                // the same rule (an archived AND muted chat shouldn't
+                // contribute either).
                 val tabBadges = remember(allChats, tabs) {
                     tabs.map { spec ->
                         when {
-                            spec.isAll -> allChats.filter { !it.isArchived }.sumOf { it.unread }
-                            spec.isArchive -> allChats.filter { it.isArchived }.sumOf { it.unread }
-                            else -> allChats.filter { !it.isArchived && it.kind == spec.kind }.sumOf { it.unread }
+                            spec.isAll -> allChats.filter { !it.isArchived && !it.isMuted }.sumOf { it.unread }
+                            spec.isArchive -> allChats.filter { it.isArchived && !it.isMuted }.sumOf { it.unread }
+                            else -> allChats.filter { !it.isArchived && !it.isMuted && it.kind == spec.kind }.sumOf { it.unread }
                         }
                     }
                 }
@@ -1164,15 +1155,6 @@ private fun ChatRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            // Pinned-chat highlight: 6% accent overlay so the row stands
-            // out at a glance without competing with the unread badges
-            // or the title text. Sits BEHIND the click ripple, so the
-            // click feedback still reads cleanly on top of the tint.
-            .then(
-                if (c.isPinned)
-                    Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.06f))
-                else Modifier
-            )
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically

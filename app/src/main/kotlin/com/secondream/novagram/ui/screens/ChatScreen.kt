@@ -585,24 +585,41 @@ fun ChatScreen(
                         .minByOrNull { it.value.id }
                         ?.index
                     if (firstUnreadIdx != null) {
-                        // Position the first-unread message at (or just
-                        // below) the TOP edge of the viewport. With
-                        // reverseLayout=true the scrollOffset is measured
-                        // from the layout-start (which is the visual
-                        // BOTTOM of the viewport), so a large POSITIVE
-                        // offset shifts the target upward visually. 88%
-                        // viewportH lands the first-unread bubble near
-                        // the top of the screen with the unread stream
-                        // flowing downward into the rest of the
-                        // viewport — identical to the cache-miss path.
-                        // (v0.10.39 used NEGATIVE 88% by mistake, which
-                        // scrolled to the wrong position — exactly the
-                        // "non mi porta al primo non letto" Eugenio kept
-                        // hitting.)
-                        val viewportH = listState.layoutInfo.viewportSize.height
-                        val nearTopOffset = if (viewportH > 0)
-                            (viewportH * 88) / 100 else 1400
-                        runCatching { listState.scrollToItem(firstUnreadIdx, nearTopOffset) }
+                        // Two-phase precise positioning: rough scroll
+                        // to bring the first-unread into the visible
+                        // window, then refine to a height-aware offset
+                        // that puts the bubble's visual TOP at
+                        // viewportH/3 — Telegram-style upper-third
+                        // anchor, more context BELOW (unread stream
+                        // flowing downward) than ABOVE. This replaces
+                        // the previous fixed-88%-viewport offset which
+                        // clipped the TOP of tall bubbles (photos,
+                        // videos, long quoted text) above the visible
+                        // area — root cause of Eugenio's "ci mette
+                        // sempre un pochino sopra" complaint across
+                        // every jump entry point. Math: with
+                        // reverseLayout=true scrollOffset measures the
+                        // distance from the visual bottom up to the
+                        // item's bottom edge, so for target top at
+                        // viewportH/3 → target bottom at
+                        // viewportH/3 + targetH → distance from
+                        // viewportBottom = 2*viewportH/3 - targetH,
+                        // clamped to 0 for bubbles taller than 2/3 of
+                        // the viewport.
+                        val viewportH0 = listState.layoutInfo.viewportSize.height
+                        val roughOffset = if (viewportH0 > 0) viewportH0 / 3 else 200
+                        runCatching { listState.scrollToItem(firstUnreadIdx, roughOffset) }
+                        repeat(3) {
+                            kotlinx.coroutines.delay(16)
+                            val vp = listState.layoutInfo.viewportSize.height
+                            val item = listState.layoutInfo.visibleItemsInfo
+                                .find { it.index == firstUnreadIdx }
+                            if (vp > 0 && item != null) {
+                                val precise = (2 * vp / 3 - item.size).coerceAtLeast(0)
+                                runCatching { listState.scrollToItem(firstUnreadIdx, precise) }
+                                return@repeat
+                            }
+                        }
                         chatUnreadOnOpen = freshUnread
                         unreadModeActive = true
                         return@runCatching
@@ -687,21 +704,28 @@ fun ChatScreen(
                     messages.indexOfFirst { it.id == tgt.id }
                 } ?: -1
                 if (idx >= 0) {
-                    // Position the first-unread message at (or just
-                    // below) the TOP edge of the viewport, so the
-                    // user reads downward into the unread stream and
-                    // nothing already-read peeks in above. In a
-                    // reverseLayout list the scrollOffset is measured
-                    // from the layout-start (the visual bottom), so a
-                    // large offset close to the viewport height
-                    // shifts the target up toward the visual top.
-                    // We leave a tiny gap (~12% viewport) so a future
-                    // "X messaggi non letti" divider has room to
-                    // render above the first unread bubble.
-                    val viewportH = listState.layoutInfo.viewportSize.height
-                    val nearTopOffset = if (viewportH > 0)
-                        (viewportH * 88) / 100 else 1400
-                    runCatching { listState.scrollToItem(idx, nearTopOffset) }
+                    // Two-phase precise positioning — same algorithm as
+                    // the cache-miss path above. Rough scroll to bring
+                    // the first-unread into the visible window, then
+                    // refine to a height-aware offset that puts the
+                    // bubble's visual TOP at viewportH/3 regardless of
+                    // bubble height. Replaces the previous fixed-88%
+                    // offset which clipped tall content above the
+                    // visible area.
+                    val viewportH0 = listState.layoutInfo.viewportSize.height
+                    val roughOffset = if (viewportH0 > 0) viewportH0 / 3 else 200
+                    runCatching { listState.scrollToItem(idx, roughOffset) }
+                    repeat(3) {
+                        kotlinx.coroutines.delay(16)
+                        val vp = listState.layoutInfo.viewportSize.height
+                        val item = listState.layoutInfo.visibleItemsInfo
+                            .find { it.index == idx }
+                        if (vp > 0 && item != null) {
+                            val precise = (2 * vp / 3 - item.size).coerceAtLeast(0)
+                            runCatching { listState.scrollToItem(idx, precise) }
+                            return@repeat
+                        }
+                    }
                     unreadModeActive = true
                 }
                 // Already-read incoming messages we DID load: those can be
@@ -1104,31 +1128,82 @@ fun ChatScreen(
             // fallback, so there's nothing more to do here.
             if (idx < 0) return@launch
             run {
-                val viewportH = listState.layoutInfo.viewportSize.height
-                // Center the target in the viewport. With reverseLayout=true,
-                // scrollOffset is measured from the LAYOUT START (= visual
-                // BOTTOM of the chat), so half-viewport offset places the
-                // target item at the visual MIDDLE of the screen. Previous
-                // 30% offset left tall bubbles partially clipped under the
-                // TopAppBar — the user had to scroll up manually to read
-                // the upper half. 50% is the universal "natural reading
-                // position" Telegram and most chat clients use.
-                val topOffset = if (viewportH > 0) viewportH / 2 else 400
-                if (wasAlreadyLoaded) {
-                    // No pagination happened, list size is stable.
-                    // Animate so the user perceives the scroll motion —
-                    // critical for the in-chat search arrows where
-                    // tapping next/prev needs to feel like the chat is
-                    // moving from one hit to the next, otherwise the
-                    // button looks dead.
-                    runCatching { listState.animateScrollToItem(idx, topOffset) }
+                // Two-phase precise scroll. Rationale: a fixed fraction
+                // of viewportH as scrollOffset (the previous viewportH/4
+                // approach) can only approximate "centered" for one
+                // specific bubble height — short bubbles end up too low,
+                // tall bubbles (image / video / file) end up clipped
+                // because the offset was measured against the wrong
+                // height. Eugenio kept hitting it as "ci mette sempre
+                // un po' sopra" across all jump entry points (mention
+                // chip, reaction chip, t.me deeplink, pinned-message
+                // list, in-chat search arrows). The fix is to measure
+                // the ACTUAL height of the target after layout and then
+                // compute the exact offset that places the target's
+                // visual TOP at viewportH/3 — Telegram convention,
+                // upper-third with more context below (newer messages)
+                // than above. For bubbles taller than 2/3 of the
+                // viewport we clamp at 0 so the bubble's bottom sits
+                // flush with the viewport bottom and what fits extends
+                // upward into the screen.
+                //
+                // Phase 1: rough scroll using a small offset so the
+                // target lands somewhere visible. Phase 2 (after a
+                // single-frame delay for layout to place the target)
+                // reads layoutInfo.visibleItemsInfo for the actual
+                // measured size and refines to the precise offset.
+                //
+                // The animate-vs-snap choice from the legacy code is
+                // preserved: animate for the already-loaded case (so
+                // search arrows feel like motion), snap for the
+                // pagination case (animating through freshly-inserted
+                // items causes the "scatto bruttissimo" jitter).
+                suspend fun preciseRefine() {
+                    // One frame is usually enough for LazyColumn to
+                    // place the freshly-scrolled-to item and update
+                    // layoutInfo. Up to 3 attempts handles slower
+                    // device frames / async media measure passes.
+                    repeat(3) {
+                        kotlinx.coroutines.delay(16)
+                        val vp = listState.layoutInfo.viewportSize.height
+                        val item = listState.layoutInfo.visibleItemsInfo
+                            .find { it.index == idx }
+                        if (vp > 0 && item != null) {
+                            val targetH = item.size
+                            val precise = (2 * vp / 3 - targetH).coerceAtLeast(0)
+                            // Snap for refinement: the rough scroll
+                            // already animated/snapped to the
+                            // approximate region, the refine is a
+                            // small correction that should land
+                            // instantly. Animating it would create a
+                            // second visible motion right after the
+                            // first, which feels like the chat is
+                            // "twitching" into place.
+                            runCatching { listState.scrollToItem(idx, precise) }
+                            return
+                        }
+                    }
+                }
+
+                val viewportH0 = listState.layoutInfo.viewportSize.height
+                // If the target is ALREADY visible (no scroll needed),
+                // skip the rough phase entirely and refine in place.
+                // Reading layoutInfo on the current frame is safe here
+                // because we're in a coroutine that already yielded
+                // through the suspending getChatHistory above.
+                val existing = listState.layoutInfo.visibleItemsInfo
+                    .find { it.index == idx }
+                if (existing != null && viewportH0 > 0 && wasAlreadyLoaded) {
+                    val precise = (2 * viewportH0 / 3 - existing.size).coerceAtLeast(0)
+                    runCatching { listState.animateScrollToItem(idx, precise) }
                 } else {
-                    // We just paginated history — list grew by ~50
-                    // items mid-flight. Animating would scroll
-                    // *through* the freshly inserted items which
-                    // produces jitter ("scatto bruttissimo"). Snap
-                    // instantly to the right index instead.
-                    runCatching { listState.scrollToItem(idx, topOffset) }
+                    val roughOffset = if (viewportH0 > 0) viewportH0 / 3 else 200
+                    if (wasAlreadyLoaded) {
+                        runCatching { listState.animateScrollToItem(idx, roughOffset) }
+                    } else {
+                        runCatching { listState.scrollToItem(idx, roughOffset) }
+                    }
+                    preciseRefine()
                 }
                 flashMessageId = targetId
                 // Clear the flash a beat later so the highlight fades out
@@ -1619,81 +1694,16 @@ fun ChatScreen(
                     if (id == chatId) pinned = TdClient.getChatPinnedMessage(chatId)
                 }
             }
-            pinned?.let { pin ->
-                val preview = remember(pin.id) {
-                    when (val c = pin.content) {
-                        is TdApi.MessageText -> c.text.text
-                        is TdApi.MessagePhoto -> c.caption.text.ifBlank { "📷 Foto" }
-                        is TdApi.MessageVideo -> c.caption.text.ifBlank { "🎬 Video" }
-                        is TdApi.MessageDocument -> c.caption.text.ifBlank { c.document.fileName.ifBlank { "📄 File" } }
-                        is TdApi.MessageVoiceNote -> "🎤 Vocale"
-                        is TdApi.MessageSticker -> c.sticker.emoji.ifBlank { "🖼" }
-                        else -> ""
-                    }
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surface)
-                        .clickable {
-                            // Single tap on the banner jumps to the
-                            // pinned message — matches the stock
-                            // Telegram client UX. Previously this
-                            // opened the full pinned-list sheet which
-                            // felt redundant (we already show the
-                            // pinned text below — tapping it should
-                            // take you to it). The list sheet is now
-                            // reachable from the right-side icon.
-                            jumpToMessage(pin.id)
-                        }
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .width(3.dp)
-                            .height(36.dp)
-                            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            stringResource(R.string.chat_pinned_label),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            preview,
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                    Icon(
-                        com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .clickable {
-                                // The pin icon on the right is now the
-                                // entry point to the full pinned-list
-                                // sheet — separates "show me THIS pin"
-                                // (banner body tap) from "show me ALL
-                                // pins" (icon tap), which is how the
-                                // stock Telegram client splits it too.
-                                pinnedSheetOpen = true
-                            }
-                            .padding(5.dp)
-                    )
-                }
-                androidx.compose.material3.HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-                )
-            }
+            // Pinned-message banner removed — it sat permanently under
+            // the TopAppBar showing the latest pinned message text, but
+            // the user found it visually noisy and preferred a cleaner
+            // chat surface. Pinned messages remain reachable through:
+            //  - the per-bubble pin glyph + "Mostra messaggi fissati"
+            //    option in the message long-press menu
+            //  - any future entry point into pinnedSheetOpen
+            // The `pinned` and `pinnedMessageId` state stays populated
+            // because other parts of the code (per-message pin marker,
+            // jump targets) still read it.
             Box(
                 modifier = Modifier.weight(1f).fillMaxWidth()
             ) {
@@ -2598,53 +2608,108 @@ fun ChatScreen(
         // carry one (photos from camera land without a name).
         data class SaveSpec(val path: String, val name: String, val mime: String,
                             val category: com.secondream.novagram.util.FileUtils.SaveCategory)
+        // Extract the relevant file id for THIS message. TDLib does NOT
+        // mutate the TdApi.File instances embedded in MessageContent in
+        // place when a download completes — it emits UpdateFile with a
+        // FRESH instance. The instance held by msg.content can therefore
+        // be stuck at local.path="" / isDownloadingCompleted=false even
+        // though the file is fully on disk. That's why the previous
+        // implementation surfaced Save only for photos/videos most of
+        // the time and ALMOST NEVER for documents — documents are
+        // typically downloaded on demand AFTER the message arrives, so
+        // their content reference is the stale pre-download one.
+        //
+        // Fix: subscribe to the live file state via produceState. On
+        // sheet open we fetch the latest via TdClient.getFile(fileId);
+        // for as long as the sheet stays composed we also listen to
+        // TdClient.fileUpdates so the Save tile appears the moment a
+        // download completes WHILE the long-press menu is visible
+        // (rare but happens — user long-presses a still-downloading
+        // file, holds the sheet open, download finishes).
+        val mediaFileId: Int? = when (val c = msg.content) {
+            is TdApi.MessagePhoto -> c.photo.sizes.maxByOrNull { it.photo.size }?.photo?.id
+            is TdApi.MessageVideo -> c.video.video.id
+            is TdApi.MessageAnimation -> c.animation.animation.id
+            is TdApi.MessageDocument -> c.document.document.id
+            is TdApi.MessageAudio -> c.audio.audio.id
+            else -> null
+        }
+        val liveFile by produceState<TdApi.File?>(
+            initialValue = null,
+            key1 = mediaFileId,
+            key2 = msg.id
+        ) {
+            val fid = mediaFileId ?: return@produceState
+            // Prime with the freshest known state so saveSpec is
+            // correct on first frame after long-press.
+            value = runCatching { TdClient.getFile(fid) }.getOrNull()
+            TdClient.fileUpdates.collect { f ->
+                if (f.id == fid) value = f
+            }
+        }
         val saveSpec: SaveSpec? = run {
-            // A file is "available to save" if TDLib finished downloading
-            // it OR the local path exists on disk (covers our own sent
-            // media: not downloaded but right there locally).
+            // A file is "available to save" if its local path is set
+            // AND the file actually exists on disk with non-zero size.
+            // We deliberately do NOT rely solely on
+            // local.isDownloadingCompleted: TDLib's flag and the
+            // filesystem can disagree across sessions (file removed by
+            // OS cache cleanup; previously-downloaded file that TDLib
+            // forgot during a restart). Filesystem-truth wins.
             fun TdApi.File.availableLocally(): Boolean {
                 val p = local?.path
-                return !p.isNullOrBlank() && (
-                    local.isDownloadingCompleted ||
-                    runCatching { java.io.File(p).exists() }.getOrDefault(false)
-                )
+                return !p.isNullOrBlank() && runCatching {
+                    val f = java.io.File(p)
+                    f.exists() && f.length() > 0
+                }.getOrDefault(false)
             }
+            // Prefer the live file (refreshed via getFile + fileUpdates)
+            // when its id matches the one we care about. Otherwise fall
+            // back to whatever's embedded in msg.content — covers the
+            // first-frame case (liveFile is still null) and the "no
+            // download was ever needed" case (own outgoing media).
+            fun TdApi.File?.orFromContent(content: TdApi.File): TdApi.File =
+                this ?: content
             when (val c = msg.content) {
                 is TdApi.MessagePhoto -> {
-                    val biggest = c.photo.sizes.maxByOrNull { it.photo.size }
-                    val p = biggest?.photo?.local?.path
-                    if (!p.isNullOrBlank() && biggest.photo.availableLocally())
+                    val biggest = c.photo.sizes.maxByOrNull { it.photo.size } ?: return@run null
+                    val live = liveFile.orFromContent(biggest.photo)
+                    val p = live.local?.path
+                    if (!p.isNullOrBlank() && live.availableLocally())
                         SaveSpec(p, "photo_${msg.id}.jpg", "image/jpeg",
                             com.secondream.novagram.util.FileUtils.SaveCategory.Media)
                     else null
                 }
                 is TdApi.MessageVideo -> {
-                    val p = c.video.video.local?.path
-                    if (!p.isNullOrBlank() && c.video.video.availableLocally())
+                    val live = liveFile.orFromContent(c.video.video)
+                    val p = live.local?.path
+                    if (!p.isNullOrBlank() && live.availableLocally())
                         SaveSpec(p, c.video.fileName.ifBlank { "video_${msg.id}.mp4" },
                             c.video.mimeType.ifBlank { "video/mp4" },
                             com.secondream.novagram.util.FileUtils.SaveCategory.Media)
                     else null
                 }
                 is TdApi.MessageAnimation -> {
-                    val p = c.animation.animation.local?.path
-                    if (!p.isNullOrBlank() && c.animation.animation.availableLocally())
+                    val live = liveFile.orFromContent(c.animation.animation)
+                    val p = live.local?.path
+                    if (!p.isNullOrBlank() && live.availableLocally())
                         SaveSpec(p, c.animation.fileName.ifBlank { "anim_${msg.id}.mp4" },
                             c.animation.mimeType.ifBlank { "video/mp4" },
                             com.secondream.novagram.util.FileUtils.SaveCategory.Media)
                     else null
                 }
                 is TdApi.MessageDocument -> {
-                    val p = c.document.document.local?.path
-                    if (!p.isNullOrBlank() && c.document.document.availableLocally())
+                    val live = liveFile.orFromContent(c.document.document)
+                    val p = live.local?.path
+                    if (!p.isNullOrBlank() && live.availableLocally())
                         SaveSpec(p, c.document.fileName.ifBlank { "file_${msg.id}" },
                             c.document.mimeType.ifBlank { "application/octet-stream" },
                             com.secondream.novagram.util.FileUtils.SaveCategory.File)
                     else null
                 }
                 is TdApi.MessageAudio -> {
-                    val p = c.audio.audio.local?.path
-                    if (!p.isNullOrBlank() && c.audio.audio.availableLocally())
+                    val live = liveFile.orFromContent(c.audio.audio)
+                    val p = live.local?.path
+                    if (!p.isNullOrBlank() && live.availableLocally())
                         SaveSpec(p, c.audio.fileName.ifBlank { "audio_${msg.id}.mp3" },
                             c.audio.mimeType.ifBlank { "audio/mpeg" },
                             com.secondream.novagram.util.FileUtils.SaveCategory.File)

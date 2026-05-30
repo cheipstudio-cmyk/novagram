@@ -202,7 +202,11 @@ fun NewChatScreen(
                     SearchInline(value = query, onValueChange = { query = it })
                 }
                 PillTabs(
-                    titles = listOf(
+                    icons = listOf(
+                        com.secondream.novagram.ui.icons.PhosphorIcons.User,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Phone
+                    ),
+                    contentDescriptions = listOf(
                         stringResource(R.string.new_chat_tab_telegram),
                         stringResource(R.string.new_chat_tab_phone)
                     ),
@@ -323,13 +327,16 @@ fun NewChatScreen(
 
 @Composable
 private fun PillTabs(
-    titles: List<String>,
+    icons: List<androidx.compose.ui.graphics.vector.ImageVector>,
+    contentDescriptions: List<String>,
     selected: Int,
     onSelect: (Int) -> Unit
 ) {
-    // Same sliding-pill treatment as the main chat-list tabs: one accent
-    // pill animates its position between cells, text colour cross-fades,
-    // labels are italic. Keeps the two tab strips visually identical.
+    // Icon-only sliding-pill tabs, mirror of the home chat-list ones.
+    // Container is wrap-content + horizontally centered, each pill is
+    // 44x36dp with a 20dp icon. The accent pill slides between
+    // positions on selection via animateFloatAsState with the same
+    // low-bouncy spring used elsewhere.
     val primary = MaterialTheme.colorScheme.primary
     val onPrimary = MaterialTheme.colorScheme.onPrimary
     val onMuted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -341,50 +348,50 @@ private fun PillTabs(
         ),
         label = "newchat-tab-slide"
     )
-    androidx.compose.foundation.layout.BoxWithConstraints(
+    val tabWidth = 44.dp
+    val tabHeight = 36.dp
+    val tabGap = 4.dp
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(4.dp)
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        val tabCount = titles.size.coerceAtLeast(1)
-        val tabWidth = this.maxWidth / tabCount
-        val tabHeight = 44.dp
-        Box(
+        androidx.compose.foundation.layout.Box(
             modifier = Modifier
-                .offset(x = tabWidth * animatedSelected)
-                .width(tabWidth)
-                .height(tabHeight)
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
-                .background(primary)
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().height(tabHeight),
-            verticalAlignment = Alignment.CenterVertically
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(4.dp)
         ) {
-            titles.forEachIndexed { i, title ->
-                val distance = kotlin.math.abs(animatedSelected - i).coerceIn(0f, 1f)
-                val textColor = androidx.compose.ui.graphics.lerp(onPrimary, onMuted, distance)
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(tabHeight)
-                        .clickable(
-                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                            indication = null
-                        ) { onSelect(i) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = textColor,
-                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                        fontWeight = if (i == selected) FontWeight.SemiBold else FontWeight.Medium,
-                        maxLines = 1
-                    )
+            Box(
+                modifier = Modifier
+                    .offset(x = (tabWidth + tabGap) * animatedSelected)
+                    .width(tabWidth)
+                    .height(tabHeight)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                    .background(primary)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(tabGap)) {
+                icons.forEachIndexed { i, icon ->
+                    val distance = kotlin.math.abs(animatedSelected - i).coerceIn(0f, 1f)
+                    val iconColor = androidx.compose.ui.graphics.lerp(onPrimary, onMuted, distance)
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier
+                            .size(width = tabWidth, height = tabHeight)
+                            .clickable(
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                indication = null
+                            ) { onSelect(i) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            icon,
+                            contentDescription = contentDescriptions.getOrNull(i),
+                            tint = iconColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }

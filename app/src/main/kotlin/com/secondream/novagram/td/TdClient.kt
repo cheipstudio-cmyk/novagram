@@ -154,6 +154,32 @@ object TdClient {
         return scope.muteFor > 0
     }
 
+    /**
+     * Variant of [isChatMuted] used by the chat-list tab badges. The
+     * difference is the scope-null default: for NOTIFICATIONS we err
+     * on the side of muting (better to miss one push than to leak a
+     * notification the user thought they'd silenced), but for BADGES
+     * we err the other way — assume NOT muted on uncertainty so the
+     * badge stays visible during the brief startup window before
+     * UpdateScopeNotificationSettings arrives. A momentarily-visible
+     * badge is cosmetic; a momentarily-hidden one looks broken.
+     */
+    fun isChatMutedForBadge(chat: TdApi.Chat?): Boolean {
+        if (chat == null) return false
+        val per = chat.notificationSettings ?: return false
+        if (!per.useDefaultMuteFor) return per.muteFor > 0
+        val scope = when (chat.type) {
+            is TdApi.ChatTypePrivate, is TdApi.ChatTypeSecret -> scopePrivate
+            is TdApi.ChatTypeBasicGroup -> scopeGroup
+            is TdApi.ChatTypeSupergroup -> {
+                val sg = chat.type as TdApi.ChatTypeSupergroup
+                if (sg.isChannel) scopeChannel else scopeGroup
+            }
+            else -> null
+        }
+        return (scope?.muteFor ?: 0) > 0
+    }
+
     fun init(ctx: Context) {
         appContext = ctx.applicationContext
         Client.setLogMessageHandler(0) { verbosity, message ->
@@ -262,10 +288,18 @@ object TdClient {
             is TdApi.UpdateChatUnreadMentionCount -> {
                 chatCache[obj.chatId]?.unreadMentionCount = obj.unreadMentionCount
                 refreshChats()
+                // Also notify per-chat observers (the in-chat mention
+                // chip in ChatScreen listens on chatUpdates to know
+                // when to hide itself after readAllChatMentions). Without
+                // this emit, the cache updates but the chip never
+                // re-renders and stays stuck.
+                scope.launch { _chatUpdates.emit(obj.chatId) }
             }
             is TdApi.UpdateChatUnreadReactionCount -> {
                 chatCache[obj.chatId]?.unreadReactionCount = obj.unreadReactionCount
                 refreshChats()
+                // Same per-chat observer notify as mention count above.
+                scope.launch { _chatUpdates.emit(obj.chatId) }
             }
             is TdApi.UpdateChatNotificationSettings -> {
                 // After setChatMuted(...) TDLib echoes the new settings back
@@ -422,6 +456,7 @@ object TdClient {
                     isMarkedAsUnread = chat.isMarkedAsUnread,
                     unreadMentionCount = chat.unreadMentionCount,
                     unreadReactionCount = chat.unreadReactionCount,
+                    isMuted = isChatMutedForBadge(chat),
                     revision = rev
                 )
             }
@@ -1609,6 +1644,16 @@ data class ChatSummary(
     val unreadMentionCount: Int = 0,
     /** Count of unread reactions to the user's own messages in this chat. */
     val unreadReactionCount: Int = 0,
+    /**
+     * Whether this chat is currently muted (per-chat or via scope
+     * fallback). Used by the chat-list tab badges so the top-of-tab
+     * unread totals exclude chats whose messages should not be
+     * notifying — matches the user's mental model that "the badge
+     * tells me about stuff I haven't read AND care about right now".
+     * Counts for muted chats are still shown on the individual row;
+     * only the aggregate at the tab level filters them out.
+     */
+    val isMuted: Boolean = false,
     val revision: Long = 0L
 )
 
