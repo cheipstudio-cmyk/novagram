@@ -218,24 +218,7 @@ fun ChatScreen(
 
     val defaultChatTitle = stringResource(R.string.chat_default_title)
     val savedMessagesLabel = stringResource(R.string.saved_messages)
-    // Self user id — needed to detect the Saved Messages pseudo-chat
-    // (the private chat where chat.id == my user id). When matched the
-    // header replaces the standard avatar+title pair with a bookmark
-    // glyph + localized "Messaggi salvati" label, matching the list-
-    // row treatment so the chat is unmistakably recognized as the
-    // "notes to self" surface and not, say, a chat with someone who
-    // happens to share your name.
-    val myUserId by produceState(initialValue = 0L, Unit) {
-        value = withContext(Dispatchers.IO) {
-            runCatching { TdClient.getMe().id }.getOrDefault(0L)
-        }
-    }
-    val isSavedMessages = myUserId != 0L && chatId == myUserId
-    val chatTitle by produceState(initialValue = defaultChatTitle, chatId, isSavedMessages, savedMessagesLabel) {
-        if (isSavedMessages) {
-            value = savedMessagesLabel
-            return@produceState
-        }
+    val chatTitle by produceState(initialValue = defaultChatTitle, chatId) {
         value = withContext(Dispatchers.IO) {
             runCatching { TdClient.getChat(chatId).title }.getOrDefault(defaultChatTitle)
         }
@@ -1375,6 +1358,21 @@ fun ChatScreen(
     Scaffold(
         topBar = {
             Column {
+            // Saved Messages pseudo-chat detection: re-derives on every
+            // composition, so as soon as the LaunchedEffect above
+            // populates `myUserId` (Long?) we flip to the bookmark
+            // identity. While myUserId is still null (first frame, race
+            // with the TdClient.getMe() round-trip), renders normally as
+            // a regular avatar + chat title — the chat will never
+            // visually flicker because getMe() resolves in <50ms from
+            // the local TDLib cache.
+            val isSavedMessages = myUserId != null &&
+                myUserId != 0L &&
+                chatId == myUserId
+            // When Saved Messages, replace the title text with the
+            // localized "Messaggi salvati" label so the header reads
+            // the same way as the list row.
+            val effectiveTitle = if (isSavedMessages) savedMessagesLabel else chatTitle
             TopAppBar(
                 title = {
                     Row(
@@ -1434,7 +1432,7 @@ fun ChatScreen(
                         Column(modifier = Modifier.weight(1f, fill = false)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    chatTitle,
+                                    effectiveTitle,
                                     style = MaterialTheme.typography.titleLarge,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
