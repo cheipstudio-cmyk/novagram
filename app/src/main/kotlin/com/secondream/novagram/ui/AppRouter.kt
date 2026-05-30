@@ -147,7 +147,7 @@ fun AppRouter(
     )
     val scaleExitSpring = androidx.compose.animation.core.spring<Float>(
         dampingRatio = 1.0f,
-        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumHigh
+        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
     )
     val fadeInSpec = tween<Float>(durationMillis = 180)
     val fadeOutSpec = tween<Float>(durationMillis = 140)

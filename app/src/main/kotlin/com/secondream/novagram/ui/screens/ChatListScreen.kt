@@ -688,86 +688,83 @@ fun ChatListScreen(
     }
 
     leaveConfirmTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { leaveConfirmTarget = null },
-            title = { Text(stringResource(R.string.leave_group_confirm, target.title)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    val cid = target.id
-                    leaveConfirmTarget = null
-                    scope.launch { runCatching { TdClient.leaveChat(cid) } }
-                }) {
-                    Text(
-                        stringResource(
-                            if (target.kind == ChatKind.Channel) R.string.action_leave_channel
-                            else R.string.action_leave_group
-                        ),
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { leaveConfirmTarget = null }) {
-                    Text(stringResource(R.string.delete_chat_cancel))
-                }
-            }
+        com.secondream.novagram.ui.components.ActionBottomSheet(
+            title = stringResource(R.string.leave_group_confirm, target.title),
+            onDismiss = { leaveConfirmTarget = null },
+            tiles = listOf(
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(
+                        if (target.kind == ChatKind.Channel) R.string.action_leave_channel
+                        else R.string.action_leave_group
+                    ),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                    destructive = true,
+                    onClick = {
+                        val cid = target.id
+                        leaveConfirmTarget = null
+                        scope.launch { runCatching { TdClient.leaveChat(cid) } }
+                    }
+                ),
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.delete_chat_cancel),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                    onClick = { leaveConfirmTarget = null }
+                )
+            )
         )
     }
 
     deleteConfirmTarget?.let { target ->
-        var alsoRevoke by remember { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { deleteConfirmTarget = null },
-            title = { Text(stringResource(R.string.delete_chat_confirm_title)) },
-            text = {
-                Column {
-                    Text(
-                        stringResource(R.string.delete_chat_confirm_body),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    if (target.kind == ChatKind.Private) {
-                        Spacer(Modifier.height(12.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { alsoRevoke = !alsoRevoke }
-                        ) {
-                            androidx.compose.material3.Checkbox(
-                                checked = alsoRevoke,
-                                onCheckedChange = { alsoRevoke = it }
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                stringResource(R.string.delete_chat_for_everyone),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
+        val isPrivate = target.kind == ChatKind.Private
+        val deleteTiles = buildList {
+            add(
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.action_delete_chat),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                    destructive = true,
+                    onClick = {
+                        val cid = target.id
+                        deleteConfirmTarget = null
+                        scope.launch {
+                            runCatching {
+                                TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = false)
+                            }
                         }
                     }
-                }
-            },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    val cid = target.id
-                    val revoke = alsoRevoke && target.kind == ChatKind.Private
-                    deleteConfirmTarget = null
-                    scope.launch {
-                        runCatching {
-                            TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = revoke)
+                )
+            )
+            if (isPrivate) {
+                add(
+                    com.secondream.novagram.ui.components.ActionTile(
+                        label = stringResource(R.string.delete_chat_for_everyone),
+                        icon = com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                        destructive = true,
+                        onClick = {
+                            val cid = target.id
+                            deleteConfirmTarget = null
+                            scope.launch {
+                                runCatching {
+                                    TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = true)
+                                }
+                            }
                         }
-                    }
-                }) {
-                    Text(
-                        stringResource(R.string.action_delete_chat),
-                        color = MaterialTheme.colorScheme.error
                     )
-                }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { deleteConfirmTarget = null }) {
-                    Text(stringResource(R.string.delete_chat_cancel))
-                }
+                )
             }
+            add(
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.delete_chat_cancel),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                    onClick = { deleteConfirmTarget = null }
+                )
+            )
+        }
+        com.secondream.novagram.ui.components.ActionBottomSheet(
+            title = stringResource(R.string.delete_chat_confirm_title),
+            description = stringResource(R.string.delete_chat_confirm_body),
+            onDismiss = { deleteConfirmTarget = null },
+            tiles = deleteTiles,
+            tilesPerRow = if (isPrivate) 3 else 2
         )
     }
 }

@@ -3008,46 +3008,42 @@ fun ChatScreen(
             86400 to stringResource(R.string.ttl_1d),
             604800 to stringResource(R.string.ttl_1w)
         )
-        AlertDialog(
-            onDismissRequest = { ttlDialogOpen = false },
-            title = { Text(stringResource(R.string.chat_set_ttl)) },
-            text = {
-                Column {
-                    ttlOptions.forEach { (seconds, label) ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    ttlDialogOpen = false
-                                    scope.launch {
-                                        runCatching {
-                                            TdClient.setMessageAutoDeleteTime(chatId, seconds)
-                                        }
-                                    }
-                                }
-                                .padding(horizontal = 4.dp, vertical = 14.dp)
-                        ) {
-                            Text(label, style = MaterialTheme.typography.bodyLarge)
+        com.secondream.novagram.ui.components.ActionBottomSheet(
+            title = stringResource(R.string.chat_set_ttl),
+            onDismiss = { ttlDialogOpen = false },
+            tiles = ttlOptions.map { (seconds, label) ->
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = label,
+                    icon = if (seconds == 0)
+                        com.secondream.novagram.ui.icons.PhosphorIcons.X
+                    else com.secondream.novagram.ui.icons.PhosphorIcons.Bell,
+                    onClick = {
+                        ttlDialogOpen = false
+                        scope.launch {
+                            runCatching {
+                                TdClient.setMessageAutoDeleteTime(chatId, seconds)
+                            }
                         }
                     }
-                }
+                )
             },
-            confirmButton = {
-                TextButton(onClick = { ttlDialogOpen = false }) {
-                    Text(stringResource(R.string.action_cancel))
-                }
-            }
+            tilesPerRow = 3
         )
     }
 
     if (needMicPermission) {
-        AlertDialog(
-            onDismissRequest = { needMicPermission = false },
-            title = { Text(stringResource(R.string.mic_permission_title)) },
-            text = { Text(stringResource(R.string.mic_permission_body)) },
-            confirmButton = {
-                TextButton(onClick = { needMicPermission = false }) { Text(stringResource(R.string.action_ok)) }
-            }
+        com.secondream.novagram.ui.components.ActionBottomSheet(
+            title = stringResource(R.string.mic_permission_title),
+            description = stringResource(R.string.mic_permission_body),
+            onDismiss = { needMicPermission = false },
+            tiles = listOf(
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.action_ok),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Check,
+                    onClick = { needMicPermission = false }
+                )
+            ),
+            tilesPerRow = 1
         )
     }
 
@@ -3060,79 +3056,92 @@ fun ChatScreen(
 
     if (deleteOpen) {
         val isPrivate = cachedChatLive?.type is TdApi.ChatTypePrivate
-        var alsoRevoke by remember { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { deleteOpen = false },
-            title = { Text(stringResource(R.string.delete_chat_confirm_title)) },
-            text = {
-                Column {
-                    Text(stringResource(R.string.delete_chat_confirm_body))
-                    if (isPrivate) {
-                        Spacer(Modifier.height(12.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().clickable { alsoRevoke = !alsoRevoke }
-                        ) {
-                            androidx.compose.material3.Checkbox(
-                                checked = alsoRevoke,
-                                onCheckedChange = { alsoRevoke = it }
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(stringResource(R.string.delete_chat_for_everyone))
+        // Private chats get TWO destructive tiles (delete locally vs
+        // delete for both sides), non-private gets ONE (no "delete for
+        // everyone" semantic in groups/channels). Plus a non-destructive
+        // Cancel tile so the user always has an explicit escape — the
+        // bottom-sheet swipe-down also dismisses, but a labeled Cancel
+        // reads clearer.
+        val deleteTiles = buildList {
+            add(
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.action_delete_chat),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                    destructive = true,
+                    onClick = {
+                        deleteOpen = false
+                        scope.launch {
+                            runCatching {
+                                TdClient.deleteChatHistory(chatId, removeFromChatList = true, revoke = false)
+                            }
+                            onBack()
                         }
                     }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val revoke = alsoRevoke && isPrivate
-                    deleteOpen = false
-                    scope.launch {
-                        runCatching {
-                            TdClient.deleteChatHistory(chatId, removeFromChatList = true, revoke = revoke)
+                )
+            )
+            if (isPrivate) {
+                add(
+                    com.secondream.novagram.ui.components.ActionTile(
+                        label = stringResource(R.string.delete_chat_for_everyone),
+                        icon = com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                        destructive = true,
+                        onClick = {
+                            deleteOpen = false
+                            scope.launch {
+                                runCatching {
+                                    TdClient.deleteChatHistory(chatId, removeFromChatList = true, revoke = true)
+                                }
+                                onBack()
+                            }
                         }
-                        onBack()
-                    }
-                }) {
-                    Text(stringResource(R.string.action_delete_chat), color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteOpen = false }) {
-                    Text(stringResource(R.string.delete_chat_cancel))
-                }
+                    )
+                )
             }
+            add(
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.delete_chat_cancel),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                    onClick = { deleteOpen = false }
+                )
+            )
+        }
+        com.secondream.novagram.ui.components.ActionBottomSheet(
+            title = stringResource(R.string.delete_chat_confirm_title),
+            description = stringResource(R.string.delete_chat_confirm_body),
+            onDismiss = { deleteOpen = false },
+            tiles = deleteTiles,
+            tilesPerRow = if (isPrivate) 3 else 2
         )
     }
     if (leaveOpen) {
         val cachedNow = TdClient.getCachedChat(chatId)
         val isChan = cachedNow?.type is TdApi.ChatTypeSupergroup &&
             (cachedNow.type as TdApi.ChatTypeSupergroup).isChannel
-        AlertDialog(
-            onDismissRequest = { leaveOpen = false },
-            title = { Text(stringResource(R.string.leave_group_confirm, chatTitle)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    leaveOpen = false
-                    scope.launch {
-                        runCatching { TdClient.leaveChat(chatId) }
-                        onBack()
+        com.secondream.novagram.ui.components.ActionBottomSheet(
+            title = stringResource(R.string.leave_group_confirm, chatTitle),
+            onDismiss = { leaveOpen = false },
+            tiles = listOf(
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(
+                        if (isChan) R.string.action_leave_channel
+                        else R.string.action_leave_group
+                    ),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                    destructive = true,
+                    onClick = {
+                        leaveOpen = false
+                        scope.launch {
+                            runCatching { TdClient.leaveChat(chatId) }
+                            onBack()
+                        }
                     }
-                }) {
-                    Text(
-                        stringResource(
-                            if (isChan) R.string.action_leave_channel
-                            else R.string.action_leave_group
-                        ),
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { leaveOpen = false }) {
-                    Text(stringResource(R.string.delete_chat_cancel))
-                }
-            }
+                ),
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.delete_chat_cancel),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                    onClick = { leaveOpen = false }
+                )
+            )
         )
     }
     } // close back-swipe Box
@@ -4118,74 +4127,15 @@ private fun MessageActionsSheet(
     }
 }
 
-/** Single entry in the action grid. */
-private data class ActionTile(
-    val label: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val onClick: () -> Unit,
-    val destructive: Boolean = false
-)
+/** @see com.secondream.novagram.ui.components.ActionTile */
+private typealias ActionTile = com.secondream.novagram.ui.components.ActionTile
 
-/**
- * One square-ish tile in the MessageActionsSheet grid. Icon top, label
- * below, soft tinted background. Tapping triggers a tiny scale-down
- * spring so the press feels responsive even when the parent sheet is
- * about to dismiss. Animation is the *only* lifecycle on the tile so
- * scaling adds basically zero overhead, even on low-end devices.
- */
+/** @see com.secondream.novagram.ui.components.ActionTileButton */
 @Composable
 private fun ActionTileButton(
     tile: ActionTile,
     modifier: Modifier = Modifier
-) {
-    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by androidx.compose.animation.core.animateFloatAsState(
-        targetValue = if (pressed) 0.92f else 1f,
-        animationSpec = androidx.compose.animation.core.spring(
-            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
-            stiffness = androidx.compose.animation.core.Spring.StiffnessHigh
-        ),
-        label = "tile-press"
-    )
-    val cs = MaterialTheme.colorScheme
-    val bg = if (tile.destructive) cs.errorContainer.copy(alpha = 0.4f)
-             else cs.surfaceVariant
-    val iconTint = if (tile.destructive) cs.error else cs.primary
-    val labelColor = if (tile.destructive) cs.error else cs.onSurface
-    Column(
-        modifier = modifier
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .clip(RoundedCornerShape(16.dp))
-            .background(bg)
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = tile.onClick
-            )
-            .padding(vertical = 14.dp, horizontal = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(
-            tile.icon,
-            contentDescription = null,
-            tint = iconTint,
-            modifier = Modifier.size(28.dp)
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            tile.label,
-            style = MaterialTheme.typography.labelMedium,
-            color = labelColor,
-            maxLines = 2,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            fontWeight = FontWeight.Medium
-        )
-    }
-}
+) = com.secondream.novagram.ui.components.ActionTileButton(tile, modifier)
 
 @Composable
 private fun DeleteOption(
