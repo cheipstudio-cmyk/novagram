@@ -1819,8 +1819,23 @@ fun ChatScreen(
                                             val msg = runCatching {
                                                 TdClient.findFirstUnreadMention(chatId)
                                             }.getOrNull()
-                                            if (msg != null) jumpToMessage(msg.id)
-                                            runCatching { TdClient.readAllChatMentions(chatId) }
+                                            if (msg != null) {
+                                                jumpToMessage(msg.id)
+                                                // Mark ONLY this message's
+                                                // mention read (not the whole
+                                                // chat) so the counter steps
+                                                // down by 1 — the chip stays
+                                                // visible with the new count
+                                                // and subsequent taps cycle
+                                                // to the next unread mention.
+                                                // viewMessages with forceRead
+                                                // handles both mention and
+                                                // reaction read status for
+                                                // the specified message ids.
+                                                runCatching {
+                                                    TdClient.viewMessages(chatId, longArrayOf(msg.id))
+                                                }
+                                            }
                                         }
                                     }
                                     .padding(horizontal = 14.dp, vertical = 8.dp),
@@ -1855,8 +1870,19 @@ fun ChatScreen(
                                             val msg = runCatching {
                                                 TdClient.findFirstUnreadReaction(chatId)
                                             }.getOrNull()
-                                            if (msg != null) jumpToMessage(msg.id)
-                                            runCatching { TdClient.readAllChatReactions(chatId) }
+                                            if (msg != null) {
+                                                jumpToMessage(msg.id)
+                                                // Per-message read so the
+                                                // chip counter decrements by
+                                                // 1 and subsequent taps cycle
+                                                // through the rest. forceRead
+                                                // on viewMessages handles the
+                                                // reaction read state for
+                                                // this specific message id.
+                                                runCatching {
+                                                    TdClient.viewMessages(chatId, longArrayOf(msg.id))
+                                                }
+                                            }
                                         }
                                     }
                                     .padding(horizontal = 12.dp, vertical = 8.dp),
