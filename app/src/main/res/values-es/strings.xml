@@ -341,4 +341,6 @@
     <string name="service_notif_title">Novagram</string>
     <string name="service_notif_body">Un proceso en segundo plano se ejecuta para enviarte notificaciones en tiempo real</string>
     <string name="notification_self_label">Tú</string>
+    <string name="action_check_updates">Buscar actualizaciones</string>
+    <string name="offline_banner">Sin conexión a internet</string>
 </resources>

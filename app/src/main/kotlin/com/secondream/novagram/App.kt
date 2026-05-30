@@ -68,6 +68,7 @@ class App : Application(), ImageLoaderFactory {
 
         NotificationHelper.init(this)
         TdClient.init(this)
+        com.secondream.novagram.connectivity.ConnectivityState.start(this)
         // Apply the launcher-icon variant matching the user's saved
         // theme on every process start. Idempotent — if nothing
         // changed, PackageManager no-ops. Wrapped in a launch on
@@ -75,6 +76,16 @@ class App : Application(), ImageLoaderFactory {
         // DataStore read suspends and we don't want to block onCreate.
         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             IconAliasManager.applyFromSettings(this@App)
+        }
+
+        // Update check against GitHub Releases — pure background, the
+        // result lands in UpdateChecker.updateAvailable which the chat-
+        // list topbar's download button watches to show its accent dot.
+        // Best-effort: any network / parse / rate-limit failure leaves
+        // the flow at false (= no dot, button still works for manual
+        // visit to releases page).
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            com.secondream.novagram.update.UpdateChecker.check()
         }
 
         // Best-effort FCM token registration. Wrapped in runCatching

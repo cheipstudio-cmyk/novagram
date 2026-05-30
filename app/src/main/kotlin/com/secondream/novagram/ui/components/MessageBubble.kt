@@ -245,7 +245,8 @@ fun MessageBubble(
                 // exactly what we want (cancelled if the bubble scrolls
                 // off-screen and recomposes elsewhere).
                 awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var longPressFired = false
                     // 300ms timer fires the long press if the user hasn't lifted
                     // or moved past touchSlop by then. waitForUpOrCancellation()
                     // returns when either of those happens, at which point we
@@ -255,10 +256,27 @@ fun MessageBubble(
                         haptic.performHapticFeedback(
                             androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
                         )
+                        longPressFired = true
+                        // Consume the original DOWN so any child gesture
+                        // detector (notably ClickableText used by
+                        // FormattedTextRendering for URL / email / phone
+                        // annotation taps) treats the gesture as already
+                        // handled and skips its onClick when the user
+                        // eventually lifts the finger. Without this consume,
+                        // long-pressing a message that contains a link fires
+                        // BOTH the bubble's action sheet AND opens the link
+                        // — exactly the double-action bug Eugenio kept
+                        // hitting on long press over message URLs.
+                        down.consume()
                         onLongPress(message)
                     }
                     try {
-                        waitForUpOrCancellation()
+                        val up = waitForUpOrCancellation()
+                        // Belt-and-suspenders: also consume the UP event so
+                        // any downstream detector that only checks consumed
+                        // state on UP (rather than DOWN) still treats the
+                        // gesture as handled.
+                        if (longPressFired) up?.consume()
                     } finally {
                         timerJob.cancel()
                     }

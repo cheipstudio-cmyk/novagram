@@ -341,4 +341,6 @@
     <string name="service_notif_title">Novagram</string>
     <string name="service_notif_body">Ein Hintergrundprozess läuft, um Benachrichtigungen in Echtzeit zu liefern</string>
     <string name="notification_self_label">Du</string>
+    <string name="action_check_updates">Nach Updates suchen</string>
+    <string name="offline_banner">Keine Internetverbindung</string>
 </resources>

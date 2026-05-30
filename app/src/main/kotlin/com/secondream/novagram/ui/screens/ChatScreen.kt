@@ -1105,7 +1105,15 @@ fun ChatScreen(
             if (idx < 0) return@launch
             run {
                 val viewportH = listState.layoutInfo.viewportSize.height
-                val topOffset = if (viewportH > 0) (viewportH * 3) / 10 else 400
+                // Center the target in the viewport. With reverseLayout=true,
+                // scrollOffset is measured from the LAYOUT START (= visual
+                // BOTTOM of the chat), so half-viewport offset places the
+                // target item at the visual MIDDLE of the screen. Previous
+                // 30% offset left tall bubbles partially clipped under the
+                // TopAppBar — the user had to scroll up manually to read
+                // the upper half. 50% is the universal "natural reading
+                // position" Telegram and most chat clients use.
+                val topOffset = if (viewportH > 0) viewportH / 2 else 400
                 if (wasAlreadyLoaded) {
                     // No pagination happened, list size is stable.
                     // Animate so the user perceives the scroll motion —
@@ -1555,6 +1563,7 @@ fun ChatScreen(
                     containerColor = MaterialTheme.colorScheme.background
                 )
             )
+            com.secondream.novagram.ui.components.OfflineBanner()
             // Chat search bar: collapsible, sits under the title. Up/down
             // arrows cycle through TDLib search results; tapping a result
             // (or the bar's prev/next) re-uses jumpToMessage so the target
@@ -1810,101 +1819,49 @@ fun ChatScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         if (hasMentions) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(androidx.compose.foundation.shape.CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary)
-                                    .clickable {
-                                        scope.launch {
-                                            val msg = runCatching {
-                                                TdClient.findFirstUnreadMention(chatId)
-                                            }.getOrNull()
-                                            if (msg != null) {
-                                                jumpToMessage(msg.id)
-                                                // Mark ONLY this message's
-                                                // mention read (not the whole
-                                                // chat) so the counter steps
-                                                // down by 1 — the chip stays
-                                                // visible with the new count
-                                                // and subsequent taps cycle
-                                                // to the next unread mention.
-                                                // viewMessages with forceRead
-                                                // handles both mention and
-                                                // reaction read status for
-                                                // the specified message ids.
-                                                runCatching {
-                                                    TdClient.viewMessages(chatId, longArrayOf(msg.id))
-                                                }
-                                            }
-                                        }
+                            androidx.compose.material3.SmallFloatingActionButton(
+                                onClick = {
+                                    scope.launch {
+                                        val msg = runCatching {
+                                            TdClient.findFirstUnreadMention(chatId)
+                                        }.getOrNull()
+                                        if (msg != null) jumpToMessage(msg.id)
+                                        runCatching { TdClient.readAllChatMentions(chatId) }
                                     }
-                                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                                contentAlignment = Alignment.Center
+                                },
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                                elevation = androidx.compose.material3.FloatingActionButtonDefaults
+                                    .elevation(defaultElevation = 3.dp)
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "@",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    if (liveMentions > 1) {
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(
-                                            liveMentions.toString(),
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onPrimary,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
+                                Text(
+                                    "@",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                         if (hasReactions) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(androidx.compose.foundation.shape.CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary)
-                                    .clickable {
-                                        scope.launch {
-                                            val msg = runCatching {
-                                                TdClient.findFirstUnreadReaction(chatId)
-                                            }.getOrNull()
-                                            if (msg != null) {
-                                                jumpToMessage(msg.id)
-                                                // Per-message read so the
-                                                // chip counter decrements by
-                                                // 1 and subsequent taps cycle
-                                                // through the rest. forceRead
-                                                // on viewMessages handles the
-                                                // reaction read state for
-                                                // this specific message id.
-                                                runCatching {
-                                                    TdClient.viewMessages(chatId, longArrayOf(msg.id))
-                                                }
-                                            }
-                                        }
+                            androidx.compose.material3.SmallFloatingActionButton(
+                                onClick = {
+                                    scope.launch {
+                                        val msg = runCatching {
+                                            TdClient.findFirstUnreadReaction(chatId)
+                                        }.getOrNull()
+                                        if (msg != null) jumpToMessage(msg.id)
+                                        runCatching { TdClient.readAllChatReactions(chatId) }
                                     }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                contentAlignment = Alignment.Center
+                                },
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                                elevation = androidx.compose.material3.FloatingActionButtonDefaults
+                                    .elevation(defaultElevation = 3.dp)
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        com.secondream.novagram.ui.icons.PhosphorIcons.Smiley,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onPrimary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    if (liveReactions > 1) {
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(
-                                            liveReactions.toString(),
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onPrimary,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
+                                Icon(
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.Smiley,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(22.dp)
+                                )
                             }
                         }
                     }
@@ -3343,16 +3300,28 @@ private fun InputBar(
             }
             // Trailing slot. Send button only when NOT recording and there's
             // something to send; otherwise the persistent MicButton.
+            // Both are GATED on realtime connectivity: when ConnectivityState
+            // reports offline, the send button greys out and stops accepting
+            // taps, and the mic button's press handlers no-op. Flips back
+            // active the moment a usable network is restored — no polling,
+            // we just collectAsState on the realtime ConnectivityManager-
+            // backed flow.
+            val online by com.secondream.novagram.connectivity
+                .ConnectivityState.isOnline.collectAsState()
             if (!recording && (value.text.isNotBlank() || hasPendingMedia)) {
                 IconButton(
-                    onClick = onSend,
+                    onClick = { if (online) onSend() },
+                    enabled = online,
                     modifier = Modifier.size(48.dp)
                 ) {
                     Box(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
+                            .background(
+                                if (online) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -3364,31 +3333,45 @@ private fun InputBar(
                     }
                 }
             } else {
-                MicButton(recording = recording, onDown = onMicDown, onUp = onMicUp)
+                MicButton(
+                    recording = recording,
+                    enabled = online,
+                    onDown = { if (online) onMicDown() },
+                    onUp = { released -> if (online) onMicUp(released) }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun MicButton(recording: Boolean, onDown: () -> Unit, onUp: (Boolean) -> Unit) {
+private fun MicButton(
+    recording: Boolean,
+    enabled: Boolean = true,
+    onDown: () -> Unit,
+    onUp: (Boolean) -> Unit
+) {
+    val baseColor = when {
+        recording -> MaterialTheme.colorScheme.error
+        enabled -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+    }
     Box(
         modifier = Modifier
             .size(48.dp)
             .clip(CircleShape)
-            .background(
-                if (recording) MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.primary
-            )
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        onDown()
-                        val released = tryAwaitRelease()
-                        onUp(released)
-                    }
-                )
-            },
+            .background(baseColor)
+            .then(
+                if (enabled) Modifier.pointerInput(Unit) {
+                    detectTapGestures(
+                        onPress = {
+                            onDown()
+                            val released = tryAwaitRelease()
+                            onUp(released)
+                        }
+                    )
+                } else Modifier
+            ),
         contentAlignment = Alignment.Center
     ) {
         Icon(

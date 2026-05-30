@@ -84,6 +84,7 @@ import java.util.Locale
 private data class TabSpec(
     val kind: ChatKind?,
     val labelRes: Int,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
     val isArchive: Boolean = false,
     /**
      * When true, this tab shows ALL chats regardless of kind (private +
@@ -99,21 +100,39 @@ private data class TabSpec(
  * optional Segrete (data-driven), optional Archiviati (settings toggle).
  * Tutto is always the first tab so the user can flip into "show me
  * everything" mode without scrolling through category-specific tabs.
+ *
+ * Each tab carries its own icon — labelRes is still used for the
+ * search-empty-state ("Nessun risultato in Chat") and content-description
+ * accessibility text, but the visible tab itself is icon-only.
  */
 private fun buildTabs(
     showAll: Boolean,
     showArchive: Boolean,
     hasSecret: Boolean
 ): List<TabSpec> = buildList {
-    if (showAll) add(TabSpec(kind = null, labelRes = R.string.tab_all, isAll = true))
-    add(TabSpec(ChatKind.Private, R.string.tab_chats))
-    add(TabSpec(ChatKind.Group, R.string.tab_groups))
-    add(TabSpec(ChatKind.Channel, R.string.tab_channels))
+    if (showAll) add(
+        TabSpec(
+            kind = null,
+            labelRes = R.string.tab_all,
+            icon = com.secondream.novagram.ui.icons.PhosphorIcons.Chats,
+            isAll = true
+        )
+    )
+    add(TabSpec(ChatKind.Private, R.string.tab_chats, com.secondream.novagram.ui.icons.PhosphorIcons.ChatCircle))
+    add(TabSpec(ChatKind.Group, R.string.tab_groups, com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree))
+    add(TabSpec(ChatKind.Channel, R.string.tab_channels, com.secondream.novagram.ui.icons.PhosphorIcons.Megaphone))
     // Secret-chats tab is data-driven: appears only when the user has
     // at least one secret chat, vanishes again when they delete the
     // last one.
-    if (hasSecret) add(TabSpec(ChatKind.Secret, R.string.tab_secret))
-    if (showArchive) add(TabSpec(null, R.string.tab_archived, isArchive = true))
+    if (hasSecret) add(TabSpec(ChatKind.Secret, R.string.tab_secret, com.secondream.novagram.ui.icons.PhosphorIcons.Lock))
+    if (showArchive) add(
+        TabSpec(
+            kind = null,
+            labelRes = R.string.tab_archived,
+            icon = com.secondream.novagram.ui.icons.PhosphorIcons.Archive,
+            isArchive = true
+        )
+    )
 }
 
 @Composable
@@ -310,6 +329,43 @@ fun ChatListScreen(
                                     contentDescription = stringResource(R.string.search_action)
                                 )
                             }
+                            // Download button — opens GitHub releases page
+                            // in browser. Decorated with an accent dot when
+                            // UpdateChecker has flagged a newer release as
+                            // available. The Box wraps the IconButton so
+                            // the dot can be anchored at TopEnd of the
+                            // icon's bounding box, just outside the glyph.
+                            val updateAvailable by com.secondream.novagram.update
+                                .UpdateChecker.updateAvailable
+                                .collectAsState()
+                            val updateCtx = LocalContext.current
+                            androidx.compose.foundation.layout.Box {
+                                IconButton(onClick = {
+                                    val intent = android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(
+                                            com.secondream.novagram.update
+                                                .UpdateChecker.RELEASES_PAGE
+                                        )
+                                    )
+                                    runCatching { updateCtx.startActivity(intent) }
+                                }) {
+                                    Icon(
+                                        com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple,
+                                        contentDescription = stringResource(R.string.action_check_updates)
+                                    )
+                                }
+                                if (updateAvailable) {
+                                    androidx.compose.foundation.layout.Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(top = 8.dp, end = 8.dp)
+                                            .size(8.dp)
+                                            .clip(androidx.compose.foundation.shape.CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary)
+                                    )
+                                }
+                            }
                             IconButton(onClick = onOpenProfile) {
                                 Avatar(
                                     file = myAvatarFile,
@@ -331,6 +387,7 @@ fun ChatListScreen(
                         titleContentColor = MaterialTheme.colorScheme.onBackground
                     )
                 )
+                com.secondream.novagram.ui.components.OfflineBanner()
                 // Per-tab unread totals (sum of unread across chats in
                 // that category). Archive sums archived chats; the others
                 // sum their kind among non-archived chats.
@@ -344,7 +401,8 @@ fun ChatListScreen(
                     }
                 }
                 PillTabs(
-                    titles = tabs.map { stringResource(it.labelRes) },
+                    icons = tabs.map { it.icon },
+                    contentDescriptions = tabs.map { stringResource(it.labelRes) },
                     badges = tabBadges,
                     selected = selectedTab.coerceIn(0, tabs.lastIndex),
                     onSelect = { selectedTab = it }
@@ -437,11 +495,57 @@ fun ChatListScreen(
                     )
                 }
             } else {
+                // Saved Messages is split out from the regular pageChats
+                // list and rendered as a stickyHeader so it stays anchored
+                // to the top of the viewport regardless of scroll position.
+                // Telegram pins the Saved Messages pseudo-chat the same
+                // way — it's the "notes to self" surface, the user
+                // expects to find it always at hand no matter how deep
+                // they've scrolled into their chat list. Without the
+                // sticky behavior, returning from a chat would land the
+                // user at their previous scroll position, with Saved
+                // Messages potentially scrolled off-screen above.
+                val savedMsgsChat = remember(pageChats, myUserId) {
+                    if (myUserId != 0L) pageChats.firstOrNull { it.id == myUserId } else null
+                }
+                val otherChats = remember(pageChats, savedMsgsChat) {
+                    if (savedMsgsChat != null) pageChats.filter { it.id != savedMsgsChat.id }
+                    else pageChats
+                }
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(vertical = 4.dp)
                 ) {
-                    items(pageChats, key = { it.id }) { c ->
+                    if (savedMsgsChat != null) {
+                        stickyHeader(key = "saved_messages_sticky") {
+                            // Wrap in a Box with explicit background so
+                            // the row reads as a solid card sitting above
+                            // the scrolling items — without the bg, the
+                            // sticky header would show the items
+                            // bleeding through underneath as they scroll
+                            // past, breaking the "always at top" illusion.
+                            androidx.compose.foundation.layout.Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.background)
+                            ) {
+                                Column {
+                                    ChatRow(
+                                        savedMsgsChat,
+                                        onClick = { onChatClick(savedMsgsChat.id) },
+                                        onLongClick = { chatActionTarget = savedMsgsChat },
+                                        myUserId = myUserId
+                                    )
+                                    HorizontalDivider(
+                                        color = MaterialTheme.colorScheme.outline,
+                                        thickness = 0.5.dp,
+                                        modifier = Modifier.padding(start = 88.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    items(otherChats, key = { it.id }) { c ->
                         ChatRow(
                             c,
                             onClick = { onChatClick(c.id) },
@@ -760,21 +864,26 @@ private fun ChatActionRow(
 
 @Composable
 private fun PillTabs(
-    titles: List<String>,
+    icons: List<androidx.compose.ui.graphics.vector.ImageVector>,
+    contentDescriptions: List<String>,
     selected: Int,
     onSelect: (Int) -> Unit,
     badges: List<Int> = emptyList()
 ) {
-    // Sliding-pill tabs: instead of recoloring each tab on selection (which
-    // pops abruptly and reads as a flicker during HorizontalPager swipes),
-    // we render a single accent-coloured pill that animates its position
-    // to match the selected tab. The animation source is the selected
-    // index itself, so swipes between tabs glide instead of jumping. Text
-    // colour cross-fades between primary and onPrimary based on how
-    // close each tab sits to the pill mid-animation.
+    // Sliding-pill icon tabs. The container is wrap-content + centered
+    // horizontally — no longer full-width — so the bar reads as a
+    // compact control floating under the title rather than a full-
+    // bleed segmented bar. Each tab is a fixed 44x36dp pill with the
+    // 20dp icon centered inside; the accent pill that marks the
+    // selected tab still slides between positions via animateFloatAsState
+    // the same way the old text-pill version did. Per-tab unread badges
+    // sit as overlays at the top-right of each pill — see comment
+    // inside the per-tab block for the inversion rule on the selected
+    // pill.
     val primary = MaterialTheme.colorScheme.primary
     val onPrimary = MaterialTheme.colorScheme.onPrimary
     val onSurfaceMuted = MaterialTheme.colorScheme.onSurfaceVariant
+    val pageBg = MaterialTheme.colorScheme.background
     val animatedSelected by androidx.compose.animation.core.animateFloatAsState(
         targetValue = selected.toFloat(),
         animationSpec = androidx.compose.animation.core.spring(
@@ -783,69 +892,92 @@ private fun PillTabs(
         ),
         label = "tab-slide"
     )
-    androidx.compose.foundation.layout.BoxWithConstraints(
+    val tabWidth = 44.dp
+    val tabHeight = 36.dp
+    val tabGap = 4.dp
+    val containerPadding = 4.dp
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(4.dp)
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        val tabCount = titles.size.coerceAtLeast(1)
-        val tabWidth = this.maxWidth / tabCount
-        val tabHeight = 44.dp
-        // Sliding pill drawn underneath the labels.
-        Box(
+        androidx.compose.foundation.layout.Box(
             modifier = Modifier
-                .offset(x = tabWidth * animatedSelected)
-                .width(tabWidth)
-                .height(tabHeight)
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
-                .background(primary)
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().height(tabHeight),
-            verticalAlignment = Alignment.CenterVertically
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(containerPadding)
         ) {
-            titles.forEachIndexed { i, title ->
-                val distance = kotlin.math.abs(animatedSelected - i).coerceIn(0f, 1f)
-                val textColor = androidx.compose.ui.graphics.lerp(onPrimary, onSurfaceMuted, distance)
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(tabHeight)
-                        .clickable(
-                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                            indication = null
-                        ) { onSelect(i) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            title,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = textColor,
-                            fontWeight = if (i == selected) FontWeight.SemiBold else FontWeight.Medium,
-                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                            maxLines = 1
-                        )
-                        // Unread badge for this category. Hidden at zero.
+            // Sliding accent pill — sits underneath the icons, slides
+            // between positions when the selected index changes. Width
+            // matches one tab; offset is selectedIdx * (tabWidth + gap).
+            Box(
+                modifier = Modifier
+                    .offset(x = (tabWidth + tabGap) * animatedSelected)
+                    .width(tabWidth)
+                    .height(tabHeight)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                    .background(primary)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(tabGap)) {
+                icons.forEachIndexed { i, icon ->
+                    val distance = kotlin.math.abs(animatedSelected - i).coerceIn(0f, 1f)
+                    val iconColor = androidx.compose.ui.graphics.lerp(onPrimary, onSurfaceMuted, distance)
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier
+                            .size(width = tabWidth, height = tabHeight)
+                    ) {
+                        // Tap target + icon
+                        androidx.compose.foundation.layout.Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable(
+                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                    indication = null
+                                ) { onSelect(i) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                icon,
+                                contentDescription = contentDescriptions.getOrNull(i),
+                                tint = iconColor,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        // Unread badge overlay at top-right corner of
+                        // the pill, sticker-style (slightly outside the
+                        // pill bounds). Hidden when count = 0. When
+                        // this tab is currently selected, the badge
+                        // inverts color so it's still legible on top
+                        // of the accent-colored sliding pill: dark
+                        // background + light text + accent ring,
+                        // instead of the default accent background +
+                        // dark text + page-bg ring used on the
+                        // unselected pills.
                         val badge = badges.getOrNull(i) ?: 0
                         if (badge > 0) {
-                            Spacer(Modifier.width(5.dp))
-                            Box(
+                            val badgeBg = if (i == selected) MaterialTheme.colorScheme.onPrimary else primary
+                            val badgeFg = if (i == selected) primary else onPrimary
+                            val badgeRing = if (i == selected) primary else pageBg
+                            androidx.compose.foundation.layout.Box(
                                 modifier = Modifier
-                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(9.dp))
-                                    .background(
-                                        if (i == selected) onPrimary.copy(alpha = 0.25f)
-                                        else primary
-                                    )
-                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 3.dp, y = (-3).dp)
+                                    .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(999.dp))
+                                    .background(badgeRing)
+                                    .padding(2.dp)
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(999.dp))
+                                    .background(badgeBg)
+                                    .padding(horizontal = 4.dp),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     if (badge > 99) "99+" else badge.toString(),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (i == selected) onPrimary else onPrimary,
+                                    color = badgeFg,
+                                    fontWeight = FontWeight.Bold,
                                     maxLines = 1
                                 )
                             }

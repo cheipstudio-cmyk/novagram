@@ -17,7 +17,12 @@ import androidx.compose.ui.unit.dp
  * Tinting works the standard way via `Icon(tint = …)` because the base
  * fill is opaque black and `Icon` overrides via `ColorFilter`.
  */
-private fun phosphor(name: String, pathData: String): ImageVector =
+private fun phosphor(
+    name: String,
+    pathData: String,
+    fillType: androidx.compose.ui.graphics.PathFillType =
+        androidx.compose.ui.graphics.PathFillType.NonZero
+): ImageVector =
     ImageVector.Builder(
         name = "Phosphor.Bold.$name",
         defaultWidth = 24.dp,
@@ -27,7 +32,8 @@ private fun phosphor(name: String, pathData: String): ImageVector =
     ).apply {
         addPath(
             pathData = PathParser().parsePathString(pathData).toNodes(),
-            fill = SolidColor(Color.Black)
+            fill = SolidColor(Color.Black),
+            pathFillType = fillType
         )
     }.build()
 
@@ -163,4 +169,46 @@ object PhosphorIcons {
 
     val UserMinus: ImageVector by lazy { phosphor("UserMinus",
         "M256,136a12,12,0,0,1-12,12H204a12,12,0,0,1,0-24h40A12,12,0,0,1,256,136Zm-54.81,56.28a12,12,0,1,1-18.38,15.44C169.12,191.42,145,172,108,172c-28.89,0-55.46,12.68-74.81,35.72a12,12,0,0,1-18.38-15.44A124.08,124.08,0,0,1,63.5,156.53a72,72,0,1,1,89,0A124,124,0,0,1,201.19,192.28ZM108,148a48,48,0,1,0-48-48A48.05,48.05,0,0,0,108,148Z") }
+
+    /**
+     * Two overlapping speech bubbles — the "all chats" / "chat group"
+     * icon. Drawn with EvenOdd fill so each bubble has a hollow
+     * interior (the Phosphor Bold "outlined" look): the outer rounded-
+     * rect + tail subpath fills, then the inner rounded-rect subpath
+     * carves it out. Back bubble's tail points down-right, front
+     * bubble's tail points down-left — matches Phosphor's upstream
+     * Chats icon orientation.
+     */
+    val Chats: ImageVector by lazy {
+        phosphor(
+            "Chats",
+            // Back bubble (outer + inner cutout):
+            "M88,40H216a12,12,0,0,1,12,12V148a12,12,0,0,1-12,12H188v32l-32-32H100a12,12,0,0,1-12-12V52A12,12,0,0,1,88,40Z" +
+            "M104,60V148h60l16,16V148h32V60Z" +
+            // Front bubble (outer + inner cutout):
+            "M40,88H168a12,12,0,0,1,12,12V168a12,12,0,0,1-12,12H100L68,212V180H40a12,12,0,0,1-12-12V100A12,12,0,0,1,40,88Z" +
+            "M56,108V180h28v8l16-8h64V108Z",
+            fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
+        )
+    }
+
+    /**
+     * Archive box — filled lid on top, hollow body underneath with a
+     * pill-shaped slot/handle in the middle. EvenOdd fill: the outer
+     * silhouette (lid + body together) fills solid, then the body
+     * interior carves out, then the slot fills back in. Three
+     * subpaths, three winding levels.
+     */
+    val Archive: ImageVector by lazy {
+        phosphor(
+            "Archive",
+            // Outer silhouette (lid + body together):
+            "M40,68H216a12,12,0,0,1,12,12v32a12,12,0,0,1-12,12h-4V200a16,16,0,0,1-16,16H60a16,16,0,0,1-16-16V124H40a12,12,0,0,1-12-12V80A12,12,0,0,1,40,68Z" +
+            // Body interior cutout:
+            "M68,124V192H188V124Z" +
+            // Slot handle (filled pill inside body cutout):
+            "M104,148a12,12,0,0,1,12-12h24a12,12,0,0,1,0,24H116A12,12,0,0,1,104,148Z",
+            fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
+        )
+    }
 }

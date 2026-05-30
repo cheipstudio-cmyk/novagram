@@ -401,11 +401,19 @@ object AppSettings {
             e.remove(CUSTOM_INPUT_BAR)
             e.remove(ACTIVE_SAVED_THEME_ID)
         }
-        // Sync the launcher icon to the new theme. The activity-alias
-        // swap is fire-and-forget — the launcher will refresh on its
-        // next cycle. We do this AFTER persisting so a crash mid-save
-        // never leaves the icon out of sync with persisted prefs.
-        com.secondream.novagram.IconAliasManager.apply(appContext, mode)
+        // NOTE: We deliberately do NOT call IconAliasManager.apply here
+        // anymore. PackageManager.setComponentEnabledSetting can kill
+        // the process when the currently-active LAUNCHER alias is the
+        // one being disabled — DONT_KILL_APP is documented as a hint,
+        // not a guarantee, and certain OEMs ignore it entirely. The
+        // idempotency check from v0.10.43 cut down the cases but did
+        // not eliminate them. The launcher icon variant now updates
+        // only at App.onCreate (process start), so a theme change
+        // during the session updates the in-app colors instantly via
+        // Compose recompose, but the launcher icon catches up on the
+        // next app start. This is an acceptable trade-off: the
+        // launcher icon is what the user sees ON THE HOME SCREEN, only
+        // visible when the app is closed.
     }
 
     suspend fun setAccentColor(color: AccentColor) {
