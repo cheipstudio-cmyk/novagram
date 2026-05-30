@@ -607,7 +607,7 @@ fun ChatScreen(
                         // clamped to 0 for bubbles taller than 2/3 of
                         // the viewport.
                         val viewportH0 = listState.layoutInfo.viewportSize.height
-                        val roughOffset = if (viewportH0 > 0) viewportH0 / 2 else 200
+                        val roughOffset = if (viewportH0 > 0) viewportH0 * 7 / 10 else 200
                         runCatching { listState.scrollToItem(firstUnreadIdx, roughOffset) }
                         repeat(3) {
                             kotlinx.coroutines.delay(16)
@@ -615,7 +615,7 @@ fun ChatScreen(
                             val item = listState.layoutInfo.visibleItemsInfo
                                 .find { it.index == firstUnreadIdx }
                             if (vp > 0 && item != null) {
-                                val precise = ((vp - item.size) / 2).coerceAtLeast(0)
+                                val precise = (vp * 7 / 10 - item.size / 2).coerceAtLeast(0)
                                 runCatching { listState.scrollToItem(firstUnreadIdx, precise) }
                                 return@repeat
                             }
@@ -713,7 +713,7 @@ fun ChatScreen(
                     // offset which clipped tall content above the
                     // visible area.
                     val viewportH0 = listState.layoutInfo.viewportSize.height
-                    val roughOffset = if (viewportH0 > 0) viewportH0 / 2 else 200
+                    val roughOffset = if (viewportH0 > 0) viewportH0 * 7 / 10 else 200
                     runCatching { listState.scrollToItem(idx, roughOffset) }
                     repeat(3) {
                         kotlinx.coroutines.delay(16)
@@ -721,7 +721,7 @@ fun ChatScreen(
                         val item = listState.layoutInfo.visibleItemsInfo
                             .find { it.index == idx }
                         if (vp > 0 && item != null) {
-                            val precise = ((vp - item.size) / 2).coerceAtLeast(0)
+                            val precise = (vp * 7 / 10 - item.size / 2).coerceAtLeast(0)
                             runCatching { listState.scrollToItem(idx, precise) }
                             return@repeat
                         }
@@ -1128,34 +1128,41 @@ fun ChatScreen(
             // fallback, so there's nothing more to do here.
             if (idx < 0) return@launch
             run {
-                // Two-phase precise scroll. Rationale: a fixed fraction
-                // of viewportH as scrollOffset (the previous viewportH/4
-                // and viewportH/3 attempts) can only approximate
-                // "centered" for one specific bubble height — short
-                // bubbles end up biased to one side, tall bubbles
-                // (image / video / file) end up clipped because the
-                // offset was measured against the wrong height. Eugenio
-                // kept hitting it as "ci porta sempre un po' troppo in
-                // alto, bisogna scorrere in basso per vedere il
-                // messaggio" across all jump entry points (mention
-                // chip, reaction chip, t.me deeplink, pinned-message
-                // list, in-chat search arrows). The fix is to measure
-                // the ACTUAL height of the target after layout and then
-                // compute the exact offset that CENTERS it vertically
-                // in the viewport — equal context above and below, so
-                // the highlight flash sits squarely in the middle of
-                // the screen where the eye naturally lands. Formula:
-                // scrollOffset = (viewportH - targetH) / 2, clamped to
-                // 0 for bubbles taller than the viewport (in which
-                // case the bottom of the target sits flush with the
-                // viewport bottom and the visible portion extends up).
+                // Two-phase precise scroll. v0.10.63 iteration: places
+                // the target's CENTER at viewportH * 0.40 — 40% from
+                // the top of the LazyColumn area, which puts the
+                // highlighted bubble in the upper-middle region with
+                // 60% of viewport below for the newer-context the
+                // user typically wants to see after a jump (mention/
+                // reaction/t.me deeplink/pinned-list/search arrow).
                 //
-                // Phase 1: rough scroll using viewportH/2 so the
-                // target lands roughly in the middle area. Phase 2
-                // (after a single-frame delay for layout to place the
-                // target) reads layoutInfo.visibleItemsInfo for the
-                // actual measured size and refines to the exact
-                // centered offset.
+                // History of tries: viewportH/4 (way too high),
+                // viewportH/2 (too high, tall bubbles clipped),
+                // viewportH/3 (still too high — user "ci porta sempre
+                // un po' troppo in alto"), centered at viewportH/2
+                // (too low — user "appare un po' troppo in basso,
+                // bisogna scorrere per vedere 2-5 messaggi sotto"),
+                // 40%-from-top still too low. Settled on 30%-from-top
+                // — target sits squarely in the upper third where the
+                // eye naturally lands when reading top-to-bottom,
+                // with three quarters of the viewport still showing
+                // newer-context below for continued scrolling.
+                //
+                // Math: place target's center at y = viewportH * 0.30.
+                // Target's bottom = vp*0.30 + targetH/2. With
+                // reverseLayout=true scrollOffset is distance from
+                // visual bottom up to item's visual-bottom edge, so
+                // scrollOffset = vp - (vp*0.30 + targetH/2) = vp*0.70
+                // - targetH/2. Integer form: (vp * 7 / 10 - targetH /
+                // 2). Clamp at 0 for bubbles taller than ~1.4×viewport
+                // (essentially impossible in practice).
+                //
+                // Phase 1: rough scroll using vp*7/10 (no targetH
+                // correction, but close enough that the refine is a
+                // small settle). Phase 2 (after a single-frame delay
+                // for layout to place the target) reads
+                // layoutInfo.visibleItemsInfo for the actual measured
+                // size and refines to the precise 30%-center offset.
                 //
                 // The animate-vs-snap choice from the legacy code is
                 // preserved: animate for the already-loaded case (so
@@ -1174,7 +1181,7 @@ fun ChatScreen(
                             .find { it.index == idx }
                         if (vp > 0 && item != null) {
                             val targetH = item.size
-                            val precise = ((vp - targetH) / 2).coerceAtLeast(0)
+                            val precise = (vp * 7 / 10 - targetH / 2).coerceAtLeast(0)
                             // Snap for refinement: the rough scroll
                             // already animated/snapped to the
                             // approximate region, the refine is a
@@ -1198,10 +1205,10 @@ fun ChatScreen(
                 val existing = listState.layoutInfo.visibleItemsInfo
                     .find { it.index == idx }
                 if (existing != null && viewportH0 > 0 && wasAlreadyLoaded) {
-                    val precise = ((viewportH0 - existing.size) / 2).coerceAtLeast(0)
+                    val precise = (viewportH0 * 7 / 10 - existing.size / 2).coerceAtLeast(0)
                     runCatching { listState.animateScrollToItem(idx, precise) }
                 } else {
-                    val roughOffset = if (viewportH0 > 0) viewportH0 / 2 else 200
+                    val roughOffset = if (viewportH0 > 0) viewportH0 * 7 / 10 else 200
                     if (wasAlreadyLoaded) {
                         runCatching { listState.animateScrollToItem(idx, roughOffset) }
                     } else {

@@ -102,70 +102,92 @@ fun AppRouter(
         }
     }
 
-    // Material 3 "emphasized" motion specs. Two cubic-bezier curves:
-    //  - emphasizedDecelerate: starts fast, settles smoothly — used for
-    //    the INCOMING screen so it decelerates into its resting frame,
-    //    which is what makes a transition feel "expensive / cinematic"
-    //    instead of "snap".
-    //  - emphasizedAccelerate: starts slow, exits fast — used for the
-    //    OUTGOING screen so it gets out of the way without dragging.
-    // Combined with FULL-WIDTH slide-in (vs. the previous 30% peek)
-    // and a parallax shift on the outgoing screen (it translates only
-    // 30% so it stays visible peeking from the left during the swap,
-    // iOS/Telegram navigation idiom), the chat-open transition reads
-    // as a real "this is a new surface being pushed onto a stack",
-    // not a jittery card flip.
+    // v0.10.64 motion: rewritten on spring physics for a "kinetic"
+    // feel. Three layers, all running in parallel:
     //
-    // Durations: 420ms in / 380ms out. Long enough that ChatScreen's
-    // initial TDLib history fetch + message rendering settles BEFORE
-    // the slide finishes (no more "snap-in followed by visible
-    // re-layout" lag perception), short enough that taps still feel
-    // responsive on rapid navigations. Fade gets a 60ms delay so the
-    // slide leads — opacity catches up — a small layering that reads
-    // as polish vs. flat fade.
-    val emphasizedDecelerate = androidx.compose.animation.core.CubicBezierEasing(
-        0.05f, 0.7f, 0.1f, 1.0f
+    //   1. Slide — critically damped spring (dampingRatio=1.0). NO
+    //      bounce on the slide axis because horizontal screen-wide
+    //      bouncing reads as a "rubber-band glitch", not richness.
+    //      StiffnessMediumLow gives ~280ms perceptual settle on
+    //      enter; StiffnessMedium snaps the exiting screen out in
+    //      ~220ms so it doesn't drag.
+    //
+    //   2. Scale — UNDER-damped spring (dampingRatio=0.70) with
+    //      visible overshoot. The incoming screen scales 0.90→1.0
+    //      and overshoots to ~1.015 before settling. This is the
+    //      "richness" the previous tween-based pass was missing —
+    //      the chat doesn't just slide into place, it LANDS with a
+    //      tiny punch. Outgoing scale stays critically damped at
+    //      1.0→0.94 so it just recedes smoothly.
+    //
+    //   3. Fade — tween, very short (180ms in / 140ms out). Just
+    //      enough to soften the leading edge of the slide. Without
+    //      a fade the incoming screen's left edge looks like a hard
+    //      cut. No delay this time — flat parallel motion reads
+    //      cleaner than staggered layers on short durations.
+    //
+    // Springs also carry velocity across rapid back-and-forth
+    // navigation: if the user mashes "open chat → back → open chat"
+    // the second slide picks up from wherever the first ended, no
+    // restart-from-zero canned-curve feel.
+    //
+    // Outgoing parallax kept at 30% — the chat-list peeks from the
+    // left during the swap so it's clearly "underneath" not "gone".
+    val slideEnterSpring = androidx.compose.animation.core.spring<androidx.compose.ui.unit.IntOffset>(
+        dampingRatio = 1.0f,
+        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
     )
-    val emphasizedAccelerate = androidx.compose.animation.core.CubicBezierEasing(
-        0.3f, 0.0f, 0.8f, 0.15f
+    val slideExitSpring = androidx.compose.animation.core.spring<androidx.compose.ui.unit.IntOffset>(
+        dampingRatio = 1.0f,
+        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
     )
-    val slideInSpec = tween<androidx.compose.ui.unit.IntOffset>(
-        durationMillis = 420, easing = emphasizedDecelerate
+    val scaleEnterSpring = androidx.compose.animation.core.spring<Float>(
+        dampingRatio = 0.70f,
+        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
     )
-    val slideOutSpec = tween<androidx.compose.ui.unit.IntOffset>(
-        durationMillis = 380, easing = emphasizedAccelerate
+    val scaleExitSpring = androidx.compose.animation.core.spring<Float>(
+        dampingRatio = 1.0f,
+        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumHigh
     )
-    val fadeInSpec = tween<Float>(
-        durationMillis = 320, delayMillis = 60, easing = emphasizedDecelerate
-    )
-    val fadeOutSpec = tween<Float>(
-        durationMillis = 220, easing = emphasizedAccelerate
-    )
+    val fadeInSpec = tween<Float>(durationMillis = 180)
+    val fadeOutSpec = tween<Float>(durationMillis = 140)
     NavHost(
         navController = nav,
         startDestination = Routes.LOGIN,
         enterTransition = {
             androidx.compose.animation.slideInHorizontally(
-                animationSpec = slideInSpec,
+                animationSpec = slideEnterSpring,
                 initialOffsetX = { fullWidth -> fullWidth }
+            ) + androidx.compose.animation.scaleIn(
+                initialScale = 0.90f,
+                animationSpec = scaleEnterSpring
             ) + androidx.compose.animation.fadeIn(fadeInSpec)
         },
         exitTransition = {
             androidx.compose.animation.slideOutHorizontally(
-                animationSpec = slideOutSpec,
+                animationSpec = slideExitSpring,
                 targetOffsetX = { fullWidth -> -(fullWidth * 0.30f).toInt() }
+            ) + androidx.compose.animation.scaleOut(
+                targetScale = 0.94f,
+                animationSpec = scaleExitSpring
             ) + androidx.compose.animation.fadeOut(fadeOutSpec)
         },
         popEnterTransition = {
             androidx.compose.animation.slideInHorizontally(
-                animationSpec = slideInSpec,
+                animationSpec = slideEnterSpring,
                 initialOffsetX = { fullWidth -> -(fullWidth * 0.30f).toInt() }
+            ) + androidx.compose.animation.scaleIn(
+                initialScale = 0.94f,
+                animationSpec = scaleEnterSpring
             ) + androidx.compose.animation.fadeIn(fadeInSpec)
         },
         popExitTransition = {
             androidx.compose.animation.slideOutHorizontally(
-                animationSpec = slideOutSpec,
+                animationSpec = slideExitSpring,
                 targetOffsetX = { fullWidth -> fullWidth }
+            ) + androidx.compose.animation.scaleOut(
+                targetScale = 0.90f,
+                animationSpec = scaleExitSpring
             ) + androidx.compose.animation.fadeOut(fadeOutSpec)
         }
     ) {
