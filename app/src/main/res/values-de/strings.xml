@@ -329,4 +329,11 @@
     <string name="action_unmute_author">Autor entstummschalten</string>
     <string name="action_unkick_author">Autor entsperren</string>
     <string name="action_join_group">Gruppe beitreten</string>
+    <string name="tab_all">Alle</string>
+    <string name="action_pin_chat">Chat anheften</string>
+    <string name="action_unpin_chat">Chat lösen</string>
+    <string name="settings_show_all_tab">&quot;Alle&quot;-Tab anzeigen</string>
+    <string name="settings_show_all_tab_desc">Einen einzelnen Tab mit allen Chats oben anzeigen</string>
+    <string name="settings_swap_swipe_reply">Wischen zum Antworten umkehren</string>
+    <string name="settings_swap_swipe_reply_desc">Nach links statt rechts wischen, um zu antworten</string>
 </resources>

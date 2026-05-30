@@ -284,13 +284,23 @@ fun ChatScreen(
             is TdApi.ChatMemberStatusLeft,
             is TdApi.ChatMemberStatusBanned -> true
             null -> {
-                // Null result usually means the call failed because we
-                // genuinely are not a member (TDLib refuses GetChatMember
-                // in that case for non-public chats). Treat as non-member
-                // for public chats so the join CTA appears; private
-                // groups will just be inaccessible upstream so this
-                // value doesn't matter.
-                true
+                // getMyChatMember frequently returns null for channels
+                // EVEN WHEN we're a subscriber — TDLib gates the call
+                // behind permissions some channel types don't expose
+                // to regular members. Falling back to "true → show
+                // Join" was producing the bug Eugenio hit where the
+                // Join CTA appeared inside channels he was already in.
+                //
+                // Safer signal: chat.positions. If the cached chat has
+                // ANY position with order > 0 (Main or Archive list),
+                // it surfaces in our chat list — which by definition
+                // means TDLib considers us a participant. Only treat
+                // as non-member when there's no position AND we
+                // couldn't read the member status either (real public
+                // preview).
+                val chat = TdClient.getCachedChat(chatId)
+                val hasListPosition = chat?.positions?.any { it.order != 0L } == true
+                !hasListPosition
             }
             else -> false
         }
@@ -308,6 +318,11 @@ fun ChatScreen(
             isNonMember = when (member?.status) {
                 is TdApi.ChatMemberStatusLeft,
                 is TdApi.ChatMemberStatusBanned -> true
+                null -> {
+                    val chat = TdClient.getCachedChat(chatId)
+                    val hasListPosition = chat?.positions?.any { it.order != 0L } == true
+                    !hasListPosition
+                }
                 else -> false
             }
         }
@@ -547,22 +562,50 @@ fun ChatScreen(
                     }
                 }
                 if (toAdd.isNotEmpty()) {
+                    // We DID get new messages while offscreen. Where to land
+                    // depends on whether those new messages are actually
+                    // unread (chat may have been already-read on another
+                    // device, in which case we just want the user at the
+                    // bottom seeing what's new).
+                    val freshChatInfo = runCatching { TdClient.getChat(chatId) }.getOrNull()
+                    val freshUnread = freshChatInfo?.unreadCount ?: 0
+                    val freshLastReadId = freshChatInfo?.lastReadInboxMessageId ?: 0L
+
+                    if (freshUnread > 0 && freshLastReadId > 0L) {
+                        // First-unread = smallest id strictly greater than
+                        // lastReadInboxMessageId among incoming messages
+                        // currently in our window. Land the user there so
+                        // already-read context sits above, unread below.
+                        val firstUnreadIdx = messages
+                            .withIndex()
+                            .filter { (_, m) -> !m.isOutgoing && m.id > freshLastReadId }
+                            .minByOrNull { it.value.id }
+                            ?.index
+                        if (firstUnreadIdx != null) {
+                            val viewportH = listState.layoutInfo.viewportSize.height
+                            val nearTopOffset = if (viewportH > 0) -(viewportH * 88 / 100) else -1600
+                            runCatching { listState.scrollToItem(firstUnreadIdx, nearTopOffset) }
+                            chatUnreadOnOpen = freshUnread
+                            unreadModeActive = true
+                            return@runCatching
+                        }
+                    }
+                    // No first-unread to land on (either chat fully read on
+                    // another device, or no incoming new messages — only our
+                    // own sends echoing back). Mark anything incoming as read
+                    // and glide to the bottom so the user sees what arrived.
                     runCatching {
                         TdClient.viewMessages(
                             chatId,
                             toAdd.filter { !it.isOutgoing }.map { it.id }.toLongArray()
                         )
                     }
-                    // Glide to the newest message so the user actually
-                    // SEES what arrived. Without this they keep their
-                    // last scroll anchor (good for MediaViewer pop
-                    // where nothing new arrived) but the new bubbles
-                    // sit below the viewport invisible — exactly the
-                    // "no new messages when I open the chat" symptom.
-                    // animateScrollToItem rides the same spring as the
-                    // bubble entry so it feels like flow, not a jolt.
                     runCatching { listState.animateScrollToItem(0) }
                 }
+                // toAdd empty: pop-from-subscreen with no new content arrived
+                // while we were offscreen. Preserve scroll position exactly
+                // as the user left it — the listState already has the right
+                // anchor, doing nothing is the right answer.
             }
             return@LaunchedEffect
         }
@@ -655,19 +698,47 @@ fun ChatScreen(
     }
 
     // While unread mode is active, watch the scroll position: as soon as
-    // the user reaches the bottom (manually or via the FAB) we mark all
-    // currently-loaded incoming messages as read and clear the accent
-    // affordance. This is what makes the "tap FAB or just scroll down"
-    // experience feel symmetric with the official client.
+    // the user reaches the bottom (manually or via the FAB) we drop the
+    // accent affordance on the jump-to-bottom button. The chat-list
+    // unread badge is now driven by the separate per-visible-item
+    // viewMessages flow below, so it clears progressively as the user
+    // scrolls — not all-or-nothing on hitting index 0.
     LaunchedEffect(unreadModeActive, chatId) {
         if (!unreadModeActive) return@LaunchedEffect
         snapshotFlow { listState.firstVisibleItemIndex }
             .filter { it == 0 }
             .collect {
-                val ids = messages.filter { !it.isOutgoing }.map { it.id }.toLongArray()
-                if (ids.isNotEmpty()) runCatching { TdClient.viewMessages(chatId, ids) }
                 chatUnreadOnOpen = 0
                 unreadModeActive = false
+            }
+    }
+
+    // Per-visible-message read receipts. Telegram's stock behaviour is
+    // to mark messages as read AS THEY ENTER the viewport (not when the
+    // user reaches the bottom). Without this, opening a chat with
+    // unread, reading the first few in the viewport, and then leaving
+    // without scrolling to the very bottom left the unread badge stuck
+    // on the chat list at the original count — exactly the bug Eugenio
+    // hit on non-silenced groups and channels.
+    //
+    // snapshotFlow on visibleItemsInfo emits when the visible window
+    // changes (scroll or list mutation). distinctUntilChanged on the
+    // *index list* dedupes redundant calls during a single frame /
+    // micro-scroll. We map indices → message ids, filter for
+    // non-outgoing, and call ViewMessages. TDLib idempotently marks
+    // them and then fires UpdateChatReadInbox, which our handler
+    // applies to the chatCache → chat-list badge drops in real time.
+    LaunchedEffect(chatId) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
+            .distinctUntilChanged()
+            .collect { indices ->
+                if (indices.isEmpty()) return@collect
+                val ids = indices.mapNotNull { idx ->
+                    messages.getOrNull(idx)?.let { m -> if (!m.isOutgoing) m.id else null }
+                }.toLongArray()
+                if (ids.isNotEmpty()) {
+                    runCatching { TdClient.viewMessages(chatId, ids) }
+                }
             }
     }
 
@@ -788,6 +859,39 @@ fun ChatScreen(
                 messages[idx] = messages[idx]
                 interactionRevisions[upd.messageId] =
                     (interactionRevisions[upd.messageId] ?: 0) + 1
+                // Safety net: TDLib normally emits UpdateMessageContent
+                // alongside UpdateMessageEdited for an edit, but on some
+                // edit paths (notably media caption edits on our own
+                // outgoing messages) the content update arrives late or
+                // not at all — leaving the visible caption / text stale
+                // even though the "modificato" tag has appeared. We
+                // refresh the message authoritatively via GetMessage on
+                // a tiny delay so:
+                //  (a) if UpdateMessageContent already landed, the
+                //      refetch is a no-op overwrite with identical
+                //      values — cheap;
+                //  (b) if the content update never landed, the fetched
+                //      content fills in the gap and the bubble updates
+                //      without needing the user to close+reopen.
+                // 150ms is the empirical sweet spot — short enough that
+                // the user perceives the text catching up to the tag,
+                // long enough to let an in-flight UpdateMessageContent
+                // win the race when present.
+                scope.launch {
+                    kotlinx.coroutines.delay(150)
+                    val fresh = runCatching {
+                        TdClient.getMessage(upd.chatId, upd.messageId)
+                    }.getOrNull() ?: return@launch
+                    val curIdx = messages.indexOfFirst { it.id == upd.messageId }
+                    if (curIdx < 0) return@launch
+                    if (messages[curIdx].content !== fresh.content) {
+                        messages[curIdx].content = fresh.content
+                        messages[curIdx] = messages[curIdx]
+                        messageContentOverrides[upd.messageId] = fresh.content
+                        interactionRevisions[upd.messageId] =
+                            (interactionRevisions[upd.messageId] ?: 0) + 1
+                    }
+                }
             }
         }
     }
@@ -900,37 +1004,54 @@ fun ChatScreen(
             // *through* a list whose size has just doubled.
             val wasAlreadyLoaded = messages.indexOfFirst { it.id == targetId } >= 0
             var idx = messages.indexOfFirst { it.id == targetId }
-            // The previous guard of 8×50=400 messages was insufficient: in
-            // long chats search hits older than that simply silently
-            // failed (which felt like "the arrow doesn't work"). 40×50 =
-            // 2000 messages of headroom catches almost every realistic
-            // case while still bounding the network traffic.
-            var guard = 0
-            while (idx < 0 && !noMore && guard < 40) {
-                guard++
-                val oldest = messages.lastOrNull()?.id ?: break
-                val res = runCatching { TdClient.getChatHistory(chatId, oldest, 50) }.getOrNull()
-                if (res == null || res.messages.isEmpty()) { noMore = true; break }
-                messages.addAll(res.messages.toList())
-                idx = messages.indexOfFirst { it.id == targetId }
-            }
-            // Fallback when normal pagination didn't surface the target —
-            // typically because the message is far older than the loaded
-            // window AND noMore got tripped. Pull the message directly via
-            // TDLib + a small surrounding window, splice it into our list,
-            // then scroll. Without this, jumping to a 6-month-old search
-            // hit or to a t.me deep-link target would silently no-op.
+            // When the target ISN'T in the loaded window — typically a
+            // pinned-message tap or a t.me deep-link to a very old
+            // message — pull the surrounding context in ONE TDLib
+            // round-trip instead of looping getChatHistory dozens of
+            // times to backfill page by page. The old loop iterated up
+            // to 40 times (each one a network call) and took multiple
+            // seconds for old targets — exactly the "scroll a vita e
+            // impreciso" Eugenio kept hitting on pinned taps and far
+            // t.me links.
+            //
+            // TDLib's GetChatHistory(fromMessageId, offset, limit)
+            // returns `limit` messages starting from fromMessageId with
+            // `offset` newer messages included. offset = -limit/2 means
+            // half-newer / half-older, so the target lands centered in
+            // the returned batch. We splice the missing ones into
+            // `messages`, then scroll.
             if (idx < 0) {
                 runCatching {
-                    val ctx = TdClient.getChatHistory(chatId, targetId + 1, 25)
+                    val limit = 50
+                    val ctx = TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
                     val toAdd = ctx.messages.toList().filter { m ->
                         messages.none { it.id == m.id }
                     }
-                    if (toAdd.isNotEmpty()) messages.addAll(toAdd)
+                    if (toAdd.isNotEmpty()) {
+                        // Re-insert in the position that keeps the list
+                        // sorted by id descending (newest at index 0).
+                        // Simpler: just append and re-sort. The list is
+                        // small enough that the cost is negligible, and
+                        // re-sorting is the only way to handle the case
+                        // where the new batch interleaves with existing
+                        // (cached) messages without producing
+                        // out-of-order bubbles.
+                        messages.addAll(toAdd)
+                        val sorted = messages.sortedByDescending { it.id }
+                        messages.clear()
+                        messages.addAll(sorted)
+                    }
+                    idx = messages.indexOfFirst { it.id == targetId }
                 }
-                idx = messages.indexOfFirst { it.id == targetId }
             }
-            if (idx >= 0) {
+            // Defensive: if the single round-trip somehow didn't return
+            // the target (e.g. message was deleted server-side between
+            // the link being created and us trying to load it), bail
+            // gracefully without flashing or scrolling. The caller
+            // already returned true to short-circuit the Intent
+            // fallback, so there's nothing more to do here.
+            if (idx < 0) return@launch
+            run {
                 val viewportH = listState.layoutInfo.viewportSize.height
                 val topOffset = if (viewportH > 0) (viewportH * 6) / 10 else 800
                 if (wasAlreadyLoaded) {
@@ -942,7 +1063,7 @@ fun ChatScreen(
                     // button looks dead.
                     runCatching { listState.animateScrollToItem(idx, topOffset) }
                 } else {
-                    // We just paginated history — list grew by 25-50
+                    // We just paginated history — list grew by ~50
                     // items mid-flight. Animating would scroll
                     // *through* the freshly inserted items which
                     // produces jitter ("scatto bruttissimo"). Snap
@@ -1885,6 +2006,20 @@ fun ChatScreen(
                                     interactionRevisions[captured.id] =
                                         (interactionRevisions[captured.id] ?: 0) + 1
                                 }
+                                // For caption edits we DON'T do a local
+                                // optimistic content swap — the media
+                                // content types (MessagePhoto / Video /
+                                // Document / Animation / Audio / VoiceNote)
+                                // each have different constructor arities
+                                // that drift between TDLib releases, and
+                                // mis-cloning one of them would crash the
+                                // bubble. Instead, the safety-net inside
+                                // the UpdateMessageEdited handler (below)
+                                // refreshes the message via TdClient.getMessage
+                                // when the content update doesn't arrive
+                                // in lockstep — covering the gap that was
+                                // leaving the visible caption stale until
+                                // the user re-opened the chat.
                                 scope.launch {
                                     runCatching {
                                         if (isTextMsg) {

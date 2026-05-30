@@ -329,4 +329,11 @@
     <string name="action_unmute_author">Unmute author</string>
     <string name="action_unkick_author">Unban author</string>
     <string name="action_join_group">Join group</string>
+    <string name="tab_all">All</string>
+    <string name="action_pin_chat">Pin chat</string>
+    <string name="action_unpin_chat">Unpin chat</string>
+    <string name="settings_show_all_tab">Show &quot;All&quot; tab</string>
+    <string name="settings_show_all_tab_desc">Show a single tab with all chats at the top</string>
+    <string name="settings_swap_swipe_reply">Invert reply swipe</string>
+    <string name="settings_swap_swipe_reply_desc">Swipe left instead of right to reply to a message</string>
 </resources>

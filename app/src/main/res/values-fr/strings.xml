@@ -329,4 +329,11 @@
     <string name="action_unmute_author">Réactiver l\'auteur</string>
     <string name="action_unkick_author">Débloquer l\'auteur</string>
     <string name="action_join_group">Rejoindre le groupe</string>
+    <string name="tab_all">Tout</string>
+    <string name="action_pin_chat">Épingler le chat</string>
+    <string name="action_unpin_chat">Désépingler le chat</string>
+    <string name="settings_show_all_tab">Afficher l\'onglet &quot;Tout&quot;</string>
+    <string name="settings_show_all_tab_desc">Afficher un seul onglet avec toutes les discussions en haut</string>
+    <string name="settings_swap_swipe_reply">Inverser le balayage pour répondre</string>
+    <string name="settings_swap_swipe_reply_desc">Balayer vers la gauche au lieu de la droite pour répondre</string>
 </resources>

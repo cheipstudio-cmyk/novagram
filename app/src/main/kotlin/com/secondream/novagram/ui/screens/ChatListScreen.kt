@@ -84,22 +84,34 @@ import java.util.Locale
 private data class TabSpec(
     val kind: ChatKind?,
     val labelRes: Int,
-    val isArchive: Boolean = false
+    val isArchive: Boolean = false,
+    /**
+     * When true, this tab shows ALL chats regardless of kind (private +
+     * group + channel + secret), excluding only archived ones. Used by
+     * the "Tutto" tab so users have one stream that mirrors official
+     * Telegram's default chat list view.
+     */
+    val isAll: Boolean = false
 )
 
 /**
- * The chat-list tabs. Home was removed — the list opens straight on Chat.
- * Saved Messages is pinned at the top of the Chat tab instead of living
- * behind a Home digest. The Archiviati tab is appended only when the user
- * enables it in Settings.
+ * The chat-list tabs. Order: Tutto (everything), Chat, Gruppi, Canali,
+ * optional Segrete (data-driven), optional Archiviati (settings toggle).
+ * Tutto is always the first tab so the user can flip into "show me
+ * everything" mode without scrolling through category-specific tabs.
  */
-private fun buildTabs(showArchive: Boolean, hasSecret: Boolean): List<TabSpec> = buildList {
+private fun buildTabs(
+    showAll: Boolean,
+    showArchive: Boolean,
+    hasSecret: Boolean
+): List<TabSpec> = buildList {
+    if (showAll) add(TabSpec(kind = null, labelRes = R.string.tab_all, isAll = true))
     add(TabSpec(ChatKind.Private, R.string.tab_chats))
     add(TabSpec(ChatKind.Group, R.string.tab_groups))
     add(TabSpec(ChatKind.Channel, R.string.tab_channels))
     // Secret-chats tab is data-driven: appears only when the user has
     // at least one secret chat, vanishes again when they delete the
-    // last one. Counts as the 5th tab even if Archiviati is also on.
+    // last one.
     if (hasSecret) add(TabSpec(ChatKind.Secret, R.string.tab_secret))
     if (showArchive) add(TabSpec(null, R.string.tab_archived, isArchive = true))
 }
@@ -121,8 +133,8 @@ fun ChatListScreen(
     val hasSecret = remember(allChats) {
         allChats.any { it.kind == ChatKind.Secret }
     }
-    val tabs = remember(appearance.showArchivedTab, hasSecret) {
-        buildTabs(appearance.showArchivedTab, hasSecret)
+    val tabs = remember(appearance.showAllTab, appearance.showArchivedTab, hasSecret) {
+        buildTabs(appearance.showAllTab, appearance.showArchivedTab, hasSecret)
     }
 
     var selectedTab by rememberSaveable { mutableStateOf(0) }
@@ -324,8 +336,11 @@ fun ChatListScreen(
                 // sum their kind among non-archived chats.
                 val tabBadges = remember(allChats, tabs) {
                     tabs.map { spec ->
-                        if (spec.isArchive) allChats.filter { it.isArchived }.sumOf { it.unread }
-                        else allChats.filter { !it.isArchived && it.kind == spec.kind }.sumOf { it.unread }
+                        when {
+                            spec.isAll -> allChats.filter { !it.isArchived }.sumOf { it.unread }
+                            spec.isArchive -> allChats.filter { it.isArchived }.sumOf { it.unread }
+                            else -> allChats.filter { !it.isArchived && it.kind == spec.kind }.sumOf { it.unread }
+                        }
                     }
                 }
                 PillTabs(
@@ -363,23 +378,40 @@ fun ChatListScreen(
             val spec = tabs[page.coerceIn(0, tabs.lastIndex)]
             val pageChats = remember(allChats, page, searchQuery, myUserId, spec) {
                 val q = searchQuery.trim()
-                val base = if (spec.isArchive) {
-                    // Archive tab: every archived chat regardless of kind.
-                    allChats.filter { it.isArchived }
-                } else {
-                    allChats
-                        .filter { !it.isArchived && it.kind == spec.kind }
-                        // Saved Messages (chat with self) is pinned to the
-                        // TOP of the Chat tab instead of being hidden — so
-                        // we DON'T filter it out here for Private; we lift
-                        // it to the front below.
-                        .let { list ->
-                            if (spec.kind == ChatKind.Private && myUserId != 0L) {
-                                val saved = list.filter { it.id == myUserId }
-                                val rest = list.filter { it.id != myUserId }
-                                saved + rest
-                            } else list
-                        }
+                val base = when {
+                    spec.isAll -> {
+                        // "Tutto" tab: every kind, every chat — only
+                        // archived ones get filtered out (they belong
+                        // to the Archive tab). Saved Messages is lifted
+                        // to the top of this view too, matching the
+                        // Chat-tab behaviour, so it's the very first
+                        // entry the user sees regardless of recency.
+                        val all = allChats.filter { !it.isArchived }
+                        if (myUserId != 0L) {
+                            val saved = all.filter { it.id == myUserId }
+                            val rest = all.filter { it.id != myUserId }
+                            saved + rest
+                        } else all
+                    }
+                    spec.isArchive -> {
+                        // Archive tab: every archived chat regardless of kind.
+                        allChats.filter { it.isArchived }
+                    }
+                    else -> {
+                        allChats
+                            .filter { !it.isArchived && it.kind == spec.kind }
+                            // Saved Messages (chat with self) is pinned to the
+                            // TOP of the Chat tab instead of being hidden — so
+                            // we DON'T filter it out here for Private; we lift
+                            // it to the front below.
+                            .let { list ->
+                                if (spec.kind == ChatKind.Private && myUserId != 0L) {
+                                    val saved = list.filter { it.id == myUserId }
+                                    val rest = list.filter { it.id != myUserId }
+                                    saved + rest
+                                } else list
+                            }
+                    }
                 }
                 if (q.isBlank()) base
                 else base.filter { it.title.contains(q, ignoreCase = true) }
@@ -495,12 +527,21 @@ fun ChatListScreen(
             chatKind = target.kind,
             isMuted = isMuted,
             isArchived = target.isArchived,
+            isPinned = target.isPinned,
             onDismiss = { chatActionTarget = null },
             onToggleMute = {
                 val cid = target.id
                 chatActionTarget = null
                 scope.launch {
                     runCatching { TdClient.setChatMuted(cid, !isMuted) }
+                }
+            },
+            onTogglePin = {
+                val cid = target.id
+                val wasPinned = target.isPinned
+                chatActionTarget = null
+                scope.launch {
+                    runCatching { TdClient.toggleChatIsPinned(cid, !wasPinned) }
                 }
             },
             onToggleArchive = {
@@ -614,8 +655,10 @@ private fun ChatActionSheet(
     chatKind: ChatKind,
     isMuted: Boolean,
     isArchived: Boolean,
+    isPinned: Boolean,
     onDismiss: () -> Unit,
     onToggleMute: () -> Unit,
+    onTogglePin: () -> Unit,
     onToggleArchive: () -> Unit,
     onDeleteRequest: () -> Unit,
     onLeaveRequest: () -> Unit
@@ -637,6 +680,13 @@ private fun ChatActionSheet(
                 fontStyle = FontStyle.Italic
             )
             Spacer(Modifier.height(20.dp))
+            ChatActionRow(
+                label = stringResource(
+                    if (isPinned) R.string.action_unpin_chat else R.string.action_pin_chat
+                ),
+                onClick = onTogglePin
+            )
+            Spacer(Modifier.height(4.dp))
             ChatActionRow(
                 label = stringResource(
                     if (isMuted) R.string.action_unmute_chat else R.string.action_mute_chat

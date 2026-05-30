@@ -343,4 +343,11 @@
     <string name="action_unmute_author">Riattiva autore</string>
     <string name="action_unkick_author">Sblocca autore</string>
     <string name="action_join_group">Unisciti al gruppo</string>
+    <string name="tab_all">Tutto</string>
+    <string name="action_pin_chat">Fissa chat</string>
+    <string name="action_unpin_chat">Sblocca chat</string>
+    <string name="settings_show_all_tab">Mostra tab &quot;Tutto&quot;</string>
+    <string name="settings_show_all_tab_desc">Mostra una scheda unica con tutte le chat in alto</string>
+    <string name="settings_swap_swipe_reply">Inverti swipe per rispondere</string>
+    <string name="settings_swap_swipe_reply_desc">Scorri a sinistra invece che a destra per rispondere a un messaggio</string>
 </resources>

@@ -385,10 +385,25 @@ object TdClient {
                     kind = resolveKind(chat),
                     chat = chat,
                     isArchived = (mainPos == null || mainPos.order == 0L) && archivePos != null,
+                    // ChatPosition.isPinned is the authoritative source.
+                    // Pinned chats from the user pin them to top of list
+                    // via TdApi.ToggleChatIsPinned; TDLib reflects the
+                    // state back through UpdateChatPosition.
+                    isPinned = pos.isPinned,
                     revision = rev
                 )
             }
-            .sortedByDescending { it.order }
+            // Sort: pinned first (preserving their relative order), then
+            // un-pinned by their numeric `order` field (descending = most
+            // recent activity at top). Pinned chats also have `order`
+            // values from TDLib that are HIGHER than non-pinned ones, so
+            // sortedByDescending alone WOULD put them first — but we
+            // explicitly sort by isPinned first as belt-and-suspenders
+            // against TDLib's order-numbering changing across releases.
+            .sortedWith(
+                compareByDescending<ChatSummary> { it.isPinned }
+                    .thenByDescending { it.order }
+            )
         _chats.value = list
     }
 
@@ -558,8 +573,20 @@ object TdClient {
 
     suspend fun getChat(chatId: Long): TdApi.Chat = send(TdApi.GetChat(chatId))
 
+    suspend fun getChatHistory(
+        chatId: Long,
+        fromMessageId: Long,
+        offset: Int,
+        limit: Int
+    ): TdApi.Messages =
+        send(TdApi.GetChatHistory(chatId, fromMessageId, offset, limit, false))
+
+    /**
+     * Convenience overload: fetch [limit] messages strictly older than
+     * [fromMessageId]. Equivalent to the long form with offset = 0.
+     */
     suspend fun getChatHistory(chatId: Long, fromMessageId: Long, limit: Int): TdApi.Messages =
-        send(TdApi.GetChatHistory(chatId, fromMessageId, 0, limit, false))
+        getChatHistory(chatId, fromMessageId, 0, limit)
 
     /**
      * Build the InputMessageReplyTo for the SendMessage call. Returns null
@@ -894,6 +921,20 @@ object TdClient {
 
     suspend fun unpinChatMessage(chatId: Long, messageId: Long) {
         send(TdApi.UnpinChatMessage(chatId, messageId))
+    }
+
+    /**
+     * Pin / unpin a CHAT (not a message) to the top of the user's
+     * chat list. Telegram caps the number of pinned chats per list
+     * (~5 non-premium, 10 premium); TDLib returns an error in that
+     * case which our caller can surface.
+     *
+     * The chatList argument selects which list to pin in (Main vs
+     * Archive); we default to Main since the Archiviati tab in our
+     * UI is its own surface and users rarely re-pin within archive.
+     */
+    suspend fun toggleChatIsPinned(chatId: Long, isPinned: Boolean) {
+        send(TdApi.ToggleChatIsPinned(TdApi.ChatListMain(), chatId, isPinned))
     }
 
     /**
@@ -1399,6 +1440,8 @@ data class ChatSummary(
     val kind: ChatKind,
     val chat: TdApi.Chat,
     val isArchived: Boolean = false,
+    /** True when the user has pinned this chat to the top of the list. */
+    val isPinned: Boolean = false,
     val revision: Long = 0L
 )
 

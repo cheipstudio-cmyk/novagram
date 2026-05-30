@@ -193,7 +193,20 @@ fun MessageBubble(
                 if (flashAlpha > 0f) Modifier.background(flashColorBase.copy(alpha = flashAlpha))
                 else Modifier
             )
-            .pointerInput("swipe-${message.id}") {
+            .pointerInput("swipe-${message.id}", appearance.swapSwipeReply) {
+                // Swipe direction is settings-controlled. By default
+                // (swapSwipeReply=false) we accumulate positive deltas
+                // → drag the bubble right → fire reply when offset
+                // exceeds +triggerPx, matching official Telegram. When
+                // the user flips the toggle in Settings → "Inverti
+                // swipe per rispondere" we accept NEGATIVE deltas
+                // instead, drag the bubble left, fire at -triggerPx.
+                // The pointerInput key includes the flag so toggling
+                // it in settings recreates the gesture detector with
+                // the new range — without the key the existing
+                // detector would keep the old range until the user
+                // re-entered the chat.
+                val swap = appearance.swapSwipeReply
                 detectHorizontalDragGestures(
                     onDragEnd = {
                         if (kotlin.math.abs(swipeOffset) >= triggerPx) {
@@ -207,13 +220,9 @@ fun MessageBubble(
                         hapticFired = false
                     },
                     onHorizontalDrag = { _, delta ->
-                        // Reverted to left-to-right (positive offset).
-                        // For both mine and incoming bubbles the gesture
-                        // is the same direction now — feels more like
-                        // Telegram's native behavior than the right-to-left
-                        // version we briefly had.
                         val proposed = swipeOffset + delta
-                        swipeOffset = proposed.coerceIn(0f, maxPx)
+                        swipeOffset = if (swap) proposed.coerceIn(-maxPx, 0f)
+                                      else proposed.coerceIn(0f, maxPx)
                         if (!hapticFired && kotlin.math.abs(swipeOffset) >= triggerPx) {
                             haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                             hapticFired = true

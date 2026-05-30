@@ -81,6 +81,21 @@ data class AppearancePrefs(
     /** When true, a 4th "Archiviati" tab appears in the chat list. */
     val showArchivedTab: Boolean = false,
     /**
+     * When true, the first tab in the chat list is "Tutto" — a unified
+     * view that mixes private chats, groups, channels, and secret chats
+     * (excluding archived). Mirrors the official Telegram default. When
+     * false the list opens straight on the Chat tab, keeping the
+     * category-segmented experience Novagram pioneered.
+     */
+    val showAllTab: Boolean = true,
+    /**
+     * When true, swiping LEFT on a message bubble opens the reply
+     * composer (mirrors the right-handed convention some users prefer).
+     * Default false keeps the swipe-RIGHT-to-reply gesture that matches
+     * official Telegram on Android.
+     */
+    val swapSwipeReply: Boolean = false,
+    /**
      * Whether the user wants their own "last seen" / "online" status to
      * be visible to other Telegram users — drives both the visual UI
      * (green dot on private chat avatars, "online" subtitle in chat
@@ -137,6 +152,8 @@ object AppSettings {
     private val ANTHROPIC_API_KEY = androidx.datastore.preferences.core.stringPreferencesKey("anthropic_api_key")
     private val SHOW_ARCHIVED_TAB = androidx.datastore.preferences.core.booleanPreferencesKey("show_archived_tab")
     private val SHOW_LAST_SEEN = androidx.datastore.preferences.core.booleanPreferencesKey("show_last_seen")
+    private val SHOW_ALL_TAB = androidx.datastore.preferences.core.booleanPreferencesKey("show_all_tab")
+    private val SWAP_SWIPE_REPLY = androidx.datastore.preferences.core.booleanPreferencesKey("swap_swipe_reply")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -179,12 +196,22 @@ object AppSettings {
                 autoDownloadMedia = prefs[AUTO_DOWNLOAD_MEDIA] ?: true,
                 anthropicApiKey = prefs[ANTHROPIC_API_KEY]?.takeIf { it.isNotBlank() },
                 showArchivedTab = prefs[SHOW_ARCHIVED_TAB] ?: false,
+                showAllTab = prefs[SHOW_ALL_TAB] ?: true,
+                swapSwipeReply = prefs[SWAP_SWIPE_REPLY] ?: false,
                 showLastSeen = prefs[SHOW_LAST_SEEN] ?: true
             )
         }
 
     suspend fun setShowArchivedTab(enabled: Boolean) {
         appContext.dataStore.edit { it[SHOW_ARCHIVED_TAB] = enabled }
+    }
+
+    suspend fun setShowAllTab(enabled: Boolean) {
+        appContext.dataStore.edit { it[SHOW_ALL_TAB] = enabled }
+    }
+
+    suspend fun setSwapSwipeReply(enabled: Boolean) {
+        appContext.dataStore.edit { it[SWAP_SWIPE_REPLY] = enabled }
     }
 
     suspend fun setShowLastSeen(enabled: Boolean) {

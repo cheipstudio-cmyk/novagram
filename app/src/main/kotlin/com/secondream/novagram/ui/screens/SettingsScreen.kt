@@ -377,11 +377,27 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 )
                 PrivacyToggleRow(
+                    label = stringResource(R.string.settings_show_all_tab),
+                    description = stringResource(R.string.settings_show_all_tab_desc),
+                    checked = appearance.showAllTab,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setShowAllTab(enabled) }
+                    }
+                )
+                PrivacyToggleRow(
                     label = stringResource(R.string.settings_archived_tab),
                     description = stringResource(R.string.settings_archived_tab_desc),
                     checked = appearance.showArchivedTab,
                     onToggle = { enabled ->
                         scope.launch { AppSettings.setShowArchivedTab(enabled) }
+                    }
+                )
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_swap_swipe_reply),
+                    description = stringResource(R.string.settings_swap_swipe_reply_desc),
+                    checked = appearance.swapSwipeReply,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setSwapSwipeReply(enabled) }
                     }
                 )
             }
