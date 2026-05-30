@@ -114,7 +114,7 @@ private fun buildTabs(
         TabSpec(
             kind = null,
             labelRes = R.string.tab_all,
-            icon = com.secondream.novagram.ui.icons.PhosphorIcons.Chats,
+            icon = com.secondream.novagram.ui.icons.PhosphorIcons.List,
             isAll = true
         )
     )

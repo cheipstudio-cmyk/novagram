@@ -217,21 +217,41 @@ object PhosphorIcons {
     }
 
     /**
-     * Archive box — three stacked layers: filled lid on top, hollow
-     * body ring below, small pill-shaped slot handle inside the body.
-     * Drawing them as separate paths (rather than one EvenOdd path)
-     * keeps the silhouette crisp at small sizes and matches how
-     * Phosphor Bold renders the icon upstream.
+     * Three stacked horizontal bars — Phosphor Bold "List". Three
+     * separate filled pills (rounded ends, 24×152 each) centered
+     * vertically in the 256-unit viewbox. Used for the "Tutto" tab
+     * icon: a list glyph reads as "everything / aggregate" better than
+     * a chat-bubble glyph in a nav-tab context where the neighbours
+     * are themselves chat/group/channel-specific icons.
+     */
+    val List: ImageVector by lazy {
+        phosphorLayers(
+            "List",
+            "M52,72h152a12,12,0,0,1,0,24H52a12,12,0,0,1,0-24Z",
+            "M52,116h152a12,12,0,0,1,0,24H52a12,12,0,0,1,0-24Z",
+            "M52,160h152a12,12,0,0,1,0,24H52a12,12,0,0,1,0-24Z"
+        )
+    }
+
+    /**
+     * Archive box, redrawn for v0.10.57 — lid sits flush on the body
+     * (no gap) and body proportions match Phosphor Bold upstream. Three
+     * filled layers: rounded lid on top, hollow body (outer CW + inner
+     * CCW so NonZero leaves a clean ring), small pill handle near the
+     * upper-middle of the body interior.
      */
     val Archive: ImageVector by lazy {
         phosphorLayers(
             "Archive",
-            // Lid (filled rounded rectangle)
-            "M40,56H216a12,12,0,0,1,12,12v32a12,12,0,0,1-12,12H40a12,12,0,0,1-12-12V68A12,12,0,0,1,40,56Z",
-            // Body (outer CW + inner CCW cancellation → ring)
-            "M44,124H212V200a16,16,0,0,1-16,16H60a16,16,0,0,1-16-16ZM68,140V200H188V140Z",
-            // Slot handle (filled pill inside the body)
-            "M104,168a12,12,0,0,1,12-12h24a12,12,0,0,1,0,24H116A12,12,0,0,1,104,168Z"
+            // Lid: full-width rounded rectangle, all corners r=12
+            "M52,44H204a12,12,0,0,1,12,12V92a12,12,0,0,1-12,12H52a12,12,0,0,1-12-12V56A12,12,0,0,1,52,44Z",
+            // Body ring: outer (square-top to meet the lid flush, rounded
+            // bottom r=16) + inner cutout traced CCW so NonZero fill
+            // leaves the box walls
+            "M40,104H216V200a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16ZM64,120V200H192V120Z",
+            // Handle: small horizontal pill in the upper-middle of the
+            // body interior — the "pull" affordance of a file box
+            "M108,140h40a12,12,0,0,1,0,24H108a12,12,0,0,1,0-24Z"
         )
     }
 }

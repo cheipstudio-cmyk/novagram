@@ -508,7 +508,12 @@ object TdClient {
         }
     }
 
-    private fun buildPreview(msg: TdApi.Message?): String {
+    /**
+     * Compose a short single-line preview of a message's content. Used
+     * by the chat-list row (last message) and by ChatScreen's pinned-
+     * message banner. Returns empty string for null.
+     */
+    fun buildPreview(msg: TdApi.Message?): String {
         if (msg == null) return ""
         return when (val c = msg.content) {
             is TdApi.MessageText -> c.text.text

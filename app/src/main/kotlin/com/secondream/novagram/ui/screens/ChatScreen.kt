@@ -792,6 +792,39 @@ fun ChatScreen(
             }
     }
 
+    // Auto-clear @-mention and reaction badges when the user actually
+    // engages with the chat. Background: TDLib's ViewMessages with
+    // forceRead=true updates the chat's main unreadCount but does NOT
+    // decrement unreadMentionCount / unreadReactionCount — those are
+    // separate server-side counters that only respond to the explicit
+    // ReadAllChatMentions / ReadAllChatReactions calls (or to the
+    // per-mention Click flow which isn't what we want here).
+    //
+    // Without this effect, Eugenio's complaint was that opening a chat
+    // with a mention or reaction left the @ / 🎉 chip and the per-row
+    // badge stuck on the chat list even after the user had scrolled
+    // through and seen the message. The v0.10.55 chip-dismiss fix
+    // covered the case where the user TAPPED the chip, but not the
+    // case where they just scrolled past the message normally.
+    //
+    // Behaviour: 1.5s after entering the chat (long enough that the
+    // chip is registered visually if the user wants to navigate to a
+    // specific mention via tap), if the chat still has unread
+    // mentions or reactions, mark them all as read. TDLib echoes the
+    // update via UpdateChatUnreadMentionCount/ReactionCount, our
+    // handler propagates to chatCache + refreshChats + chatUpdates,
+    // the chip hides and the per-row badge in the chat list clears.
+    LaunchedEffect(chatId) {
+        kotlinx.coroutines.delay(1500)
+        val c = TdClient.getCachedChat(chatId)
+        if ((c?.unreadMentionCount ?: 0) > 0) {
+            runCatching { TdClient.readAllChatMentions(chatId) }
+        }
+        if ((c?.unreadReactionCount ?: 0) > 0) {
+            runCatching { TdClient.readAllChatReactions(chatId) }
+        }
+    }
+
     // Listen for new messages in this chat.
     LaunchedEffect(chatId) {
         TdClient.newMessages.collect { msg ->
@@ -1694,16 +1727,62 @@ fun ChatScreen(
                     if (id == chatId) pinned = TdClient.getChatPinnedMessage(chatId)
                 }
             }
-            // Pinned-message banner removed — it sat permanently under
-            // the TopAppBar showing the latest pinned message text, but
-            // the user found it visually noisy and preferred a cleaner
-            // chat surface. Pinned messages remain reachable through:
-            //  - the per-bubble pin glyph + "Mostra messaggi fissati"
-            //    option in the message long-press menu
-            //  - any future entry point into pinnedSheetOpen
-            // The `pinned` and `pinnedMessageId` state stays populated
-            // because other parts of the code (per-message pin marker,
-            // jump targets) still read it.
+            // Pinned-message banner. Restored in v0.10.57 after being
+            // removed in v0.10.55 — without it the chat lost its most
+            // efficient affordance for reaching a pinned message
+            // without scrolling. Sits flush under the TopAppBar,
+            // ~48dp tall, fully clickable to open the pinned-messages
+            // list sheet. Renders only when `pinned` is non-null;
+            // disappears cleanly when the chat has nothing pinned (or
+            // the last pinned message gets unpinned mid-session).
+            pinned?.let { pinnedMsg ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .clickable { pinnedSheetOpen = true }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Left accent stripe: 3dp wide, rounded, primary
+                    // colour — Telegram-convention "this is a pin" marker.
+                    Box(
+                        modifier = Modifier
+                            .width(3.dp)
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(MaterialTheme.colorScheme.primary)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.chat_pinned_label),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            TdClient.buildPreview(pinnedMsg).ifBlank { " " },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Icon(
+                        com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                androidx.compose.material3.HorizontalDivider(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    thickness = 1.dp
+                )
+            }
             Box(
                 modifier = Modifier.weight(1f).fillMaxWidth()
             ) {
