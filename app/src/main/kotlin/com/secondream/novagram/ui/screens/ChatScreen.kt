@@ -10,6 +10,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +31,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -231,6 +234,24 @@ fun ChatScreen(
         TdClient.getCachedChat(chatId)?.type !is TdApi.ChatTypePrivate
     }
 
+    // Forum-topics detection. A supergroup is a "forum" (topic-enabled
+    // group) when its Supergroup.isForum flag is on. In that case
+    // entering the chat should land on a topic LIST first; the user
+    // picks a topic and only then sees the topic's message thread.
+    // selectedTopicId tracks the currently-open topic — null = the
+    // topic-list panel is being shown; non-null = chat body is
+    // filtered to that messageThreadId.
+    var selectedTopicId by remember(chatId) { mutableStateOf<Long?>(null) }
+    var selectedTopicName by remember(chatId) { mutableStateOf<String?>(null) }
+    val isForumChat = remember(chatId) {
+        val t = TdClient.getCachedChat(chatId)?.type
+        if (t is TdApi.ChatTypeSupergroup) {
+            runCatching {
+                TdClient.getCachedSupergroup(t.supergroupId)?.isForum == true
+            }.getOrDefault(false)
+        } else false
+    }
+
     // Online status of the other participant in a private chat. Used to
     // light up the green dot on the title-bar avatar and to render the
     // "online" subtitle under the chat name (gated by the user's own
@@ -362,45 +383,71 @@ fun ChatScreen(
     // dispatches it together with the caption text (Telegram-style flow).
     // We copy the URI's content into the cache up-front so the InputBar can
     // show a thumbnail and we don't have to keep the SAF permission alive.
-    var pendingMedia by remember(chatId) { mutableStateOf<PendingMediaItem?>(null) }
+    //
+    // List, not nullable single: Telegram supports up to 10 items per
+    // media group (album). Empty list = nothing pending; 1 item = single
+    // send (uses dedicated InputMessagePhoto/Video/Document); 2+ items =
+    // album send via SendMessageAlbum. The picker caps at 10 to match
+    // TDLib's server-side limit so we never construct a payload that gets
+    // rejected.
+    var pendingMedia by remember(chatId) { mutableStateOf<List<PendingMediaItem>>(emptyList()) }
 
     val photoLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
+        ActivityResultContracts.PickMultipleVisualMedia(maxItems = 10)
+    ) { uris ->
         showAttach = false
-        uri?.let { picked ->
-            scope.launch(Dispatchers.IO) {
-                val file = FileUtils.copyUriToCache(context, picked) ?: return@launch
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch(Dispatchers.IO) {
+            // Process each URI in parallel: copy into cache, compress
+            // photos, leave videos as-is. We collect into a temporary
+            // local list and then assign once at the end so the
+            // PendingMediaPreview doesn't flicker through intermediate
+            // states as items appear one by one.
+            val items = mutableListOf<PendingMediaItem>()
+            for (picked in uris) {
+                val file = FileUtils.copyUriToCache(context, picked) ?: continue
                 val isVideo = isVideoFile(file.name)
-                // Compress photos before upload — a 12MP camera shot is
-                // several MB and uploads slowly at full size. We downscale
-                // to max 1600px and re-encode JPEG ~82%, which is visually
-                // indistinguishable in chat but uploads in a fraction of
-                // the time. Videos are left as-is (handled by TDLib).
                 val finalFile = if (!isVideo) {
                     FileUtils.compressImageForUpload(file) ?: file
                 } else file
-                pendingMedia = PendingMediaItem(
-                    file = finalFile,
-                    kind = if (isVideo) PendingMediaKind.Video else PendingMediaKind.Photo,
-                    displayName = finalFile.name
+                items.add(
+                    PendingMediaItem(
+                        file = finalFile,
+                        kind = if (isVideo) PendingMediaKind.Video else PendingMediaKind.Photo,
+                        displayName = finalFile.name
+                    )
                 )
+            }
+            if (items.isNotEmpty()) {
+                // Append to whatever's already pending — lets the user
+                // pick a batch, then tap the attach button again and
+                // pick more without losing the first batch. Capped at
+                // 10 total so an over-eager second pick doesn't exceed
+                // TDLib's album limit.
+                pendingMedia = (pendingMedia + items).take(10)
             }
         }
     }
 
     val docLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
         showAttach = false
-        uri?.let { picked ->
-            scope.launch(Dispatchers.IO) {
-                val file = FileUtils.copyUriToCache(context, picked) ?: return@launch
-                pendingMedia = PendingMediaItem(
-                    file = file,
-                    kind = PendingMediaKind.Document,
-                    displayName = file.name
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch(Dispatchers.IO) {
+            val items = mutableListOf<PendingMediaItem>()
+            for (picked in uris) {
+                val file = FileUtils.copyUriToCache(context, picked) ?: continue
+                items.add(
+                    PendingMediaItem(
+                        file = file,
+                        kind = PendingMediaKind.Document,
+                        displayName = file.name
+                    )
                 )
+            }
+            if (items.isNotEmpty()) {
+                pendingMedia = (pendingMedia + items).take(10)
             }
         }
     }
@@ -417,7 +464,36 @@ fun ChatScreen(
         // behaviour as the official Telegram client. Cancelling is
         // safe even if no notification was active.
         com.secondream.novagram.notifications.NotificationHelper.dismissForChat(chatId)
+        // SCREENSHOT PROTECTION. If the chat's admin has flagged it as
+        // hasProtectedContent (Telegram's "Restrict saving content"
+        // toggle) we set FLAG_SECURE on the window so Android blocks
+        // screenshots / screen recording / Recents preview. We also
+        // honour secret chats unconditionally — they're meant to be
+        // private. The flag is window-wide, so we restore on dispose
+        // to avoid blocking screenshots on OTHER chats (the user
+        // navigates back to a non-protected chat).
+        val cachedForSecure = TdClient.getCachedChat(chatId)
+        val isSecret = cachedForSecure?.type is TdApi.ChatTypeSecret
+        val isProtected = cachedForSecure?.hasProtectedContent == true
+        val activity = (context as? android.app.Activity)
+        val priorSecureFlag = activity?.window?.attributes?.flags
+            ?.and(android.view.WindowManager.LayoutParams.FLAG_SECURE) ?: 0
+        if (activity != null && (isProtected || isSecret)) {
+            activity.window.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        }
         onDispose {
+            // Restore the secure-flag to whatever it was before we
+            // entered (usually unset). Doing a blanket clearFlags is
+            // safe because the new screen will reapply if it also
+            // wants protection.
+            if (activity != null && priorSecureFlag == 0 && (isProtected || isSecret)) {
+                activity.window.clearFlags(
+                    android.view.WindowManager.LayoutParams.FLAG_SECURE
+                )
+            }
             scope.launch { runCatching { TdClient.closeChat(chatId) } }
             // Only clear if still pointing to us — if the user nav'd to
             // another chat the new ChatScreen has already overwritten this.
@@ -507,6 +583,54 @@ fun ChatScreen(
             }
     }
 
+    // Outbound typing-status emitter. While the user is composing in this
+    // chat (input.text non-empty) and the privacy toggle is on, we
+    // announce ChatActionTyping every ~4 seconds — TDLib keeps the peer's
+    // "sta scrivendo" indicator alive for ~5s after each push so 4s gives
+    // a safe overlap. The moment input goes empty (sent, cleared, switched
+    // chat) we fire ChatActionCancel so the peer's indicator drops
+    // immediately instead of waiting for the 5s timeout. Gated on
+    // appearance.sendTypingStatus so users who flip the privacy toggle
+    // disappear from peers' typing UI completely.
+    LaunchedEffect(chatId) {
+        var lastEmit = 0L
+        var lastNonEmpty = false
+        snapshotFlow { input.text.isNotEmpty() to appearance.sendTypingStatus }
+            .collect { (nonEmpty, enabled) ->
+                if (nonEmpty && enabled) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastEmit > 4000) {
+                        lastEmit = now
+                        runCatching {
+                            TdClient.sendChatAction(chatId, TdApi.ChatActionTyping())
+                        }
+                    }
+                    lastNonEmpty = true
+                } else if (lastNonEmpty) {
+                    // Transitioned from typing → not typing (or the user
+                    // just flipped the privacy toggle while typing). Tell
+                    // the peer to drop the indicator now.
+                    lastNonEmpty = false
+                    runCatching {
+                        TdClient.sendChatAction(chatId, TdApi.ChatActionCancel())
+                    }
+                }
+            }
+    }
+    // Continuous re-pulse: snapshotFlow above only fires on transitions
+    // (empty↔non-empty). For sustained typing we also need a heartbeat
+    // that re-emits every ~4 seconds while text remains non-empty.
+    LaunchedEffect(chatId) {
+        while (true) {
+            kotlinx.coroutines.delay(4000)
+            if (input.text.isNotEmpty() && appearance.sendTypingStatus) {
+                runCatching {
+                    TdClient.sendChatAction(chatId, TdApi.ChatActionTyping())
+                }
+            }
+        }
+    }
+
     // Unread state carried from the moment the chat was opened. We snapshot
     // it here (not from a live flow) because the moment is the only one
     // that matters: Telegram lands you on the FIRST unread message when
@@ -529,13 +653,29 @@ fun ChatScreen(
     // or the server stops returning more — but if the chat has 100 unread
     // we keep iterating until that first unread is in the window, capped
     // so we don't try to backfill a thousand-message channel.
-    LaunchedEffect(chatId) {
+    LaunchedEffect(chatId, selectedTopicId) {
+        // When entering a forum topic, the cached `messages` list still
+        // holds the previous content (the whole-chat history, or another
+        // topic's). Clear it up front so the cache-hit fast path below
+        // doesn't apply a stale top-up and the full reload below sees
+        // a clean slate. This is cheap (cache snapshot is in-memory) and
+        // only fires when a topic is actively selected.
+        if (selectedTopicId != null) {
+            messages.clear()
+            noMore = false
+        }
         // Cache hit: ChatScreen was on this chat before — either popped
         // back from MediaViewer / a sub-screen, or re-entered from the
         // chat list. Skip the full clear/reload + scroll-to-unread
         // dance (running it again would yank the user to a different
         // position because by now unreadCount has hit zero, so we'd
         // snap to the bottom and lose their scroll anchor).
+        //
+        // When selectedTopicId changes (user picks a topic in a forum
+        // group, or pops back to the topic list), the key change forces
+        // a full reload — this is intentional: the topic-list overlay
+        // is showing during that transition so the user doesn't see
+        // the chat-body flicker.
         //
         // BUT we DO need to top up any messages that arrived while
         // ChatScreen wasn't composed. The TdClient.newMessages flow
@@ -555,7 +695,9 @@ fun ChatScreen(
             loading = false
             runCatching {
                 val cachedNewestId = messages.firstOrNull()?.id ?: 0L
-                val res = TdClient.getChatHistory(chatId, 0L, 30)
+                val res = selectedTopicId?.let { tid ->
+                    TdClient.getMessageThreadHistory(chatId, tid, 0L, 0, 30)
+                } ?: TdClient.getChatHistory(chatId, 0L, 30)
                 val toAdd = res.messages.filter { it.id > cachedNewestId }
                 for (m in toAdd.reversed()) {
                     if (messages.none { it.id == m.id }) {
@@ -597,17 +739,13 @@ fun ChatScreen(
                         // videos, long quoted text) above the visible
                         // area — root cause of Eugenio's "ci mette
                         // sempre un pochino sopra" complaint across
-                        // every jump entry point. Math: with
-                        // reverseLayout=true scrollOffset measures the
-                        // distance from the visual bottom up to the
-                        // item's bottom edge, so for target top at
-                        // viewportH/3 → target bottom at
-                        // viewportH/3 + targetH → distance from
-                        // viewportBottom = 2*viewportH/3 - targetH,
-                        // clamped to 0 for bubbles taller than 2/3 of
-                        // the viewport.
+                        // every jump entry point. See the long
+                        // geometry comment in jumpToMessage below for
+                        // the full rationale; in short, we pin
+                        // target's TOP edge ~80px from viewport top
+                        // via scrollOffset = (vp - targetH - 80).
                         val viewportH0 = listState.layoutInfo.viewportSize.height
-                        val roughOffset = if (viewportH0 > 0) viewportH0 * 7 / 10 else 200
+                        val roughOffset = if (viewportH0 > 0) (viewportH0 - 400).coerceAtLeast(200) else 200
                         runCatching { listState.scrollToItem(firstUnreadIdx, roughOffset) }
                         repeat(3) {
                             kotlinx.coroutines.delay(16)
@@ -615,7 +753,7 @@ fun ChatScreen(
                             val item = listState.layoutInfo.visibleItemsInfo
                                 .find { it.index == firstUnreadIdx }
                             if (vp > 0 && item != null) {
-                                val precise = (vp * 7 / 10 - item.size / 2).coerceAtLeast(0)
+                                val precise = (vp - item.size - 80).coerceAtLeast(0)
                                 runCatching { listState.scrollToItem(firstUnreadIdx, precise) }
                                 return@repeat
                             }
@@ -667,7 +805,9 @@ fun ChatScreen(
             var consecutiveEmpty = 0
             val attemptCap = if (initialUnread > 0) 10 else 6
             while (messages.size < target && attempts < attemptCap && consecutiveEmpty < 2) {
-                val res = TdClient.getChatHistory(chatId, fromId, 50)
+                val res = selectedTopicId?.let { tid ->
+                    TdClient.getMessageThreadHistory(chatId, tid, fromId, 0, 50)
+                } ?: TdClient.getChatHistory(chatId, fromId, 50)
                 if (res.messages.isEmpty()) {
                     consecutiveEmpty++
                     if (consecutiveEmpty < 2) delay(350)
@@ -707,13 +847,13 @@ fun ChatScreen(
                     // Two-phase precise positioning — same algorithm as
                     // the cache-miss path above. Rough scroll to bring
                     // the first-unread into the visible window, then
-                    // refine to a height-aware offset that puts the
-                    // bubble's visual TOP at viewportH/3 regardless of
-                    // bubble height. Replaces the previous fixed-88%
-                    // offset which clipped tall content above the
-                    // visible area.
+                    // refine to a height-aware offset that places
+                    // the bubble's visual TOP at ~80px from viewport
+                    // top regardless of bubble height — keeps target
+                    // visible at the start of the screen so the user
+                    // can read forward into newer-context below.
                     val viewportH0 = listState.layoutInfo.viewportSize.height
-                    val roughOffset = if (viewportH0 > 0) viewportH0 * 7 / 10 else 200
+                    val roughOffset = if (viewportH0 > 0) (viewportH0 - 400).coerceAtLeast(200) else 200
                     runCatching { listState.scrollToItem(idx, roughOffset) }
                     repeat(3) {
                         kotlinx.coroutines.delay(16)
@@ -721,7 +861,7 @@ fun ChatScreen(
                         val item = listState.layoutInfo.visibleItemsInfo
                             .find { it.index == idx }
                         if (vp > 0 && item != null) {
-                            val precise = (vp * 7 / 10 - item.size / 2).coerceAtLeast(0)
+                            val precise = (vp - item.size - 80).coerceAtLeast(0)
                             runCatching { listState.scrollToItem(idx, precise) }
                             return@repeat
                         }
@@ -1038,7 +1178,9 @@ fun ChatScreen(
                 loadingMore = true
                 val oldest = messages.lastOrNull()?.id ?: 0L
                 runCatching {
-                    val res = TdClient.getChatHistory(chatId, oldest, 30)
+                    val res = selectedTopicId?.let { tid ->
+                        TdClient.getMessageThreadHistory(chatId, tid, oldest, 0, 30)
+                    } ?: TdClient.getChatHistory(chatId, oldest, 30)
                     if (res.messages.isEmpty()) noMore = true
                     else {
                         // Filter out anything already in the window — fast
@@ -1099,7 +1241,9 @@ fun ChatScreen(
             if (idx < 0) {
                 runCatching {
                     val limit = 50
-                    val ctx = TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
+                    val ctx = selectedTopicId?.let { tid ->
+                        TdClient.getMessageThreadHistory(chatId, tid, targetId, -(limit / 2), limit)
+                    } ?: TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
                     val toAdd = ctx.messages.toList().filter { m ->
                         messages.none { it.id == m.id }
                     }
@@ -1142,27 +1286,33 @@ fun ChatScreen(
                 // un po' troppo in alto"), centered at viewportH/2
                 // (too low — user "appare un po' troppo in basso,
                 // bisogna scorrere per vedere 2-5 messaggi sotto"),
-                // 40%-from-top still too low. Settled on 30%-from-top
-                // — target sits squarely in the upper third where the
-                // eye naturally lands when reading top-to-bottom,
-                // with three quarters of the viewport still showing
-                // newer-context below for continued scrolling.
+                // 40%-from-top still too low. Tried 30%-from-top
+                // (vp*7/10 - targetH/2) but user reported target
+                // landing BELOW the visible area (had to scroll down
+                // to see it), and explicit request "deve mostrarmelo
+                // subito in alto il messaggio target". Switched
+                // approach: always pin target's TOP edge ~80px from
+                // viewport top so the message is the first thing the
+                // eye sees, with the rest of the screen showing
+                // newer-context below it.
                 //
-                // Math: place target's center at y = viewportH * 0.30.
-                // Target's bottom = vp*0.30 + targetH/2. With
-                // reverseLayout=true scrollOffset is distance from
-                // visual bottom up to item's visual-bottom edge, so
-                // scrollOffset = vp - (vp*0.30 + targetH/2) = vp*0.70
-                // - targetH/2. Integer form: (vp * 7 / 10 - targetH /
-                // 2). Clamp at 0 for bubbles taller than ~1.4×viewport
-                // (essentially impossible in practice).
+                // Math (reverseLayout=true scrollOffset measures
+                // distance from visual-bottom up to item's
+                // visual-bottom edge): we want target's TOP at 80px
+                // from viewport top = (vp - 80) from viewport bottom.
+                // Target's bottom = target's top - targetH = (vp - 80)
+                // - targetH from viewport bottom. So scrollOffset =
+                // vp - 80 - targetH. Clamp at 0 for bubbles taller
+                // than (vp - 80) — they can't sit fully in-view, so
+                // we settle for top-aligned-as-much-as-possible by
+                // anchoring bottom to viewport bottom (scrollOffset=0).
                 //
-                // Phase 1: rough scroll using vp*7/10 (no targetH
-                // correction, but close enough that the refine is a
-                // small settle). Phase 2 (after a single-frame delay
-                // for layout to place the target) reads
+                // Phase 1: rough scroll using (vp - 400) as a
+                // targetH-agnostic approximation (assumes a "typical"
+                // 300-400px bubble). Phase 2 (after a single-frame
+                // delay for layout to place the target) reads
                 // layoutInfo.visibleItemsInfo for the actual measured
-                // size and refines to the precise 30%-center offset.
+                // size and refines to the precise top-at-80px offset.
                 //
                 // The animate-vs-snap choice from the legacy code is
                 // preserved: animate for the already-loaded case (so
@@ -1181,7 +1331,7 @@ fun ChatScreen(
                             .find { it.index == idx }
                         if (vp > 0 && item != null) {
                             val targetH = item.size
-                            val precise = (vp * 7 / 10 - targetH / 2).coerceAtLeast(0)
+                            val precise = (vp - targetH - 80).coerceAtLeast(0)
                             // Snap for refinement: the rough scroll
                             // already animated/snapped to the
                             // approximate region, the refine is a
@@ -1205,10 +1355,10 @@ fun ChatScreen(
                 val existing = listState.layoutInfo.visibleItemsInfo
                     .find { it.index == idx }
                 if (existing != null && viewportH0 > 0 && wasAlreadyLoaded) {
-                    val precise = (viewportH0 * 7 / 10 - existing.size / 2).coerceAtLeast(0)
+                    val precise = (viewportH0 - existing.size - 80).coerceAtLeast(0)
                     runCatching { listState.animateScrollToItem(idx, precise) }
                 } else {
-                    val roughOffset = if (viewportH0 > 0) viewportH0 * 7 / 10 else 200
+                    val roughOffset = if (viewportH0 > 0) (viewportH0 - 400).coerceAtLeast(200) else 200
                     if (wasAlreadyLoaded) {
                         runCatching { listState.animateScrollToItem(idx, roughOffset) }
                     } else {
@@ -1291,6 +1441,40 @@ fun ChatScreen(
     // because the lambda closure captures it — Kotlin doesn't allow
     // forward references within the same function body.
     var linkResolving by remember { mutableStateOf(false) }
+
+    // Per-message pending state for inline keyboard taps. Key = message
+    // id, value = the row:col:label key of the button whose callback is
+    // currently in flight. Cleared once TDLib answers (or fails). Map
+    // not nullable single because TDLib doesn't enforce serialization
+    // across messages — the user can tap "Sbloccami" on one bot's
+    // notification while another's button is still resolving.
+    var pendingInlineButtonKeys by remember(chatId) {
+        mutableStateOf<Map<Long, String>>(emptyMap())
+    }
+
+    // Toast-like banner shown when an inline button's callback returns
+    // text (most bots return a short confirmation or error message).
+    // isAlert=true would map to a modal dialog on official Telegram;
+    // we render both the same way for now — a transient bottom banner.
+    var inlineButtonResult by remember { mutableStateOf<InlineButtonResult?>(null) }
+    LaunchedEffect(inlineButtonResult) {
+        val r = inlineButtonResult ?: return@LaunchedEffect
+        if (r.text.isBlank()) {
+            inlineButtonResult = null
+            return@LaunchedEffect
+        }
+        kotlinx.coroutines.delay(if (r.isAlert) 4500 else 2400)
+        inlineButtonResult = null
+    }
+
+    // Generic spinner overlay for slow user-facing actions whose
+    // result we have to wait on (no optimistic UI possible). Set to a
+    // localized label when an admin moderation call is in flight,
+    // cleared in a finally{} so an exception doesn't leave it stuck.
+    // Renders the same scrim + spinner as linkResolving below, with
+    // an optional caption underneath the spinner so the user knows
+    // WHICH action is pending ("Silenziando...", "Bannando..." etc.)
+    var pendingActionLabel by remember { mutableStateOf<String?>(null) }
 
     val openTelegramLink: (android.net.Uri) -> Unit = { uri ->
         scope.launch {
@@ -1407,44 +1591,99 @@ fun ChatScreen(
     }
 
     // Swipe-from-left-to-right closes the chat. Mirrors the Telegram /
-    // iOS pattern of "swipe right to pop". We hook a horizontal drag
-    // detector on the Scaffold container and fire onBack once the total
-    // horizontal drag passes a screen-fraction threshold. Vertical drag
-    // is ignored, and the inner message-list scroll is on a separate
-    // pointerInput inside the LazyColumn so this doesn't capture it.
+    // iOS pattern of "swipe right to pop". Implementation uses a
+    // custom pointer-event loop on the PointerEventPass.Initial pass
+    // so the parent claims rightward gestures BEFORE the per-bubble
+    // reply-swipe detector sees them — without this, bubbles consume
+    // the gesture in swap mode (where bubble swipes are left-only)
+    // and the back-swipe never fires anywhere except the bare
+    // background.
+    //
+    // Activation zone:
+    //   swapSwipeReply=false → gesture must START in the leftmost
+    //     24dp (the bubble's reply-swipe is right, so we'd fight it
+    //     anywhere else). Same as Android's edge-back gesture.
+    //   swapSwipeReply=true  → gesture can start anywhere in the chat
+    //     view. Bubble swipes are LEFT-only in swap mode, so the
+    //     parent's rightward claim doesn't steal anything user-visible
+    //     from them. This is the "swipe in chat to close" UX Eugenio
+    //     explicitly asked for as a feature of the swap toggle.
+    //
+    // Vertical drags (LazyColumn scroll) are detected by dominance and
+    // released back to children without consuming.
     var backDragAmount by remember { mutableFloatStateOf(0f) }
     val density = androidx.compose.ui.platform.LocalDensity.current
     val backTriggerPx = with(density) { 120.dp.toPx() }
+    val edgeZonePx = with(density) { 24.dp.toPx() }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput("back-swipe-$chatId") {
-                detectHorizontalDragGestures(
-                    onDragStart = { backDragAmount = 0f },
-                    onDragEnd = {
-                        if (backDragAmount > backTriggerPx) onBack()
-                        backDragAmount = 0f
-                    },
-                    onDragCancel = { backDragAmount = 0f },
-                    onHorizontalDrag = { change, delta ->
-                        // Only accumulate positive (left→right) horizontal
-                        // motion that *starts* near the left edge — same
-                        // gesture grammar as Android's edge-back gesture, so
-                        // we don't fight the message-list horizontal swipe
-                        // on individual bubbles.
-                        // Restricted to the leftmost 24dp so it doesn't
-                        // race with the reply-swipe gesture on incoming
-                        // bubbles (which sit close to the left edge).
-                        // Same grammar as iOS's edge-back gesture.
-                        if (change.position.x < 24.dp.toPx() || backDragAmount > 0f) {
-                            if (delta > 0f) backDragAmount += delta
-                            else if (backDragAmount > 0f) {
-                                backDragAmount = (backDragAmount + delta).coerceAtLeast(0f)
+            .pointerInput("back-swipe-$chatId", appearance.swapSwipeReply) {
+                val swap = appearance.swapSwipeReply
+                val slopPx = viewConfiguration.touchSlop
+                androidx.compose.foundation.gestures.awaitEachGesture {
+                    val down = awaitFirstDown(
+                        requireUnconsumed = false,
+                        pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial
+                    )
+                    val startX = down.position.x
+                    var totalX = 0f
+                    var totalY = 0f
+                    var committed = false
+                    backDragAmount = 0f
+                    while (true) {
+                        val event = awaitPointerEvent(
+                            pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial
+                        )
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                            ?: break
+                        if (!change.pressed) break
+                        val d = change.positionChange()
+                        totalX += d.x
+                        totalY += d.y
+                        if (!committed) {
+                            if (kotlin.math.abs(totalX) > slopPx ||
+                                kotlin.math.abs(totalY) > slopPx
+                            ) {
+                                val verticallyDominant =
+                                    kotlin.math.abs(totalY) > kotlin.math.abs(totalX)
+                                val rightward = totalX > 0
+                                val edgeStart = startX < edgeZonePx
+                                // Claim only if horizontal-dominant,
+                                // rightward, and (edge-started OR swap
+                                // mode). Anything else: pass through
+                                // for the LazyColumn / bubbles.
+                                val shouldClaim = !verticallyDominant &&
+                                    rightward &&
+                                    (edgeStart || swap)
+                                if (!shouldClaim) return@awaitEachGesture
+                                committed = true
+                                backDragAmount = totalX.coerceAtLeast(0f)
+                            } else {
+                                // Still below slop, don't commit yet.
+                                continue
                             }
                         }
+                        // committed=true from here. Consume the event
+                        // so children don't ALSO act on it.
+                        change.consume()
+                        backDragAmount = (backDragAmount + d.x).coerceAtLeast(0f)
                     }
-                )
+                    if (committed) {
+                        if (backDragAmount > backTriggerPx) {
+                            // Forum-aware: same logic as the navigationIcon
+                            // back button — first pop returns to topic list.
+                            if (isForumChat && selectedTopicId != null) {
+                                selectedTopicId = null
+                                selectedTopicName = null
+                            } else {
+                                onBack()
+                            }
+                        }
+                        backDragAmount = 0f
+                    }
+                }
             }
     ) {
 
@@ -1555,11 +1794,40 @@ fun ChatScreen(
                                     maxLines = 1
                                 )
                             }
+                            // In a forum topic: show the topic name as
+                            // subtitle so the user knows they're inside
+                            // a thread, not the main chat. The accent
+                            // color + small "#" prefix mirrors
+                            // Telegram's topic chip styling.
+                            if (isForumChat && selectedTopicId != null) {
+                                val tname = selectedTopicName.orEmpty()
+                                Text(
+                                    "# $tname",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        // Forum-aware back: if the user is currently
+                        // inside a topic of a forum group, popping
+                        // returns them to the topic LIST (within the
+                        // same chat screen), not all the way out of
+                        // the chat. The second back press from the
+                        // topic list goes through to onBack().
+                        if (isForumChat && selectedTopicId != null) {
+                            selectedTopicId = null
+                            selectedTopicName = null
+                        } else {
+                            onBack()
+                        }
+                    }) {
                         Icon(com.secondream.novagram.ui.icons.PhosphorIcons.CaretLeft, null)
                     }
                 },
@@ -1570,17 +1838,34 @@ fun ChatScreen(
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(com.secondream.novagram.ui.icons.PhosphorIcons.DotsThreeVertical, null)
                     }
-                    androidx.compose.material3.DropdownMenu(
-                        expanded = menuOpen,
-                        onDismissRequest = { menuOpen = false }
-                    ) {
-                        androidx.compose.material3.DropdownMenuItem(
-                            text = {
-                                Text(stringResource(
-                                    if (isMuted) R.string.action_unmute_chat
-                                    else R.string.action_mute_chat
-                                ))
-                            },
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
+            )
+            // Chat-topbar action menu rendered as an ActionBottomSheet
+            // for visual consistency with the long-press / MessageActionsSheet
+            // pattern. Tiles built from the same conditional logic as the
+            // legacy DropdownMenu: mute/unmute is always present; TTL is
+            // gated by isSecretChat; leave/delete swaps based on
+            // group/channel vs private; the destructive tile gets the
+            // destructive treatment automatically.
+            if (menuOpen) {
+                val isSecretChat = remember(chatId) {
+                    TdClient.getCachedChat(chatId)?.type is TdApi.ChatTypeSecret
+                }
+                val isChannel = cachedChatLive?.type is TdApi.ChatTypeSupergroup &&
+                    (cachedChatLive.type as TdApi.ChatTypeSupergroup).isChannel
+                val menuTiles = buildList {
+                    add(
+                        com.secondream.novagram.ui.components.ActionTile(
+                            label = stringResource(
+                                if (isMuted) R.string.action_unmute_chat
+                                else R.string.action_mute_chat
+                            ),
+                            icon = if (isMuted)
+                                com.secondream.novagram.ui.icons.PhosphorIcons.Bell
+                            else com.secondream.novagram.ui.icons.PhosphorIcons.BellSlash,
                             onClick = {
                                 menuOpen = false
                                 scope.launch {
@@ -1588,67 +1873,54 @@ fun ChatScreen(
                                 }
                             }
                         )
-                        // Self-destruct timer. The setting technically
-                        // works on any chat type but exposing it on a
-                        // normal chat is misleading — the official
-                        // Telegram clients only expose it on secret
-                        // chats, and that's what users expect. So we
-                        // gate the menu item by checking the cached
-                        // chat type.
-                        val isSecretChat = remember(chatId) {
-                            TdClient.getCachedChat(chatId)?.type is TdApi.ChatTypeSecret
-                        }
-                        if (isSecretChat) {
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text(stringResource(R.string.chat_set_ttl)) },
+                    )
+                    if (isSecretChat) {
+                        add(
+                            com.secondream.novagram.ui.components.ActionTile(
+                                label = stringResource(R.string.chat_set_ttl),
+                                icon = com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
                                 onClick = {
                                     menuOpen = false
                                     ttlDialogOpen = true
                                 }
                             )
-                        }
-                        // For groups/channels show "Leave" instead — you
-                        // can't delete a chat you don't own. Private chats
-                        // keep "Delete chat" which wipes history + removes
-                        // from the list.
-                        val isChannel = cachedChatLive?.type is TdApi.ChatTypeSupergroup &&
-                            (cachedChatLive.type as TdApi.ChatTypeSupergroup).isChannel
-                        if (isGroupChat) {
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        stringResource(
-                                            if (isChannel) R.string.action_leave_channel
-                                            else R.string.action_leave_group
-                                        ),
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                },
+                        )
+                    }
+                    if (isGroupChat) {
+                        add(
+                            com.secondream.novagram.ui.components.ActionTile(
+                                label = stringResource(
+                                    if (isChannel) R.string.action_leave_channel
+                                    else R.string.action_leave_group
+                                ),
+                                icon = com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                                destructive = true,
                                 onClick = {
                                     menuOpen = false
                                     leaveOpen = true
                                 }
                             )
-                        } else {
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        stringResource(R.string.action_delete_chat),
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                },
+                        )
+                    } else {
+                        add(
+                            com.secondream.novagram.ui.components.ActionTile(
+                                label = stringResource(R.string.action_delete_chat),
+                                icon = com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                                destructive = true,
                                 onClick = {
                                     menuOpen = false
                                     deleteOpen = true
                                 }
                             )
-                        }
+                        )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
+                }
+                com.secondream.novagram.ui.components.ActionBottomSheet(
+                    title = chatTitle,
+                    onDismiss = { menuOpen = false },
+                    tiles = menuTiles
                 )
-            )
+            }
             com.secondream.novagram.ui.components.OfflineBanner()
             // Chat search bar: collapsible, sits under the title. Up/down
             // arrows cycle through TDLib search results; tapping a result
@@ -1842,7 +2114,29 @@ fun ChatScreen(
                                 onOpenTelegramLink = openTelegramLink,
                                 interactionRevision = interactionRevisions[msg.id] ?: 0,
                                 highlightQuery = if (searchOpen) searchQuery else null,
-                                flashing = (flashMessageId == msg.id)
+                                flashing = (flashMessageId == msg.id),
+                                onInlineButton = { btn, key ->
+                                    handleInlineKeyboardButton(
+                                        chatId = chatId,
+                                        message = msg,
+                                        button = btn,
+                                        buttonKey = key,
+                                        context = context,
+                                        scope = scope,
+                                        setPendingKey = { newKey ->
+                                            pendingInlineButtonKeys = if (newKey == null) {
+                                                pendingInlineButtonKeys - msg.id
+                                            } else {
+                                                pendingInlineButtonKeys + (msg.id to newKey)
+                                            }
+                                        },
+                                        showCallbackResult = { txt, isAlert ->
+                                            inlineButtonResult = InlineButtonResult(txt, isAlert)
+                                        },
+                                        openLink = openTelegramLink
+                                    )
+                                },
+                                pendingInlineButtonKey = pendingInlineButtonKeys[msg.id]
                             )
                         }
                     }
@@ -1918,21 +2212,30 @@ fun ChatScreen(
                                             TdClient.findFirstUnreadMention(chatId)
                                         }.getOrNull()
                                         if (msg != null) {
+                                            // Decrement IMMEDIATELY so the chip
+                                            // count updates before the jump's
+                                            // suspending getChatHistory call.
+                                            // The local cache decrement is the
+                                            // authoritative source of truth for
+                                            // the chip's count until TDLib's
+                                            // echo (filtered by the
+                                            // lastKnownServerMentionCount
+                                            // reconcile logic) confirms or
+                                            // rejects it. Each tap consumes ONE
+                                            // mention — Telegram-style per-mention
+                                            // navigation.
+                                            TdClient.decrementChatMentionCount(chatId)
                                             jumpToMessage(msg.id)
-                                            // Mark this single mention as
-                                            // read on the server (viewMessages
-                                            // on the specific id) and
-                                            // decrement the local cache count
-                                            // immediately so the chip's count
-                                            // updates without waiting for
-                                            // TDLib's UpdateChatUnreadMentionCount
-                                            // echo. Each tap consumes ONE
-                                            // mention — Telegram-style
-                                            // per-mention navigation.
+                                            // Mark this mention as read on the
+                                            // server. If TDLib decrements its
+                                            // unreadMentionCount echo, the
+                                            // reconcile keeps our optimistic
+                                            // value; if it doesn't (TDLib
+                                            // version quirk), our local
+                                            // decrement holds anyway.
                                             runCatching {
                                                 TdClient.viewMessages(chatId, longArrayOf(msg.id))
                                             }
-                                            TdClient.decrementChatMentionCount(chatId)
                                         }
                                     }
                                 },
@@ -1956,11 +2259,11 @@ fun ChatScreen(
                                             TdClient.findFirstUnreadReaction(chatId)
                                         }.getOrNull()
                                         if (msg != null) {
+                                            TdClient.decrementChatReactionCount(chatId)
                                             jumpToMessage(msg.id)
                                             runCatching {
                                                 TdClient.viewMessages(chatId, longArrayOf(msg.id))
                                             }
-                                            TdClient.decrementChatReactionCount(chatId)
                                         }
                                     }
                                 },
@@ -2117,6 +2420,29 @@ fun ChatScreen(
                         }
                     }
                 }
+                // FORUM-TOPIC OVERLAY: when the chat is a forum (topics
+                // enabled) and no topic has been picked yet, paint the
+                // whole message-area Box with the topic list. The
+                // LazyColumn keeps composing beneath but is hidden — we
+                // intentionally don't gate the LazyColumn itself so its
+                // history-load / chatUpdates collectors keep running in
+                // the background; once the user picks a topic the
+                // overlay disappears and they see the threaded view.
+                if (isForumChat && selectedTopicId == null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background)
+                    ) {
+                        com.secondream.novagram.ui.components.TopicListPanel(
+                            chatId = chatId,
+                            onPickTopic = { tid, name ->
+                                selectedTopicId = tid
+                                selectedTopicName = name
+                            }
+                        )
+                    }
+                }
             }
 
             // Mention picker (popup just above the input bar). The detection
@@ -2162,11 +2488,23 @@ fun ChatScreen(
                     BotCommandPicker(
                         commands = filtered,
                         onPick = { cmd ->
-                            val cmdText = "/" + cmd.command + " "
-                            input = androidx.compose.ui.text.input.TextFieldValue(
-                                cmdText,
-                                androidx.compose.ui.text.TextRange(cmdText.length)
-                            )
+                            // Fire the command immediately on tap —
+                            // matches official Telegram behaviour where
+                            // picking from the suggestion list is the
+                            // act of sending it, not staging it. The
+                            // user can still type the command manually
+                            // and tap Send if they want to add args
+                            // first. Clear the input + reply target up
+                            // front so a double-tap doesn't double-send.
+                            val cmdText = "/" + cmd.command
+                            input = androidx.compose.ui.text.input.TextFieldValue("")
+                            val replyId = replyTarget?.id
+                            replyTarget = null
+                            scope.launch {
+                                runCatching {
+                                    TdClient.sendText(chatId, cmdText, replyId, messageThreadId = selectedTopicId ?: 0L)
+                                }
+                            }
                         }
                     )
                 }
@@ -2191,10 +2529,13 @@ fun ChatScreen(
                     }
                 )
             }
-            pendingMedia?.let { media ->
+            if (pendingMedia.isNotEmpty()) {
                 PendingMediaPreview(
-                    media = media,
-                    onCancel = { pendingMedia = null }
+                    media = pendingMedia,
+                    onCancelAll = { pendingMedia = emptyList() },
+                    onRemove = { idx ->
+                        pendingMedia = pendingMedia.toMutableList().apply { removeAt(idx) }
+                    }
                 )
             }
             if (isNonMember) {
@@ -2271,10 +2612,27 @@ fun ChatScreen(
                     }
                 }
             } else {
+            // Stack the typing badge above the input bar. We wrap the
+            // two in a Column so the indicator animates the bar
+            // upward when it appears (instead of overlaying). For
+            // private chats we hide avatars: the chat header already
+            // shows the peer large at the top, so re-rendering the
+            // same small avatar above the input is redundant chrome.
+            val isPrivateOrSecret = remember(chatId) {
+                val t = TdClient.getCachedChat(chatId)?.type
+                t is TdApi.ChatTypePrivate || t is TdApi.ChatTypeSecret
+            }
+            androidx.compose.foundation.layout.Column(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                com.secondream.novagram.ui.components.TypingIndicator(
+                    chatId = chatId,
+                    showAvatars = !isPrivateOrSecret
+                )
             InputBar(
                 value = input,
                 onValueChange = { input = it },
-                placeholderText = if (pendingMedia != null)
+                placeholderText = if (pendingMedia.isNotEmpty())
                     stringResource(R.string.media_caption_hint)
                 else null,
                 onSend = {
@@ -2379,23 +2737,64 @@ fun ChatScreen(
                                 }
                             }
                         }
-                        media != null -> {
+                        media.isNotEmpty() -> {
                             // Sending media with optional caption — caption may
                             // be blank, that's fine. Always clear local state
                             // before launching so a double-tap doesn't double-send.
                             input = androidx.compose.ui.text.input.TextFieldValue("")
-                            pendingMedia = null
+                            pendingMedia = emptyList()
                             replyTarget = null
                             val caption = text.ifBlank { null }
                             scope.launch(Dispatchers.IO) {
                                 runCatching {
-                                    when (media.kind) {
-                                        PendingMediaKind.Photo ->
-                                            TdClient.sendPhoto(chatId, media.file.absolutePath, caption, rid)
-                                        PendingMediaKind.Video ->
-                                            TdClient.sendVideo(chatId, media.file.absolutePath, caption, rid)
-                                        PendingMediaKind.Document ->
-                                            TdClient.sendDocument(chatId, media.file.absolutePath, caption, rid)
+                                    when {
+                                        media.size == 1 -> {
+                                            // Single item: keep using the
+                                            // dedicated single-message wrappers
+                                            // — they're cheaper (no album round-
+                                            // trip) and render exactly the same
+                                            // on the receiver side.
+                                            val it = media.first()
+                                            when (it.kind) {
+                                                PendingMediaKind.Photo ->
+                                                    TdClient.sendPhoto(chatId, it.file.absolutePath, caption, rid, messageThreadId = selectedTopicId ?: 0L)
+                                                PendingMediaKind.Video ->
+                                                    TdClient.sendVideo(chatId, it.file.absolutePath, caption, rid, messageThreadId = selectedTopicId ?: 0L)
+                                                PendingMediaKind.Document ->
+                                                    TdClient.sendDocument(chatId, it.file.absolutePath, caption, rid, messageThreadId = selectedTopicId ?: 0L)
+                                            }
+                                        }
+                                        else -> {
+                                            // Album path. TDLib's SendMessageAlbum
+                                            // accepts up to 10 items; we capped
+                                            // the picker accordingly so we never
+                                            // overflow. Photos and videos can
+                                            // share an album; documents must be
+                                            // their own album. We DON'T split
+                                            // here — the user picked a mixed set
+                                            // explicitly, and if it includes a
+                                            // doc TDLib will return an error
+                                            // which surfaces via the runCatching
+                                            // wrapper. In practice the photo
+                                            // picker only returns photo+video
+                                            // and the doc picker only docs, so
+                                            // a mixed bag isn't reachable
+                                            // through the normal flow.
+                                            val groupItems = media.map {
+                                                com.secondream.novagram.td.TdClient.MediaGroupItem(
+                                                    filePath = it.file.absolutePath,
+                                                    kind = when (it.kind) {
+                                                        PendingMediaKind.Photo ->
+                                                            com.secondream.novagram.td.TdClient.MediaGroupItemKind.Photo
+                                                        PendingMediaKind.Video ->
+                                                            com.secondream.novagram.td.TdClient.MediaGroupItemKind.Video
+                                                        PendingMediaKind.Document ->
+                                                            com.secondream.novagram.td.TdClient.MediaGroupItemKind.Document
+                                                    }
+                                                )
+                                            }
+                                            TdClient.sendMediaGroup(chatId, groupItems, caption, rid, messageThreadId = selectedTopicId ?: 0L)
+                                        }
                                     }
                                 }
                             }
@@ -2405,7 +2804,7 @@ fun ChatScreen(
                             replyTarget = null
                             scope.launch {
                                 runCatching {
-                                    TdClient.sendText(chatId, text, rid)
+                                    TdClient.sendText(chatId, text, rid, messageThreadId = selectedTopicId ?: 0L)
                                 }.onFailure { err ->
                                     // Failures here are silent by default —
                                     // TDLib rejects sends for secret chats
@@ -2472,7 +2871,7 @@ fun ChatScreen(
                                 replyTarget = null
                                 scope.launch {
                                     runCatching {
-                                        TdClient.sendVoiceNote(chatId, res.file.absolutePath, res.durationSeconds, rid)
+                                        TdClient.sendVoiceNote(chatId, res.file.absolutePath, res.durationSeconds, rid, messageThreadId = selectedTopicId ?: 0L)
                                     }
                                 }
                             }
@@ -2482,7 +2881,7 @@ fun ChatScreen(
                     }
                 },
                 recording = recording,
-                hasPendingMedia = pendingMedia != null || editTarget != null,
+                hasPendingMedia = pendingMedia.isNotEmpty() || editTarget != null,
                 onContentReceived = { uri ->
                     // Keyboard inserted a GIF or sticker. Mime-sniff via the
                     // ContentResolver, copy off the content:// URI into our
@@ -2494,15 +2893,16 @@ fun ChatScreen(
                         val file = com.secondream.novagram.util.FileUtils.copyUriToCache(context, uri) ?: return@launch
                         runCatching {
                             if (mime == "image/gif" || mime == "video/mp4") {
-                                TdClient.sendAnimation(chatId, file.absolutePath)
+                                TdClient.sendAnimation(chatId, file.absolutePath, messageThreadId = selectedTopicId ?: 0L)
                             } else {
-                                TdClient.sendPhoto(chatId, file.absolutePath)
+                                TdClient.sendPhoto(chatId, file.absolutePath, messageThreadId = selectedTopicId ?: 0L)
                             }
                         }
                     }
                 },
                 focusRequester = inputFocus
             )
+            }
             }
         }
     }
@@ -2676,7 +3076,7 @@ fun ChatScreen(
             onSendDirect = { aiReply ->
                 aiTarget = null
                 scope.launch {
-                    runCatching { TdClient.sendText(chatId, aiReply, target.id) }
+                    runCatching { TdClient.sendText(chatId, aiReply, target.id, messageThreadId = selectedTopicId ?: 0L) }
                 }
             }
         )
@@ -2947,10 +3347,19 @@ fun ChatScreen(
             },
             onMuteAuthor = { mute ->
                 if (senderUserId != null) {
+                    val label = context.getString(
+                        if (mute) R.string.action_in_progress_muting
+                        else R.string.action_in_progress_unmuting
+                    )
                     scope.launch {
-                        runCatching {
-                            if (mute) TdClient.muteGroupUser(chatId, senderUserId)
-                            else TdClient.unmuteGroupUser(chatId, senderUserId)
+                        pendingActionLabel = label
+                        try {
+                            runCatching {
+                                if (mute) TdClient.muteGroupUser(chatId, senderUserId)
+                                else TdClient.unmuteGroupUser(chatId, senderUserId)
+                            }
+                        } finally {
+                            pendingActionLabel = null
                         }
                     }
                 }
@@ -2958,10 +3367,19 @@ fun ChatScreen(
             },
             onKickAuthor = { kick ->
                 if (senderUserId != null) {
+                    val label = context.getString(
+                        if (kick) R.string.action_in_progress_banning
+                        else R.string.action_in_progress_unbanning
+                    )
                     scope.launch {
-                        runCatching {
-                            if (kick) TdClient.kickGroupUser(chatId, senderUserId)
-                            else TdClient.unbanGroupUser(chatId, senderUserId)
+                        pendingActionLabel = label
+                        try {
+                            runCatching {
+                                if (kick) TdClient.kickGroupUser(chatId, senderUserId)
+                                else TdClient.unbanGroupUser(chatId, senderUserId)
+                            }
+                        } finally {
+                            pendingActionLabel = null
                         }
                     }
                 }
@@ -2983,7 +3401,7 @@ fun ChatScreen(
     // for any given username is the slow one (TDLib has to fetch the
     // chat record from the network); subsequent taps on the same link
     // are near-instant because TDLib caches the lookup.
-    if (linkResolving) {
+    if (linkResolving || pendingActionLabel != null) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -2993,10 +3411,70 @@ fun ChatScreen(
                 },
             contentAlignment = Alignment.Center
         ) {
-            androidx.compose.material3.CircularProgressIndicator(
-                color = MaterialTheme.colorScheme.primary,
-                strokeWidth = 3.dp
-            )
+            androidx.compose.foundation.layout.Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
+            ) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 3.dp
+                )
+                val caption = pendingActionLabel
+                if (caption != null) {
+                    Text(
+                        text = caption,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+    // Floating banner showing the bot's response to a callback button
+    // tap (e.g., "Sei stato sbloccato"). Auto-dismisses after ~2.4s
+    // (normal) or ~4.5s (alert). Sits above the input bar with a
+    // soft surface background and the accent on the icon.
+    inlineButtonResult?.let { result ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 96.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Row(
+                modifier = Modifier
+                    .widthIn(max = 360.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        if (result.isAlert) MaterialTheme.colorScheme.errorContainer
+                        else MaterialTheme.colorScheme.surface
+                    )
+                    .border(
+                        0.5.dp,
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                        RoundedCornerShape(14.dp)
+                    )
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    if (result.isAlert)
+                        com.secondream.novagram.ui.icons.PhosphorIcons.X
+                    else com.secondream.novagram.ui.icons.PhosphorIcons.Check,
+                    contentDescription = null,
+                    tint = if (result.isAlert) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    result.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
     }
 
@@ -3050,7 +3528,11 @@ fun ChatScreen(
     if (infoOpen) {
         ChatInfoDialog(
             chatId = chatId,
-            onDismiss = { infoOpen = false }
+            onDismiss = { infoOpen = false },
+            onJumpToMessage = { mid ->
+                infoOpen = false
+                jumpToMessage(mid)
+            }
         )
     }
 
@@ -3161,7 +3643,11 @@ fun ChatScreen(
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatInfoDialog(chatId: Long, onDismiss: () -> Unit) {
+internal fun ChatInfoDialog(
+    chatId: Long,
+    onDismiss: () -> Unit,
+    onJumpToMessage: (Long) -> Unit
+) {
     val chat = remember(chatId) { TdClient.getCachedChat(chatId) }
     val title = chat?.title ?: stringResource(R.string.chat_default_title)
 
@@ -3248,21 +3734,24 @@ private fun ChatInfoDialog(chatId: Long, onDismiss: () -> Unit) {
                 ProfileDetailRow(
                     icon = com.secondream.novagram.ui.icons.PhosphorIcons.Info,
                     label = stringResource(R.string.chat_info_bio_label),
-                    value = it
+                    value = it,
+                    linkify = true
                 )
             }
             username?.let {
                 ProfileDetailRow(
                     icon = com.secondream.novagram.ui.icons.PhosphorIcons.At,
                     label = stringResource(R.string.chat_info_username_label),
-                    value = "@$it"
+                    value = "@$it",
+                    copyValue = "@$it"
                 )
             }
             phone?.let {
                 ProfileDetailRow(
                     icon = com.secondream.novagram.ui.icons.PhosphorIcons.Phone,
                     label = stringResource(R.string.chat_info_phone_label),
-                    value = it
+                    value = it,
+                    copyValue = it
                 )
             }
             if (description == null && username == null && phone == null && subtitle == null) {
@@ -3274,37 +3763,361 @@ private fun ChatInfoDialog(chatId: Long, onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                 )
             }
+
+            // MEDIA GALLERY — six-tab section with chat-wide media,
+            // links, files, voice, and music. Items tap into a small
+            // ActionBottomSheet offering "Apri" (open in viewer / via
+            // Intent) and "Visualizza in chat" (jumps to that message
+            // in the parent ChatScreen via onJumpToMessage).
+            Spacer(Modifier.height(20.dp))
+            androidx.compose.material3.HorizontalDivider(
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                thickness = 0.5.dp
+            )
+            Spacer(Modifier.height(12.dp))
+            var selectedMediaMessage by remember(chatId) {
+                mutableStateOf<TdApi.Message?>(null)
+            }
+            com.secondream.novagram.ui.components.ChatMediaGallery(
+                chatId = chatId,
+                onItemTap = { msg -> selectedMediaMessage = msg }
+            )
+            selectedMediaMessage?.let { msg ->
+                val ctx = LocalContext.current
+                ChatMediaItemActions(
+                    message = msg,
+                    onDismiss = { selectedMediaMessage = null },
+                    onJumpToMessage = {
+                        selectedMediaMessage = null
+                        onJumpToMessage(msg.id)
+                    },
+                    onOpenInViewer = { path ->
+                        selectedMediaMessage = null
+                        com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
+                        // We don't have direct router access from inside
+                        // this dialog, so we hand the path off via the
+                        // global holder + dismiss the dialog. The user
+                        // re-opens the chat avatar / name if they want
+                        // the gallery back. Future iteration: thread a
+                        // dedicated onOpenMediaViewer callback through.
+                        onDismiss()
+                    },
+                    onOpenViaIntent = { path, mime ->
+                        selectedMediaMessage = null
+                        runCatching {
+                            val file = java.io.File(path)
+                            val uri = androidx.core.content.FileProvider.getUriForFile(
+                                ctx,
+                                ctx.packageName + ".fileprovider",
+                                file
+                            )
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                                .setDataAndType(uri, mime)
+                                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            ctx.startActivity(intent)
+                        }
+                    }
+                )
+            }
         }
     }
 }
 
+/**
+ * Per-item action sheet for the media gallery. Two tiles in the common
+ * case (Apri / Visualizza in chat); for non-downloadable items the
+ * Open tile self-disables until the underlying file finishes its
+ * background fetch. Document/audio items open via an ACTION_VIEW
+ * Intent with the file's mime; photos / videos use the in-app
+ * MediaViewer for a coherent zoom/pinch experience.
+ */
+@Composable
+private fun ChatMediaItemActions(
+    message: TdApi.Message,
+    onDismiss: () -> Unit,
+    onJumpToMessage: () -> Unit,
+    onOpenInViewer: (String) -> Unit,
+    onOpenViaIntent: (path: String, mime: String) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val phos = com.secondream.novagram.ui.icons.PhosphorIcons
+    // Build the tiles list dynamically so we can label them per content
+    // kind (Apri foto vs Apri video vs Apri file) — matches how
+    // Telegram differentiates the verbs across content types.
+    val (openLabel, openIcon, openAction) = remember(message.id) {
+        when (val c = message.content) {
+            is TdApi.MessagePhoto -> {
+                val biggest = c.photo.sizes.lastOrNull()?.photo
+                Triple<String, _, () -> Unit>(
+                    ctx.getString(R.string.chat_info_media_open_photo),
+                    phos.Image,
+                    {
+                        scope.launch {
+                            val f = biggest ?: return@launch
+                            val ready = ensureDownloaded(f)
+                            if (ready != null) onOpenInViewer(ready)
+                        }
+                    }
+                )
+            }
+            is TdApi.MessageVideo -> Triple<String, _, () -> Unit>(
+                ctx.getString(R.string.chat_info_media_open_video),
+                phos.Play,
+                {
+                    scope.launch {
+                        val ready = ensureDownloaded(c.video.video)
+                        if (ready != null) onOpenInViewer(ready)
+                    }
+                }
+            )
+            is TdApi.MessageDocument -> Triple<String, _, () -> Unit>(
+                ctx.getString(R.string.chat_info_media_open_file),
+                phos.FileText,
+                {
+                    scope.launch {
+                        val ready = ensureDownloaded(c.document.document)
+                        if (ready != null) onOpenViaIntent(ready, c.document.mimeType.ifBlank { "*/*" })
+                    }
+                }
+            )
+            is TdApi.MessageAudio -> Triple<String, _, () -> Unit>(
+                ctx.getString(R.string.chat_info_media_open_file),
+                phos.FileAudio,
+                {
+                    scope.launch {
+                        val ready = ensureDownloaded(c.audio.audio)
+                        if (ready != null) onOpenViaIntent(ready, c.audio.mimeType.ifBlank { "audio/*" })
+                    }
+                }
+            )
+            is TdApi.MessageVoiceNote -> Triple<String, _, () -> Unit>(
+                ctx.getString(R.string.chat_info_media_open_file),
+                phos.Microphone,
+                {
+                    scope.launch {
+                        val ready = ensureDownloaded(c.voiceNote.voice)
+                        if (ready != null) onOpenViaIntent(ready, c.voiceNote.mimeType.ifBlank { "audio/ogg" })
+                    }
+                }
+            )
+            is TdApi.MessageText -> {
+                // Url tab — extract the first URL and open via Intent.
+                val first = c.text.entities.firstOrNull {
+                    it.type is TdApi.TextEntityTypeUrl || it.type is TdApi.TextEntityTypeTextUrl
+                }
+                val url = when (val t = first?.type) {
+                    is TdApi.TextEntityTypeTextUrl -> t.url
+                    is TdApi.TextEntityTypeUrl ->
+                        c.text.text.substring(first.offset, first.offset + first.length)
+                    else -> c.text.text
+                }
+                Triple<String, _, () -> Unit>(
+                    ctx.getString(R.string.chat_info_media_open_link),
+                    phos.Paperclip,
+                    {
+                        runCatching {
+                            ctx.startActivity(
+                                android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(url)
+                                )
+                            )
+                        }
+                    }
+                )
+            }
+            else -> Triple<String, _, () -> Unit>(
+                ctx.getString(R.string.chat_info_media_open_file),
+                phos.FileText,
+                { /* unsupported */ }
+            )
+        }
+    }
+    com.secondream.novagram.ui.components.ActionBottomSheet(
+        title = ctx.getString(R.string.chat_info_media_action_title),
+        onDismiss = onDismiss,
+        tiles = listOf(
+            com.secondream.novagram.ui.components.ActionTile(
+                label = openLabel,
+                icon = openIcon,
+                onClick = openAction
+            ),
+            com.secondream.novagram.ui.components.ActionTile(
+                label = ctx.getString(R.string.chat_info_media_view_in_chat),
+                icon = phos.ChatCircle,
+                onClick = onJumpToMessage
+            )
+        ),
+        tilesPerRow = 2
+    )
+}
+
+/**
+ * Ensure [file] is downloaded to local disk and return the local path,
+ * or null if the download fails. Wrapped here so the per-content-kind
+ * branches above stay terse.
+ */
+private suspend fun ensureDownloaded(file: TdApi.File?): String? {
+    if (file == null) return null
+    val existing = file.local?.path?.takeIf {
+        it.isNotEmpty() && java.io.File(it).exists()
+    }
+    if (existing != null) return existing
+    val downloaded = runCatching { TdClient.downloadFile(file.id) }.getOrNull()
+    return downloaded?.local?.path?.takeIf {
+        it.isNotEmpty() && java.io.File(it).exists()
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ProfileDetailRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
-    value: String
+    value: String,
+    /**
+     * When true, scan [value] for URLs and render them as accent-colored
+     * clickable spans that open via Intent on tap. Bio fields turn this
+     * on so a user pasting a personal link in their bio is reachable
+     * with one tap. Username/phone leave it off — they're already
+     * single-token values and adding URL detection on them just risks
+     * false positives (e.g. a username that contains a dot).
+     */
+    linkify: Boolean = false,
+    /**
+     * Tap-to-copy behavior. When set, tapping the row body copies
+     * [copyValue] (or [value] if null) to the system clipboard and
+     * shows a small confirmation toast. The whole row becomes a
+     * Copy affordance — most users discover it by tapping; a small
+     * Copy icon on the right edge tells the rest of them. URL spans
+     * inside the value still override the row tap so links are
+     * always reachable.
+     */
+    copyValue: String? = value
 ) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val accent = MaterialTheme.colorScheme.primary
+
+    // Build the annotated value: if linkify is on, every URL detected
+    // by android.util.Patterns.WEB_URL gets a clickable span. We
+    // remember the result keyed on the raw value so recompositions
+    // don't re-parse needlessly.
+    val annotated = remember(value, linkify, accent) {
+        if (!linkify) androidx.compose.ui.text.AnnotatedString(value)
+        else {
+            val builder = androidx.compose.ui.text.AnnotatedString.Builder()
+            val pat = android.util.Patterns.WEB_URL
+            val m = pat.matcher(value)
+            var lastEnd = 0
+            while (m.find()) {
+                val start = m.start()
+                val end = m.end()
+                if (start > lastEnd) builder.append(value.substring(lastEnd, start))
+                val raw = value.substring(start, end)
+                // Annotate so the onClick handler below can resolve
+                // which URL was tapped by character offset.
+                builder.pushStringAnnotation(tag = "URL", annotation = raw)
+                builder.pushStyle(
+                    androidx.compose.ui.text.SpanStyle(
+                        color = accent,
+                        textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+                    )
+                )
+                builder.append(raw)
+                builder.pop(); builder.pop()
+                lastEnd = end
+            }
+            if (lastEnd < value.length) builder.append(value.substring(lastEnd))
+            builder.toAnnotatedString()
+        }
+    }
+
+    fun copyToClipboard() {
+        val v = copyValue ?: value
+        clipboard.setText(androidx.compose.ui.text.AnnotatedString(v))
+        android.widget.Toast.makeText(
+            ctx,
+            ctx.getString(R.string.chat_info_copied),
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .combinedClickable(
+                // Tap copies; long-press also copies (same affordance —
+                // some users tap rows, others long-press). URLs inside
+                // the annotated value handle their own onClick via
+                // ClickableText below, which suppresses propagation.
+                onClick = { copyToClipboard() },
+                onLongClick = { copyToClipboard() }
+            )
             .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
             icon,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            tint = accent,
             modifier = Modifier.size(22.dp)
         )
         Spacer(Modifier.width(14.dp))
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
                 label,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Text(value, style = MaterialTheme.typography.bodyMedium)
+            if (linkify) {
+                androidx.compose.foundation.text.ClickableText(
+                    text = annotated,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        color = MaterialTheme.colorScheme.onSurface
+                    ),
+                    onClick = { offset ->
+                        val tapped = annotated.getStringAnnotations(
+                            tag = "URL", start = offset, end = offset
+                        ).firstOrNull()
+                        if (tapped != null) {
+                            // Normalize URLs missing a scheme so the
+                            // Intent resolves to a browser (otherwise
+                            // ACTION_VIEW on "example.com" matches
+                            // nothing).
+                            val raw = tapped.item
+                            val url = if (raw.startsWith("http://") || raw.startsWith("https://"))
+                                raw else "https://$raw"
+                            runCatching {
+                                ctx.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(url)
+                                    )
+                                )
+                            }
+                        } else {
+                            // No URL at the tap offset — treat as a
+                            // regular row tap and copy the whole value.
+                            copyToClipboard()
+                        }
+                    }
+                )
+            } else {
+                Text(value, style = MaterialTheme.typography.bodyMedium)
+            }
         }
+        // Right-edge Copy icon — silent affordance hint so the row's
+        // copy-on-tap behaviour is discoverable without forcing the
+        // user to try long-pressing first.
+        Spacer(Modifier.width(8.dp))
+        Icon(
+            com.secondream.novagram.ui.icons.PhosphorIcons.Copy,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+            modifier = Modifier.size(16.dp)
+        )
     }
 }
 
@@ -3796,12 +4609,26 @@ private fun MessageActionsSheet(
     // pay one round trip per sheet open.
     var canRevokeFromServer by remember(message.id) { mutableStateOf<Boolean?>(null) }
     var canEditFromServer by remember(message.id) { mutableStateOf<Boolean?>(null) }
+    // Server-side content-protection flags. When the chat (or this
+    // specific message) prohibits forwarding / saving / copying we
+    // hide the corresponding action tiles instead of surfacing
+    // buttons that fail silently. The chat-level
+    // [TdApi.Chat.hasProtectedContent] is the umbrella switch
+    // ("Restrict saving content" in Telegram official); these
+    // per-message booleans honour that PLUS any per-message
+    // overrides (e.g. ephemeral / self-destruct media).
+    var canForwardFromServer by remember(message.id) { mutableStateOf<Boolean?>(null) }
+    var canSaveFromServer by remember(message.id) { mutableStateOf<Boolean?>(null) }
+    var canCopyFromServer by remember(message.id) { mutableStateOf<Boolean?>(null) }
     LaunchedEffect(message.id) {
         runCatching {
             TdClient.getMessageProperties(message.chatId, message.id)
         }.onSuccess { props ->
             canRevokeFromServer = props.canBeDeletedForAllUsers
             canEditFromServer = props.canBeEdited
+            canForwardFromServer = props.canBeForwarded
+            canSaveFromServer = props.canBeSaved
+            canCopyFromServer = props.canBeCopied
         }
     }
     // While the round trip is in flight we fall back to the conservative
@@ -3831,6 +4658,13 @@ private fun MessageActionsSheet(
         }
     }
     val senderIsOwner = senderStatus is TdApi.ChatMemberStatusCreator
+    // Admin status — Telegram (and TDLib) does NOT allow an admin to
+    // moderate (mute/ban) another admin: the call would return error
+    // "USER_ADMIN_INVALID" or similar. Excluding the tiles upfront so
+    // the user never sees a button that silently fails. Only the
+    // creator/owner can demote-then-act on another admin, which is a
+    // multi-step flow we don't surface in the long-press sheet.
+    val senderIsAdmin = senderStatus is TdApi.ChatMemberStatusAdministrator
     // "Muted" means TDLib has them as Restricted with sending of basic
     // messages forbidden. We don't quibble about other Restricted
     // permission combos — anyone who can't post text is effectively
@@ -3843,7 +4677,8 @@ private fun MessageActionsSheet(
         cachedChat?.type !is TdApi.ChatTypePrivate &&
         senderUserId != null &&
         senderUserId != myUserId &&
-        !senderIsOwner
+        !senderIsOwner &&
+        !senderIsAdmin
 
     val quickReactions = listOf("👍", "❤️", "😂", "😮", "😢", "🔥")
 
@@ -4052,13 +4887,26 @@ private fun MessageActionsSheet(
                 if (onEdit != null && editAllowed) {
                     add(ActionTile(stringResource(R.string.action_edit), com.secondream.novagram.ui.icons.PhosphorIcons.PencilSimple, onEdit))
                 }
-                add(ActionTile(stringResource(R.string.action_forward),
-                    com.secondream.novagram.ui.icons.PhosphorIcons.Forward, onForward))
-                if (onCopy != null) {
+                // Protection-aware: hide Forward when TDLib says we
+                // can't (chat hasProtectedContent OR message is
+                // self-destruct / sensitive). Default to TRUE while
+                // the MessageProperties round-trip is pending so we
+                // don't flash the tile off-then-on for unrestricted
+                // chats; for chats whose `hasProtectedContent` flag
+                // is already cached we pre-fail the gate.
+                val chatProtected = cachedChat?.hasProtectedContent == true
+                val canForward = canForwardFromServer ?: !chatProtected
+                if (canForward) {
+                    add(ActionTile(stringResource(R.string.action_forward),
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Forward, onForward))
+                }
+                val canCopy = canCopyFromServer ?: !chatProtected
+                if (onCopy != null && canCopy) {
                     add(ActionTile(stringResource(R.string.action_copy),
                         com.secondream.novagram.ui.icons.PhosphorIcons.Copy, onCopy))
                 }
-                if (onSaveToDownloads != null) {
+                val canSave = canSaveFromServer ?: !chatProtected
+                if (onSaveToDownloads != null && canSave) {
                     add(ActionTile(stringResource(R.string.action_save),
                         com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple, onSaveToDownloads))
                 }
@@ -4556,88 +5404,201 @@ data class PendingMediaItem(
 )
 
 /**
- * Sits between the reply banner and the InputBar while a piece of media is
- * pending dispatch. Shows a thumbnail (photo/video) or a file icon, the
- * filename, and an X to cancel. The user types the caption directly in
- * the InputBar — InputBar swaps its placeholder when pendingMedia != null.
+ * Sits between the reply banner and the InputBar while media is pending
+ * dispatch. Renders thumbnails in a horizontal scroll row — one tile per
+ * pending item — each with its own small X button to remove individually.
+ * A trailing "Annulla tutto" button clears the entire batch.
+ *
+ * For a single item we keep the legacy left-tile + filename + cancel
+ * layout because the row of tiles would look lonely with one tile and
+ * 90% empty space.
  */
 @Composable
-private fun PendingMediaPreview(media: PendingMediaItem, onCancel: () -> Unit) {
-    Row(
+private fun PendingMediaPreview(
+    media: List<PendingMediaItem>,
+    onCancelAll: () -> Unit,
+    onRemove: (Int) -> Unit
+) {
+    if (media.isEmpty()) return
+    if (media.size == 1) {
+        val item = media.first()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PendingMediaThumb(item, size = 56.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    when (item.kind) {
+                        PendingMediaKind.Photo -> stringResource(R.string.pending_media_photo)
+                        PendingMediaKind.Video -> stringResource(R.string.pending_media_video)
+                        PendingMediaKind.Document -> stringResource(R.string.pending_media_document)
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    item.displayName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = onCancelAll) {
+                Icon(
+                    com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+        return
+    }
+    // Multi-item: horizontal row of thumbnails. Each tile has a small X
+    // bubble in the top-right corner to remove just that item; the
+    // trailing X (full-row) clears everything. Caption stays one for
+    // the whole group (Telegram convention).
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(vertical = 8.dp)
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            when (media.kind) {
-                PendingMediaKind.Photo -> coil.compose.AsyncImage(
-                    model = media.file,
+            Text(
+                pluralPendingMediaSummary(media),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onCancelAll) {
+                Icon(
+                    com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+        androidx.compose.foundation.lazy.LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(media.size, key = { idx -> media[idx].file.absolutePath }) { idx ->
+                Box {
+                    PendingMediaThumb(media[idx], size = 64.dp)
+                    // Per-item remove badge. 20dp circle in the top-right
+                    // corner with a small X — far enough above the tile
+                    // that touch slop won't accidentally hit the play
+                    // icon (videos) below.
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(2.dp)
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surface)
+                            .clickable { onRemove(idx) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Single-tile thumbnail render shared by both PendingMediaPreview
+ * branches (single + multi). Pulled out so the multi-row stays
+ * compact at the call site.
+ */
+@Composable
+private fun PendingMediaThumb(item: PendingMediaItem, size: androidx.compose.ui.unit.Dp) {
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        when (item.kind) {
+            PendingMediaKind.Photo -> coil.compose.AsyncImage(
+                model = item.file,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            PendingMediaKind.Video -> {
+                coil.compose.AsyncImage(
+                    model = item.file,
                     contentDescription = null,
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
-                PendingMediaKind.Video -> {
-                    // Video thumbnail extraction needs MediaMetadataRetriever
-                    // which is heavy; for now show a play icon overlay over
-                    // the surface so the user sees "this is a video".
-                    coil.compose.AsyncImage(
-                        model = media.file,
-                        contentDescription = null,
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    Icon(
-                        com.secondream.novagram.ui.icons.PhosphorIcons.Play,
-                        contentDescription = null,
-                        tint = androidx.compose.ui.graphics.Color.White,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-                PendingMediaKind.Document -> Icon(
-                    com.secondream.novagram.ui.icons.PhosphorIcons.FileText,
+                Icon(
+                    com.secondream.novagram.ui.icons.PhosphorIcons.Play,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(28.dp)
+                    tint = androidx.compose.ui.graphics.Color.White,
+                    modifier = Modifier.size(if (size >= 56.dp) 28.dp else 22.dp)
                 )
             }
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                when (media.kind) {
-                    PendingMediaKind.Photo -> stringResource(R.string.pending_media_photo)
-                    PendingMediaKind.Video -> stringResource(R.string.pending_media_video)
-                    PendingMediaKind.Document -> stringResource(R.string.pending_media_document)
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                media.displayName,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        IconButton(onClick = onCancel) {
-            Icon(
-                com.secondream.novagram.ui.icons.PhosphorIcons.X,
+            PendingMediaKind.Document -> Icon(
+                com.secondream.novagram.ui.icons.PhosphorIcons.FileText,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(if (size >= 56.dp) 28.dp else 22.dp)
             )
         }
     }
+}
+
+/**
+ * Summary string for the multi-item pending header: "5 elementi",
+ * "3 foto", "2 video", "4 foto e 1 video". Picks the simplest phrasing
+ * that fits the actual mix.
+ */
+@Composable
+private fun pluralPendingMediaSummary(media: List<PendingMediaItem>): String {
+    val photos = media.count { it.kind == PendingMediaKind.Photo }
+    val videos = media.count { it.kind == PendingMediaKind.Video }
+    val docs = media.count { it.kind == PendingMediaKind.Document }
+    val parts = mutableListOf<String>()
+    if (photos > 0) parts.add(
+        if (photos == 1) stringResource(R.string.pending_media_count_photo_one)
+        else stringResource(R.string.pending_media_count_photo_many, photos)
+    )
+    if (videos > 0) parts.add(
+        if (videos == 1) stringResource(R.string.pending_media_count_video_one)
+        else stringResource(R.string.pending_media_count_video_many, videos)
+    )
+    if (docs > 0) parts.add(
+        if (docs == 1) stringResource(R.string.pending_media_count_doc_one)
+        else stringResource(R.string.pending_media_count_doc_many, docs)
+    )
+    return parts.joinToString(" + ")
 }
 
 private fun isVideoFile(name: String): Boolean {
@@ -4743,5 +5704,94 @@ private fun applyReactionLocally(
         forwardCount = baseForwards
         replyInfo = baseReply
         reactions = newReactions
+    }
+}
+
+/**
+ * Result of an inline-callback round-trip surfaced to the user as a
+ * transient banner. `isAlert` mirrors TDLib's CallbackQueryAnswer
+ * flag — true bumps the display time and could be promoted to a modal
+ * dialog if we add one later. Empty `text` is swallowed (some bots
+ * answer the callback without a message, just an action).
+ */
+internal data class InlineButtonResult(val text: String, val isAlert: Boolean)
+
+/**
+ * Route an inline-keyboard button tap to the appropriate side-effect.
+ *
+ *   Callback → round-trip through the bot, show its returned text as
+ *     a banner. Shows a spinner on the button until the answer lands.
+ *   Url / LoginUrl → forward to openTelegramLink (which falls back to
+ *     a system Intent for non-t.me URLs).
+ *   SwitchInline → not handled yet (inline mode is a complex feature).
+ *   Buy / Game / User / Pay → telegram-specific surfaces we don't
+ *     support; surface a "non supportato" banner so the user knows
+ *     why the tap didn't do anything.
+ *
+ * The signature is deliberately verbose so the call site reads as
+ * a transactional intent: who's calling, what payload, where to
+ * report results. Wrapping the side-effect dispatch in a top-level
+ * function (instead of a method on ChatScreen) keeps the dispatch
+ * logic out of the giant ChatScreen body and lets us unit-test it
+ * if we ever add tests.
+ */
+internal fun handleInlineKeyboardButton(
+    chatId: Long,
+    message: TdApi.Message,
+    button: TdApi.InlineKeyboardButton,
+    buttonKey: String,
+    context: android.content.Context,
+    scope: kotlinx.coroutines.CoroutineScope,
+    setPendingKey: (String?) -> Unit,
+    showCallbackResult: (String, Boolean) -> Unit,
+    openLink: (android.net.Uri) -> Unit
+) {
+    when (val t = button.type) {
+        is TdApi.InlineKeyboardButtonTypeCallback -> {
+            setPendingKey(buttonKey)
+            scope.launch {
+                try {
+                    val answer = runCatching {
+                        TdClient.sendCallbackQuery(chatId, message.id, t.data)
+                    }.getOrNull()
+                    if (answer != null) {
+                        val txt = answer.text.orEmpty()
+                        if (answer.url.isNotEmpty()) {
+                            // Some bots respond with a follow-up URL —
+                            // open it (could be a payment, sign-in, etc.).
+                            runCatching {
+                                openLink(android.net.Uri.parse(answer.url))
+                            }
+                        }
+                        if (txt.isNotBlank()) {
+                            showCallbackResult(txt, answer.showAlert)
+                        }
+                    }
+                } finally {
+                    setPendingKey(null)
+                }
+            }
+        }
+        is TdApi.InlineKeyboardButtonTypeUrl -> {
+            runCatching { openLink(android.net.Uri.parse(t.url)) }
+        }
+        is TdApi.InlineKeyboardButtonTypeLoginUrl -> {
+            // Login-URL is meant to round-trip through getLoginUrl +
+            // user confirmation; for simplicity we open the URL
+            // directly (matches what older Telegram clients did before
+            // the consent dialog was added). The bot's server sees a
+            // missing tg_auth and prompts the user via a regular page.
+            runCatching { openLink(android.net.Uri.parse(t.url)) }
+        }
+        else -> {
+            // Buy / Game / User / SwitchInline / Pay / CallbackGame /
+            // CallbackWithPassword — surface a soft banner so the user
+            // knows their tap was received but isn't actionable in
+            // Novagram yet.
+            showCallbackResult(
+                context.getString(com.secondream.novagram.R.string.inline_button_unsupported),
+                false
+            )
+        }
     }
 }

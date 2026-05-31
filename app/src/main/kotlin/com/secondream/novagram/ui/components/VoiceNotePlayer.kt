@@ -103,6 +103,28 @@ fun VoiceNotePlayer(
     var positionMs by remember { mutableLongStateOf(0L) }
     val durationMs = (voiceNote.duration * 1000L).coerceAtLeast(1L)
 
+    // Playback speed cycle. Default 1x. Tap the speed pill to cycle
+    // through 1.5x → 2x → 0.5x → 1x. We push the value into ExoPlayer
+    // via setPlaybackSpeed whenever it changes — the player picks it
+    // up on the fly during playback. Telegram users will recognize
+    // the 2x / 0.5x convention from the official app.
+    var playbackSpeed by remember { mutableFloatStateOf(1f) }
+    val nextSpeed: (Float) -> Float = { current ->
+        when (current) {
+            1f -> 1.5f
+            1.5f -> 2f
+            2f -> 0.5f
+            else -> 1f
+        }
+    }
+    // Push speed changes into the active ExoPlayer. Compose's
+    // LaunchedEffect on the speed key avoids a stale `player?.let`
+    // closure firing once and never again — every time the value
+    // flips we re-apply it.
+    LaunchedEffect(playbackSpeed, player) {
+        player?.setPlaybackSpeed(playbackSpeed)
+    }
+
     // Release the player when the composable leaves the tree, otherwise
     // ExoPlayer hangs on to audio focus + the media file handle.
     DisposableEffect(Unit) {
@@ -185,6 +207,40 @@ fun VoiceNotePlayer(
                 color = onBackground.copy(alpha = 0.7f)
             )
         }
+        // Speed pill. Only shown after the user has interacted with the
+        // player — for an untouched bubble it's chrome noise. Renders a
+        // compact rounded badge with the current speed; tap cycles to
+        // the next. Sits at the right edge of the row so it lines up
+        // vertically with the play button on the left.
+        if (isPlaying || positionMs > 0L) {
+            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(accent.copy(alpha = 0.18f))
+                    .clickable {
+                        playbackSpeed = nextSpeed(playbackSpeed)
+                    }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = formatSpeed(playbackSpeed),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = accent,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                )
+            }
+        }
+    }
+}
+
+private fun formatSpeed(speed: Float): String {
+    // Drop the trailing .0 so 1x / 2x stay tight; 0.5x and 1.5x keep
+    // the decimal because the half-step matters at a glance.
+    return when {
+        speed == speed.toInt().toFloat() -> "${speed.toInt()}x"
+        else -> "${speed}x"
     }
 }
 

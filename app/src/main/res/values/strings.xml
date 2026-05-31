@@ -357,4 +357,28 @@
     <string name="notification_self_label">Tu</string>
     <string name="action_check_updates">Controlla aggiornamenti</string>
     <string name="offline_banner">Nessuna connessione internet</string>
+    <string name="settings_privacy_typing">Mostra quando scrivo</string>
+    <string name="settings_privacy_typing_desc">Notifica i contatti quando stai scrivendo un messaggio</string>
+    <string name="action_in_progress_muting">Silenziando…</string>
+    <string name="action_in_progress_unmuting">Ripristinando…</string>
+    <string name="action_in_progress_banning">Bannando…</string>
+    <string name="action_in_progress_unbanning">Sbannando…</string>
+
+    <string name="pending_media_count_photo_one">1 foto</string>
+    <string name="pending_media_count_photo_many">%d foto</string>
+    <string name="pending_media_count_video_one">1 video</string>
+    <string name="pending_media_count_video_many">%d video</string>
+    <string name="pending_media_count_doc_one">1 file</string>
+    <string name="pending_media_count_doc_many">%d file</string>
+    <string name="inline_button_unsupported">Azione non supportata in Novagram</string>
+    <string name="ai_thinking_1">Pensando…</string>
+    <string name="ai_thinking_2">Sto pensando…</string>
+    <string name="ai_thinking_3">Quasi pronto…</string>
+    <string name="chat_info_media_action_title">Apri media</string>
+    <string name="chat_info_media_open_photo">Apri foto</string>
+    <string name="chat_info_media_open_video">Apri video</string>
+    <string name="chat_info_media_open_file">Apri file</string>
+    <string name="chat_info_media_open_link">Apri link</string>
+    <string name="chat_info_media_view_in_chat">Visualizza in chat</string>
+    <string name="chat_info_copied">Copiato negli appunti</string>
 </resources>

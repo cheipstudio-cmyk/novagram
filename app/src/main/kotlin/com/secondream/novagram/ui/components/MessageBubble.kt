@@ -120,7 +120,24 @@ fun MessageBubble(
      * user can see WHICH message they landed on — replaces the previous
      * animated scroll which jittered during history-loading.
      */
-    flashing: Boolean = false
+    flashing: Boolean = false,
+    /**
+     * Fired when the user taps an inline-keyboard button attached to a
+     * bot message. The String is a stable per-button key (row:col:label)
+     * the parent uses to drive [pendingInlineButtonKey] so the right
+     * button shows its spinner while the callback round-trips through
+     * the bot. The TdApi.InlineKeyboardButton carries the action — see
+     * its `type` field for routing (Callback / Url / SwitchInline /
+     * etc.).
+     */
+    onInlineButton: (TdApi.InlineKeyboardButton, String) -> Unit = { _, _ -> },
+    /**
+     * Per-bubble pending state for the inline keyboard. Non-null while
+     * a callback round-trip is in flight; the matching button renders
+     * a spinner in place of its label. Cleared by the parent once the
+     * response (or error) arrives.
+     */
+    pendingInlineButtonKey: String? = null
 ) {
     // Read the param so the composable observes it; the value itself isn't
     // used directly anywhere — it's purely a recompose trigger.
@@ -326,6 +343,9 @@ fun MessageBubble(
                 )
                 Spacer(Modifier.width(6.dp))
             }
+        Column(
+            horizontalAlignment = if (mine) Alignment.End else Alignment.Start
+        ) {
         Column(
             modifier = Modifier
                 .widthIn(max = 300.dp)
@@ -564,6 +584,24 @@ fun MessageBubble(
                     )
                 }
             }
+        }
+        // INLINE KEYBOARD: rendered as a sibling Column to the bubble,
+        // so its background + rounded corners stay separate. Only the
+        // InlineKeyboard variant is surfaced here — ShowKeyboard /
+        // ForceReply / RemoveKeyboard are different UX surfaces (the
+        // custom-keyboard replaces the user's keyboard, ForceReply
+        // would intercept the input bar) that we don't support yet.
+        val markup = message.replyMarkup
+        if (markup is TdApi.ReplyMarkupInlineKeyboard && markup.rows.isNotEmpty()) {
+            androidx.compose.foundation.layout.Spacer(
+                androidx.compose.ui.Modifier.height(4.dp)
+            )
+            com.secondream.novagram.ui.components.InlineKeyboard(
+                markup = markup,
+                pendingButtonKey = pendingInlineButtonKey,
+                onClick = onInlineButton
+            )
+        }
         }
     }
     }
@@ -1510,7 +1548,17 @@ private fun ThemeShareCard(prefs: com.secondream.novagram.settings.AppearancePre
                 .background(MaterialTheme.colorScheme.primary)
                 .clickable {
                     scope.launch {
-                        com.secondream.novagram.settings.AppSettings.applyAppearance(prefs)
+                        // Don't auto-apply: that would overwrite the
+                        // user's current theme silently. Instead add
+                        // the imported theme to their saved list so it
+                        // appears as a tappable row in Settings → Temi
+                        // salvati. The toast confirms the addition;
+                        // the user activates manually when they're
+                        // ready.
+                        com.secondream.novagram.settings.AppSettings.importAppearanceAsSavedTheme(
+                            appearance = prefs,
+                            baseName = ctx.getString(R.string.theme_imported_default_name)
+                        )
                         android.widget.Toast.makeText(
                             ctx,
                             ctx.getString(R.string.theme_paste_success),

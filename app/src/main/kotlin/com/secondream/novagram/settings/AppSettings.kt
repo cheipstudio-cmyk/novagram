@@ -91,10 +91,14 @@ data class AppearancePrefs(
     /**
      * When true, swiping LEFT on a message bubble opens the reply
      * composer (mirrors the right-handed convention some users prefer).
-     * Default false keeps the swipe-RIGHT-to-reply gesture that matches
-     * official Telegram on Android.
+     * Default true because we found it more comfortable: it also frees
+     * the right-swipe gesture for the chat-pop-back action (see the
+     * back-swipe handler in ChatScreen — when this is true the gesture
+     * works from anywhere in the chat view, not just the 24dp left edge).
+     * Stock-Telegram-Android-style "swipe right to reply" is one toggle
+     * away in Settings.
      */
-    val swapSwipeReply: Boolean = false,
+    val swapSwipeReply: Boolean = true,
     /**
      * Whether the user wants their own "last seen" / "online" status to
      * be visible to other Telegram users — drives both the visual UI
@@ -103,7 +107,18 @@ data class AppearancePrefs(
      * Default true so the experience matches stock Telegram out of the
      * box; flip in Settings → Privacy.
      */
-    val showLastSeen: Boolean = true
+    val showLastSeen: Boolean = true,
+    /**
+     * Whether we announce "user is typing" to peers when the user is
+     * composing a message in chat. Drives the
+     * SendChatAction(ChatActionTyping) emission from the input field's
+     * onValueChange. Default true to match stock Telegram out of the
+     * box. When false the user types invisibly — peers see no typing
+     * bubble, no avatar pulse, nothing. The flag is purely client-side:
+     * Telegram has no server-side privacy rule for typing status, so
+     * the only knob is "do we emit the action or not".
+     */
+    val sendTypingStatus: Boolean = true
 )
 
 /**
@@ -154,6 +169,7 @@ object AppSettings {
     private val SHOW_LAST_SEEN = androidx.datastore.preferences.core.booleanPreferencesKey("show_last_seen")
     private val SHOW_ALL_TAB = androidx.datastore.preferences.core.booleanPreferencesKey("show_all_tab")
     private val SWAP_SWIPE_REPLY = androidx.datastore.preferences.core.booleanPreferencesKey("swap_swipe_reply")
+    private val SEND_TYPING_STATUS = androidx.datastore.preferences.core.booleanPreferencesKey("send_typing_status")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -197,8 +213,9 @@ object AppSettings {
                 anthropicApiKey = prefs[ANTHROPIC_API_KEY]?.takeIf { it.isNotBlank() },
                 showArchivedTab = prefs[SHOW_ARCHIVED_TAB] ?: false,
                 showAllTab = prefs[SHOW_ALL_TAB] ?: true,
-                swapSwipeReply = prefs[SWAP_SWIPE_REPLY] ?: false,
-                showLastSeen = prefs[SHOW_LAST_SEEN] ?: true
+                swapSwipeReply = prefs[SWAP_SWIPE_REPLY] ?: true,
+                showLastSeen = prefs[SHOW_LAST_SEEN] ?: true,
+                sendTypingStatus = prefs[SEND_TYPING_STATUS] ?: true
             )
         }
 
@@ -212,6 +229,10 @@ object AppSettings {
 
     suspend fun setSwapSwipeReply(enabled: Boolean) {
         appContext.dataStore.edit { it[SWAP_SWIPE_REPLY] = enabled }
+    }
+
+    suspend fun setSendTypingStatus(enabled: Boolean) {
+        appContext.dataStore.edit { it[SEND_TYPING_STATUS] = enabled }
     }
 
     suspend fun setShowLastSeen(enabled: Boolean) {
@@ -317,6 +338,68 @@ object AppSettings {
             // → light cards). Fixes the "white bg + dark cards" mix.
             e[THEME_MODE] = if (theme.isLight) ThemeMode.Light.name else ThemeMode.Dark.name
         }
+    }
+
+    /**
+     * Append a saved theme to the list WITHOUT activating it. Used by the
+     * "Import from clipboard" flow so importing a theme doesn't yank the
+     * user off their current one — the imported theme appears in the
+     * saved-themes row and the user can tap to activate when ready. If an
+     * id collision happens (re-importing the same theme) we treat it as
+     * an in-place update so duplicates don't pile up.
+     */
+    suspend fun addSavedTheme(theme: SavedTheme) {
+        appContext.dataStore.edit { e ->
+            val current = parseSavedThemes(e[SAVED_THEMES_JSON])
+            val idx = current.indexOfFirst { it.id == theme.id }
+            val updated = if (idx >= 0) current.toMutableList().also { it[idx] = theme }
+                          else current + theme
+            e[SAVED_THEMES_JSON] = encodeSavedThemes(updated)
+        }
+    }
+
+    /**
+     * Wrap an [AppearancePrefs] (produced by parseThemeJson when the user
+     * pastes a theme JSON, taps a theme-share card in chat, or follows a
+     * `nova://theme?data=...` deep link) into a [SavedTheme] entry and
+     * append it to the saved-themes list. Does NOT activate it: the
+     * imported theme appears as a tappable row in Settings → Temi salvati
+     * and the user picks when to switch.
+     *
+     * Single canonical entry point so the three import paths (Settings
+     * paste button, in-chat theme card, deep link) all share the same
+     * semantics. Returns the generated id so the caller can show a
+     * confirmation toast like "Tema X aggiunto ai tuoi temi".
+     */
+    suspend fun importAppearanceAsSavedTheme(
+        appearance: AppearancePrefs,
+        baseName: String
+    ): String {
+        // Use the imported bg luminance to set isLight so when the user
+        // later activates the theme, [activateSavedTheme] picks the
+        // right base mode (light vs dark) — otherwise a pastel-light bg
+        // ends up under a dark base scheme and the cards look wrong.
+        val bgArgb = appearance.customBgArgb ?: 0xFF0F1115.toInt()
+        val bgIsLight = androidx.compose.ui.graphics.Color(bgArgb).luminance() > 0.5f
+        // A tiny timestamp suffix so back-to-back imports show up as
+        // distinct rows instead of "Tema importato" repeated. Locale
+        // aware so the format matches what the user expects to read.
+        val stamp = java.text.SimpleDateFormat(
+            "HH:mm",
+            java.util.Locale.getDefault()
+        ).format(java.util.Date())
+        val theme = SavedTheme(
+            id = java.util.UUID.randomUUID().toString(),
+            name = "$baseName · $stamp",
+            accentArgb = appearance.customAccentArgb ?: 0xFFD9A85C.toInt(),
+            myBubbleArgb = appearance.customMyBubbleArgb ?: 0xFF2A4F7A.toInt(),
+            othersBubbleArgb = appearance.customOthersBubbleArgb ?: 0xFF374151.toInt(),
+            bgArgb = bgArgb,
+            inputBarArgb = appearance.customInputBarArgb ?: 0xFF1A1D24.toInt(),
+            isLight = bgIsLight
+        )
+        addSavedTheme(theme)
+        return theme.id
     }
 
     /** Drop the saved theme by id, also clearing custom* if it was active. */

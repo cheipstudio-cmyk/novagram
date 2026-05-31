@@ -195,7 +195,13 @@ fun AppRouter(
         composable(Routes.LOGIN) { LoginScreen() }
         composable(Routes.CHATS) {
             ChatListScreen(
-                onChatClick = { id -> nav.navigate(Routes.chat(id)) },
+                onChatClick = { id, msg ->
+                    // msg is non-null when the user came in via the
+                    // chat-info modal's "Visualizza in chat" — we
+                    // route through Routes.chat which handles both
+                    // anchored and anchorless opens.
+                    nav.navigate(Routes.chat(id, msg))
+                },
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) },
                 onOpenProfile = { nav.navigate(Routes.PROFILE) },
                 onNewChat = { nav.navigate(Routes.NEW_CHAT) }

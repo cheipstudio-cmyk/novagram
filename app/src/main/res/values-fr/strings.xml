@@ -343,4 +343,28 @@
     <string name="notification_self_label">Vous</string>
     <string name="action_check_updates">Rechercher des mises à jour</string>
     <string name="offline_banner">Pas de connexion internet</string>
+    <string name="settings_privacy_typing">Afficher écriture en cours</string>
+    <string name="settings_privacy_typing_desc">Indique aux autres quand vous tapez un message</string>
+    <string name="action_in_progress_muting">Silence en cours…</string>
+    <string name="action_in_progress_unmuting">Réactivation…</string>
+    <string name="action_in_progress_banning">Bannissement…</string>
+    <string name="action_in_progress_unbanning">Débannissement…</string>
+
+    <string name="pending_media_count_photo_one">1 photo</string>
+    <string name="pending_media_count_photo_many">%d photos</string>
+    <string name="pending_media_count_video_one">1 vidéo</string>
+    <string name="pending_media_count_video_many">%d vidéos</string>
+    <string name="pending_media_count_doc_one">1 fichier</string>
+    <string name="pending_media_count_doc_many">%d fichiers</string>
+    <string name="inline_button_unsupported">Action non prise en charge dans Novagram</string>
+    <string name="ai_thinking_1">Réflexion…</string>
+    <string name="ai_thinking_2">En cours…</string>
+    <string name="ai_thinking_3">Presque prêt…</string>
+    <string name="chat_info_media_action_title">Ouvrir le média</string>
+    <string name="chat_info_media_open_photo">Ouvrir la photo</string>
+    <string name="chat_info_media_open_video">Ouvrir la vidéo</string>
+    <string name="chat_info_media_open_file">Ouvrir le fichier</string>
+    <string name="chat_info_media_open_link">Ouvrir le lien</string>
+    <string name="chat_info_media_view_in_chat">Voir dans le chat</string>
+    <string name="chat_info_copied">Copié dans le presse-papiers</string>
 </resources>

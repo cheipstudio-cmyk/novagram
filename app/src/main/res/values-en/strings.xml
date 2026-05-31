@@ -343,4 +343,28 @@
     <string name="notification_self_label">You</string>
     <string name="action_check_updates">Check for updates</string>
     <string name="offline_banner">No internet connection</string>
+    <string name="settings_privacy_typing">Show typing status</string>
+    <string name="settings_privacy_typing_desc">Tell peers when you are composing a message</string>
+    <string name="action_in_progress_muting">Muting…</string>
+    <string name="action_in_progress_unmuting">Unmuting…</string>
+    <string name="action_in_progress_banning">Banning…</string>
+    <string name="action_in_progress_unbanning">Unbanning…</string>
+
+    <string name="pending_media_count_photo_one">1 photo</string>
+    <string name="pending_media_count_photo_many">%d photos</string>
+    <string name="pending_media_count_video_one">1 video</string>
+    <string name="pending_media_count_video_many">%d videos</string>
+    <string name="pending_media_count_doc_one">1 file</string>
+    <string name="pending_media_count_doc_many">%d files</string>
+    <string name="inline_button_unsupported">Action not supported in Novagram</string>
+    <string name="ai_thinking_1">Thinking…</string>
+    <string name="ai_thinking_2">Working on it…</string>
+    <string name="ai_thinking_3">Almost ready…</string>
+    <string name="chat_info_media_action_title">Open media</string>
+    <string name="chat_info_media_open_photo">Open photo</string>
+    <string name="chat_info_media_open_video">Open video</string>
+    <string name="chat_info_media_open_file">Open file</string>
+    <string name="chat_info_media_open_link">Open link</string>
+    <string name="chat_info_media_view_in_chat">View in chat</string>
+    <string name="chat_info_copied">Copied to clipboard</string>
 </resources>

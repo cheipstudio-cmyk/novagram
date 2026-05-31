@@ -238,16 +238,16 @@ fun SettingsScreen(onBack: () -> Unit) {
                                     ?.toString()
                                 val parsed = raw?.let { parseThemeJson(it) }
                                 if (parsed != null) {
-                                    val imported = com.secondream.novagram.settings.SavedTheme(
-                                        id = java.util.UUID.randomUUID().toString(),
-                                        name = context.getString(R.string.theme_imported_default_name),
-                                        accentArgb = parsed.customAccentArgb ?: 0xFFD9A85C.toInt(),
-                                        myBubbleArgb = parsed.customMyBubbleArgb ?: 0xFF2A4F7A.toInt(),
-                                        othersBubbleArgb = parsed.customOthersBubbleArgb ?: 0xFF374151.toInt(),
-                                        bgArgb = parsed.customBgArgb ?: 0xFF0F1115.toInt(),
-                                        inputBarArgb = parsed.customInputBarArgb ?: 0xFF1A1D24.toInt()
-                                    )
-                                    scope.launch { AppSettings.upsertSavedTheme(imported) }
+                                    // Single canonical import path — see
+                                    // AppSettings.importAppearanceAsSavedTheme.
+                                    // Appends to the saved list with a
+                                    // timestamped name; doesn't activate.
+                                    scope.launch {
+                                        AppSettings.importAppearanceAsSavedTheme(
+                                            appearance = parsed,
+                                            baseName = context.getString(R.string.theme_imported_default_name)
+                                        )
+                                    }
                                     android.widget.Toast.makeText(
                                         context,
                                         context.getString(R.string.theme_paste_success),
@@ -551,6 +551,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                     checked = appearance.showLastSeen,
                     onToggle = { enabled ->
                         scope.launch { AppSettings.setShowLastSeen(enabled) }
+                    }
+                )
+                Divider()
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_privacy_typing),
+                    description = stringResource(R.string.settings_privacy_typing_desc),
+                    checked = appearance.sendTypingStatus,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setSendTypingStatus(enabled) }
                     }
                 )
             }

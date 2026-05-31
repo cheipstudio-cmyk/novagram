@@ -144,7 +144,14 @@ private fun buildTabs(
 
 @Composable
 fun ChatListScreen(
-    onChatClick: (Long) -> Unit,
+    /**
+     * Open a chat. The optional second arg is a message id to jump to;
+     * it's non-null when the user arrives via the chat-info modal's
+     * "Visualizza in chat" affordance, so the chat opens scrolled to
+     * the picked media/message. Null on every other path (regular row
+     * tap, notification deep link without a message anchor).
+     */
+    onChatClick: (chatId: Long, msgId: Long?) -> Unit,
     onOpenSettings: () -> Unit = {},
     onOpenProfile: () -> Unit = {},
     onNewChat: () -> Unit = {}
@@ -153,6 +160,12 @@ fun ChatListScreen(
     val scope = rememberCoroutineScope()
     val appearance by com.secondream.novagram.settings.AppSettings.appearance
         .collectAsState(initial = com.secondream.novagram.settings.AppearancePrefs())
+    // Target of the chat-info modal triggered by tapping a row's avatar
+    // (as opposed to the row body, which opens the chat normally). Set
+    // by [ChatRow.onAvatarClick]; cleared when the user dismisses the
+    // dialog. Tracking it as state lets the dialog live at the screen
+    // level instead of being recreated per-row.
+    var chatInfoTargetId by remember { mutableStateOf<Long?>(null) }
     // Tabs are dynamic now: Chat/Gruppi/Canali, plus Segrete when the
     // user has ≥1 secret chat live in their list, plus Archiviati when
     // they've turned that toggle on in Settings.
@@ -567,10 +580,11 @@ fun ChatListScreen(
                     items(pageChats, key = { it.id }) { c ->
                         ChatRow(
                             c,
-                            onClick = { onChatClick(c.id) },
+                            onClick = { onChatClick(c.id, null) },
                             onLongClick = { chatActionTarget = c },
                             modifier = Modifier.animateItem(),
-                            myUserId = myUserId
+                            myUserId = myUserId,
+                            onAvatarClick = { chatInfoTargetId = c.id }
                         )
                         HorizontalDivider(
                             color = MaterialTheme.colorScheme.outline,
@@ -622,11 +636,11 @@ fun ChatListScreen(
                             items(publicResults, key = { "public_${it.id}" }) { chat ->
                                 PublicResultRow(
                                     chat = chat,
-                                    onOpen = { onChatClick(chat.id) },
+                                    onOpen = { onChatClick(chat.id, null) },
                                     onJoin = {
                                         scope.launch {
                                             runCatching { TdClient.joinChat(chat.id) }
-                                            onChatClick(chat.id)
+                                            onChatClick(chat.id, null)
                                         }
                                     }
                                 )
@@ -767,6 +781,22 @@ fun ChatListScreen(
             tilesPerRow = if (isPrivate) 3 else 2
         )
     }
+    // CHAT-INFO MODAL triggered by avatar-tap on a row. Reuses the same
+    // ChatInfoDialog as the in-chat title-bar tap so the surface is
+    // identical (avatar + bio/username/phone + media gallery). The
+    // "Visualizza in chat" affordance inside the gallery becomes a
+    // chat navigation here, anchored on the picked message so the
+    // chat opens scrolled to it.
+    chatInfoTargetId?.let { targetId ->
+        com.secondream.novagram.ui.screens.ChatInfoDialog(
+            chatId = targetId,
+            onDismiss = { chatInfoTargetId = null },
+            onJumpToMessage = { mid ->
+                chatInfoTargetId = null
+                onChatClick(targetId, mid)
+            }
+        )
+    }
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -784,98 +814,79 @@ private fun ChatActionSheet(
     onDeleteRequest: () -> Unit,
     onLeaveRequest: () -> Unit
 ) {
-    val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
-    androidx.compose.material3.ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface
-    ) {
-        Column(modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp)
-            .navigationBarsPadding()
-        ) {
-            Text(
-                chatTitle,
-                style = MaterialTheme.typography.titleLarge,
-                fontStyle = FontStyle.Italic
-            )
-            Spacer(Modifier.height(20.dp))
-            ChatActionRow(
+    // Tiles built dynamically from the chat's state. Pin/unpin uses
+    // the PushPin icon (filled when active, struck-through when not —
+    // here we just toggle the action label since we only have one
+    // PushPin glyph). Mute uses Bell ↔ BellSlash to mirror the topbar
+    // action. Archive uses the Archive icon. Destructive tile (leave
+    // for groups/channels, delete for privates/secrets) gets the
+    // destructive treatment.
+    val tiles = buildList {
+        add(
+            com.secondream.novagram.ui.components.ActionTile(
                 label = stringResource(
                     if (isPinned) R.string.action_unpin_chat else R.string.action_pin_chat
                 ),
+                icon = com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
                 onClick = onTogglePin
             )
-            Spacer(Modifier.height(4.dp))
-            ChatActionRow(
+        )
+        add(
+            com.secondream.novagram.ui.components.ActionTile(
                 label = stringResource(
                     if (isMuted) R.string.action_unmute_chat else R.string.action_mute_chat
                 ),
+                icon = if (isMuted)
+                    com.secondream.novagram.ui.icons.PhosphorIcons.Bell
+                else com.secondream.novagram.ui.icons.PhosphorIcons.BellSlash,
                 onClick = onToggleMute
             )
-            Spacer(Modifier.height(4.dp))
-            ChatActionRow(
+        )
+        add(
+            com.secondream.novagram.ui.components.ActionTile(
                 label = stringResource(
                     if (isArchived) R.string.action_unarchive_chat else R.string.action_archive_chat
                 ),
+                icon = com.secondream.novagram.ui.icons.PhosphorIcons.Archive,
                 onClick = onToggleArchive
             )
-            Spacer(Modifier.height(4.dp))
-            // Groups + channels can't be "deleted" from your side — only
-            // left. Telegram nukes the chat from your list and stops
-            // delivering its messages. Private chats can still be deleted
-            // (history wipe + remove from list).
-            when (chatKind) {
-                ChatKind.Group, ChatKind.Channel -> {
-                    ChatActionRow(
+        )
+        // Groups + channels can't be "deleted" from your side — only
+        // left. Telegram nukes the chat from your list and stops
+        // delivering its messages. Private chats can still be deleted
+        // (history wipe + remove from list). Secret chats behave like
+        // privates here: 1-to-1 so no "leave", only delete.
+        when (chatKind) {
+            ChatKind.Group, ChatKind.Channel -> {
+                add(
+                    com.secondream.novagram.ui.components.ActionTile(
                         label = stringResource(
                             if (chatKind == ChatKind.Channel) R.string.action_leave_channel
                             else R.string.action_leave_group
                         ),
+                        icon = com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
                         destructive = true,
                         onClick = onLeaveRequest
                     )
-                }
-                ChatKind.Private, ChatKind.Secret -> {
-                    // Secret chats behave like privates here: there is no
-                    // "leave" because they're 1-to-1, and the only
-                    // destructive action is to delete the conversation.
-                    // For secret chats TDLib also closes the encrypted
-                    // session under the hood when the chat is removed,
-                    // which is what we want.
-                    ChatActionRow(
+                )
+            }
+            ChatKind.Private, ChatKind.Secret -> {
+                add(
+                    com.secondream.novagram.ui.components.ActionTile(
                         label = stringResource(R.string.action_delete_chat),
+                        icon = com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
                         destructive = true,
                         onClick = onDeleteRequest
                     )
-                }
+                )
             }
-            Spacer(Modifier.height(16.dp))
         }
     }
-}
-
-@Composable
-private fun ChatActionRow(
-    label: String,
-    destructive: Boolean = false,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 14.dp, horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.titleMedium,
-            color = if (destructive) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.primary
-        )
-    }
+    com.secondream.novagram.ui.components.ActionBottomSheet(
+        title = chatTitle,
+        onDismiss = onDismiss,
+        tiles = tiles
+    )
 }
 
 @Composable
@@ -1174,7 +1185,12 @@ private fun ChatRow(
     /** Current user's id. When the chat id matches, the row renders as
      *  the "Saved Messages" pseudo-chat (bookmark icon + localized
      *  label) instead of the user's own avatar + name. */
-    myUserId: Long = 0L
+    myUserId: Long = 0L,
+    /** Fires when the user taps the AVATAR specifically (not the rest
+     *  of the row). Routes to the chat-info modal so the user can peek
+     *  at bio / shared media / links without entering the chat. The
+     *  body-tap [onClick] still opens the chat as usual. */
+    onAvatarClick: () -> Unit = onClick
 ) {
     val isSavedMessages = myUserId != 0L && c.id == myUserId
     Row(
@@ -1192,7 +1208,8 @@ private fun ChatRow(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(androidx.compose.foundation.shape.CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable(onClick = onAvatarClick),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -1208,7 +1225,8 @@ private fun ChatRow(
                 file = c.chat.photo?.small,
                 fallbackText = c.title,
                 bgColor = bg,
-                size = 48.dp
+                size = 48.dp,
+                modifier = Modifier.clickable(onClick = onAvatarClick)
             )
         }
         Spacer(Modifier.width(14.dp))
@@ -1538,7 +1556,7 @@ private fun HomePage(
                         }
                         HomeChatItem(
                             summary = summary,
-                            onClick = { onChatClick(summary.id) }
+                            onClick = { onChatClick(summary.id, null) }
                         )
                     }
                 }
@@ -1571,7 +1589,7 @@ private fun HomePage(
                 HomeShortcutTile(
                     icon = com.secondream.novagram.ui.icons.PhosphorIcons.BookmarkSimple,
                     label = stringResource(R.string.home_storage_title),
-                    onClick = { if (myUserId != 0L) onChatClick(myUserId) },
+                    onClick = { if (myUserId != 0L) onChatClick(myUserId, null) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (novagramJoined == false) {

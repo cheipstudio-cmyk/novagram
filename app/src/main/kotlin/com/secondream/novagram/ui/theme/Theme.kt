@@ -109,9 +109,36 @@ fun NovaTheme(
     // changes. This is what most theme-import flows in other clients do.
     val colorScheme = if (customBgArgb != null) {
         val bg = Color(customBgArgb)
+        val bgLum = bg.luminance()
+        val isLightBg = bgLum > 0.5f
+        // PERFECT UNIFORMITY: surface = bg exactly so settings cards,
+        // action sheets, the input bar background, and every other
+        // surface-tinted component reads as one continuous canvas with
+        // the user's chosen background. The user explicitly asked for
+        // "uniforme" — any shift makes cards look like patches over
+        // the bg, breaking the cohesion of a custom theme.
+        //
+        // surfaceVariant gets a very subtle nudge (smaller than before)
+        // so nested elements that use it (input field bg, chips,
+        // dividers) remain discernible from cards without standing
+        // out. The shift direction follows bg luminance: lighter bg
+        // → darken variant slightly; darker bg → lighten slightly.
+        val onBg = if (isLightBg) Color.Black else Color.White
+        val variantShift = if (isLightBg) -0.05f else 0.06f
+        fun adjust(c: Color, delta: Float): Color {
+            val r = (c.red + delta).coerceIn(0f, 1f)
+            val g = (c.green + delta).coerceIn(0f, 1f)
+            val b = (c.blue + delta).coerceIn(0f, 1f)
+            return Color(r, g, b, c.alpha)
+        }
+        val surfaceVariant = adjust(bg, variantShift)
         baseScheme.copy(
             background = bg,
-            onBackground = if (bg.luminance() > 0.5f) Color.Black else Color.White
+            onBackground = onBg,
+            surface = bg,
+            onSurface = onBg,
+            surfaceVariant = surfaceVariant,
+            onSurfaceVariant = onBg.copy(alpha = 0.75f)
         )
     } else baseScheme
     // Tracks the *effective* background so the system bars match what's

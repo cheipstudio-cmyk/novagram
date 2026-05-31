@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.secondream.novagram.MainActivity
 import com.secondream.novagram.R
+import kotlinx.coroutines.launch
 import com.secondream.novagram.td.TdClient
 import org.drinkless.tdlib.TdApi
 
@@ -72,6 +73,108 @@ object NotificationHelper {
         if (selfId == 0L) return false
         val origin = rt.origin as? TdApi.MessageOriginUser ?: return false
         return origin.senderUserId == selfId
+    }
+
+    /**
+     * Resolve the avatar file we want to render on this notification.
+     * - Private/secret chats and channels → the chat's own photo
+     * - Groups (basic + non-channel supergroup) → the sender's photo
+     *   (chat avatar would be the group photo, less informative than
+     *   knowing WHO posted)
+     *
+     * Returns null when no file is available (chat with no photo,
+     * sender unknown) — the caller falls back to the small-icon-only
+     * notification, which renders the system app icon in the avatar
+     * circle. Better than a half-resolved letter circle.
+     */
+    private fun pickAvatarFile(
+        chat: TdApi.Chat?,
+        message: TdApi.Message,
+        isGroup: Boolean,
+        isChannel: Boolean
+    ): TdApi.File? {
+        if (isGroup && !isChannel) {
+            val sender = message.senderId
+            return when (sender) {
+                is TdApi.MessageSenderUser ->
+                    TdClient.getCachedUser(sender.userId)?.profilePhoto?.small
+                is TdApi.MessageSenderChat ->
+                    TdClient.getCachedChat(sender.chatId)?.photo?.small
+                else -> null
+            }
+        }
+        return chat?.photo?.small
+    }
+
+    /**
+     * Load and circular-crop an avatar bitmap from a TDLib file. Returns
+     * null when the file isn't downloaded yet — TDLib auto-downloads
+     * chat photos as they enter the cache so the path is usually
+     * available by the time a notification fires, but we don't block
+     * on the download (notifications must be fast).
+     *
+     * The crop is required because Android's MessagingStyle puts the
+     * Person icon in a SQUARE slot by default on some launchers,
+     * which makes profile photos look chunky. A pre-cropped circular
+     * bitmap renders correctly everywhere — and we wrap it as an
+     * AdaptiveBitmap icon so launchers that do their own masking
+     * apply a circular mask too.
+     */
+    private fun loadAvatarBitmap(file: TdApi.File?): android.graphics.Bitmap? {
+        val path = file?.local?.path
+        if (path.isNullOrBlank()) return null
+        if (file.local?.isDownloadingCompleted != true) return null
+        val src = runCatching { android.graphics.BitmapFactory.decodeFile(path) }
+            .getOrNull() ?: return null
+        // Square-crop to the smaller side first, then circular-mask.
+        // Notification large icons sit at 64dp = ~192px on a 3x device,
+        // so we don't need huge dimensions; downscale to 256px max for
+        // memory hygiene.
+        val side = minOf(src.width, src.height)
+        val xOff = (src.width - side) / 2
+        val yOff = (src.height - side) / 2
+        val square = runCatching {
+            android.graphics.Bitmap.createBitmap(src, xOff, yOff, side, side)
+        }.getOrNull() ?: return null
+        val targetSide = minOf(256, side)
+        val scaled = if (targetSide < side) {
+            android.graphics.Bitmap.createScaledBitmap(square, targetSide, targetSide, true)
+        } else square
+        // Circular mask via porter-duff. Cheaper than going through
+        // RoundedBitmapDrawable + intermediate Drawable conversion.
+        val out = android.graphics.Bitmap.createBitmap(
+            targetSide, targetSide, android.graphics.Bitmap.Config.ARGB_8888
+        )
+        val canvas = android.graphics.Canvas(out)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        val rect = android.graphics.Rect(0, 0, targetSide, targetSide)
+        val rectF = android.graphics.RectF(rect)
+        paint.color = android.graphics.Color.BLACK
+        canvas.drawOval(rectF, paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(
+            android.graphics.PorterDuff.Mode.SRC_IN
+        )
+        canvas.drawBitmap(scaled, rect, rect, paint)
+        return out
+    }
+
+    /**
+     * Kick off a TDLib download for the avatar file when it's not yet
+     * local. Fire-and-forget: we don't block the notification on this,
+     * but on the next message-for-this-chat we'll have the bitmap
+     * ready. Without this nudge, TDLib may never pull chat photos for
+     * inactive chats (it only auto-downloads avatars for chats the
+     * user has scrolled past in the chat list), which means
+     * notifications from rarely-opened chats would NEVER get an
+     * avatar.
+     */
+    private fun ensureAvatarDownload(file: TdApi.File?) {
+        if (file == null) return
+        if (file.local?.isDownloadingCompleted == true) return
+        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { TdClient.downloadFile(file.id) }
+        }
     }
 
     private fun ensureSelfUserId(): Long {
@@ -229,6 +332,17 @@ object NotificationHelper {
         val displayName = if (isSecretChat) "Novagram"
             else if (isGroup && !isChannel) TdClient.resolveSenderName(message).ifBlank { "Novagram" }
             else chatTitle
+        // Resolve the right avatar (sender for groups, chat for everything
+        // else) and load it as a circular bitmap. Secret chats deliberately
+        // skip this — the notification is intentionally obfuscated, leaking
+        // the peer's photo would defeat the point.
+        val avatarFile = if (isSecretChat) null
+            else pickAvatarFile(chat, message, isGroup, isChannel)
+        ensureAvatarDownload(avatarFile)
+        val avatarBitmap = loadAvatarBitmap(avatarFile)
+        val avatarIcon = avatarBitmap?.let {
+            androidx.core.graphics.drawable.IconCompat.createWithAdaptiveBitmap(it)
+        }
         val person = androidx.core.app.Person.Builder()
             .setName(displayName)
             .setKey(message.senderId.let { s ->
@@ -238,6 +352,7 @@ object NotificationHelper {
                     else -> "u:${message.chatId}"
                 }
             })
+            .also { b -> if (avatarIcon != null) b.setIcon(avatarIcon) }
             .build()
         val newMsg = NotificationCompat.MessagingStyle.Message(
             preview,
@@ -302,8 +417,19 @@ object NotificationHelper {
                 }
             }
 
+        // The collapsed notification's circular slot (top-right thumb on
+        // most launchers, top-left on others) takes a single largeIcon.
+        // We prefer the CHAT photo here even in groups — at-a-glance the
+        // user wants to know "which conversation pinged me", which is
+        // the group photo. The sender's photo is already shown inline
+        // via the Person.icon in the MessagingStyle row.
+        val largeIconFile = if (isSecretChat) null else chat?.photo?.small
+        ensureAvatarDownload(largeIconFile)
+        val largeIconBitmap = loadAvatarBitmap(largeIconFile)
+            ?: avatarBitmap  // fall back to per-message avatar if chat has none
         val notif = NotificationCompat.Builder(appContext, CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_stat_messenger)
+            .also { b -> if (largeIconBitmap != null) b.setLargeIcon(largeIconBitmap) }
             .setStyle(style)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)

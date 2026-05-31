@@ -321,7 +321,15 @@ class MainActivity : ComponentActivity() {
                 com.secondream.novagram.ui.screens.parseThemeJson(json)
             }.getOrNull()
             if (applied != null) {
-                AppSettings.applyAppearance(applied)
+                // Save to the user's themes list rather than apply
+                // directly — protects the currently-active theme from
+                // being silently overwritten by an incoming deep link.
+                // The user activates from Settings → Temi salvati when
+                // they're ready to switch.
+                AppSettings.importAppearanceAsSavedTheme(
+                    appearance = applied,
+                    baseName = getString(R.string.theme_imported_default_name)
+                )
                 android.widget.Toast.makeText(
                     this@MainActivity,
                     getString(R.string.theme_paste_success),

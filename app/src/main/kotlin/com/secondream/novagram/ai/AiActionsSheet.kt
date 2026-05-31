@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.CircularProgressIndicator
@@ -155,10 +156,10 @@ fun AiActionsSheet(
                 Phase.Loading -> Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(120.dp),
+                        .height(160.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator()
+                    AiThinkingIndicator()
                 }
                 Phase.Result -> ResultBody(
                     result = result,
@@ -483,3 +484,136 @@ private fun buildPrompt(
         else -> null to messageText
     }
 }
+
+/**
+ * Beautiful loading state for AI calls. Replaces the plain spinner —
+ * the AI feature is the killer differentiator and the wait deserves
+ * a richer visual.
+ *
+ * Renders an accent-tinted orb pulsing at two distinct frequencies
+ * (scale + opacity) with a glow halo behind it, plus rotating
+ * "Pensando…" / "Sto pensando…" / "Quasi pronto…" labels so the
+ * user feels something is happening even when the LLM takes 3-5s
+ * to respond. The phases are time-based rather than progress-based
+ * because Anthropic's API doesn't stream incremental progress in
+ * our complete() call — we just know SOMETHING is happening.
+ */
+@Composable
+private fun AiThinkingIndicator() {
+    val accent = MaterialTheme.colorScheme.primary
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "ai-think")
+    // Scale: slow breathing motion 0.85 → 1.15 over ~1.4s, ease-in-out.
+    val scale by transition.animateFloat(
+        initialValue = 0.85f,
+        targetValue = 1.15f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(
+                durationMillis = 1400,
+                easing = androidx.compose.animation.core.FastOutSlowInEasing
+            ),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "ai-scale"
+    )
+    // Halo alpha: counter-phased so the glow brightens when the orb
+    // shrinks. Gives a subtle "exhale" feel.
+    val haloAlpha by transition.animateFloat(
+        initialValue = 0.20f,
+        targetValue = 0.55f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(
+                durationMillis = 1400,
+                easing = androidx.compose.animation.core.FastOutSlowInEasing
+            ),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "ai-halo"
+    )
+    val haloScale by transition.animateFloat(
+        initialValue = 1.6f,
+        targetValue = 2.4f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(
+                durationMillis = 1400,
+                easing = androidx.compose.animation.core.FastOutSlowInEasing
+            ),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "ai-halo-scale"
+    )
+
+    // Caption that rotates through three phases over ~6 seconds so
+    // long AI calls feel like progress instead of a frozen wait.
+    var captionIdx by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1800)
+            captionIdx = (captionIdx + 1) % 3
+        }
+    }
+    val captions = listOf(
+        stringResource(com.secondream.novagram.R.string.ai_thinking_1),
+        stringResource(com.secondream.novagram.R.string.ai_thinking_2),
+        stringResource(com.secondream.novagram.R.string.ai_thinking_3)
+    )
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(96.dp)) {
+            // Glow halo. Drawn first so the orb paints over it. We use
+            // a Box with scaled background that the orb overlays. No
+            // Canvas because we want CSS-style ring softness — a
+            // radial-fade brush gets us 90% of the way.
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .androidx_graphicsLayerScale(haloScale, haloScale)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(
+                        androidx.compose.ui.graphics.Brush.radialGradient(
+                            colors = listOf(
+                                accent.copy(alpha = haloAlpha),
+                                accent.copy(alpha = 0f)
+                            )
+                        )
+                    )
+            )
+            // The orb itself. Soft accent with a pulsing scale; tiny
+            // inner highlight to give it a touch of dimension instead
+            // of looking like a flat dot.
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .androidx_graphicsLayerScale(scale, scale)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(
+                        androidx.compose.ui.graphics.Brush.radialGradient(
+                            colors = listOf(
+                                accent.copy(alpha = 0.95f),
+                                accent.copy(alpha = 0.55f)
+                            ),
+                            radius = 80f
+                        )
+                    )
+            )
+        }
+        Text(
+            captions[captionIdx],
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            fontStyle = FontStyle.Italic
+        )
+    }
+}
+
+/**
+ * Tiny scale-only graphicsLayer helper to keep the call-site compact
+ * (otherwise every pulsing Box would need a full `.graphicsLayer {
+ * scaleX = ...; scaleY = ... }` block).
+ */
+private fun Modifier.androidx_graphicsLayerScale(sx: Float, sy: Float): Modifier =
+    this.then(
+        Modifier.graphicsLayer(scaleX = sx, scaleY = sy)
+    )

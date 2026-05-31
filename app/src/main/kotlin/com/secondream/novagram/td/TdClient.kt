@@ -43,6 +43,55 @@ object TdClient {
     val chatUpdates = _chatUpdates.asSharedFlow()
 
     /**
+     * Active "X is doing Y" actions per chat, keyed by sender id. Mirrors
+     * TDLib's UpdateChatAction stream: peer starts typing → entry added,
+     * peer sends/stops → entry removed (or auto-expires after ~6s if we
+     * miss the cancel event, which happens when the peer closes their
+     * client mid-typing). ChatScreen subscribes to this to render the
+     * typing badge above the input bar.
+     *
+     * Inner map is sender-id → action so we can show multiple users
+     * typing simultaneously in a group ("Alice, Bob stanno scrivendo")
+     * with their avatars. We strip ChatActionCancel before storing —
+     * its presence in the stream is a "remove me from the map" signal.
+     */
+    private val _chatActions = MutableStateFlow<Map<Long, Map<Long, TdApi.ChatAction>>>(emptyMap())
+    val chatActions: StateFlow<Map<Long, Map<Long, TdApi.ChatAction>>> = _chatActions.asStateFlow()
+
+    /**
+     * Per (chatId, senderId) auto-expiry deadline in epoch-millis. TDLib
+     * re-sends UpdateChatAction every ~5s while the peer is still
+     * typing; if we don't see another update within ~6s the entry is
+     * considered stale and we drop it. Without this safety net a peer
+     * who quits typing without sending (closed app, lost connection)
+     * would leave their "is typing" entry stuck in the map forever
+     * since the cancel event never arrived.
+     */
+    private val chatActionDeadlines = mutableMapOf<Pair<Long, Long>, Long>()
+
+    /**
+     * Last known SERVER-SIDE mention count per chat. We need this
+     * separately from chatCache[chatId].unreadMentionCount because the
+     * latter is the OPTIMISTIC client value (mutated by
+     * decrementChatMentionCount when the user taps the chip). When
+     * TDLib echoes UpdateChatUnreadMentionCount we compare against
+     * lastKnownServerMentionCount to tell apart three cases:
+     *  - echo == previous server value → server didn't decrement
+     *    (our viewMessages was a no-op for server). Keep our
+     *    optimistic client decrements.
+     *  - echo  < previous server value → server caught up. Use the
+     *    echo value directly.
+     *  - echo  > previous server value → new mention(s) arrived. Add
+     *    the positive delta to the client count.
+     *
+     * Without this tracking the chip flashes briefly to N-1 (our local
+     * decrement) and reverts to N (the echo over-writes) — exactly
+     * Eugenio's "il counter non decrementa" complaint.
+     */
+    private val lastKnownServerMentionCount = mutableMapOf<Long, Int>()
+    private val lastKnownServerReactionCount = mutableMapOf<Long, Int>()
+
+    /**
      * Emits whenever TDLib notifies the deletion of one or more messages
      * (permanent deletes only, transient updates ignored). Consumers should
      * remove the matching ids from their in-memory message lists.
@@ -105,6 +154,7 @@ object TdClient {
 
     private val chatCache = mutableMapOf<Long, TdApi.Chat>()
     private val userCache = mutableMapOf<Long, TdApi.User>()
+    private val supergroupCache = mutableMapOf<Long, TdApi.Supergroup>()
 
     // Per-scope mute / notification settings. Telegram bundles every chat
     // into one of three scopes; muting "all groups" or "all channels"
@@ -128,8 +178,22 @@ object TdClient {
      * per-chat muteFor is authoritative.
      */
     fun isChatMuted(chat: TdApi.Chat?): Boolean {
-        if (chat == null) return false
-        val per = chat.notificationSettings ?: return false
+        // SAFER DEFAULT for notifications: when we lack info (chat
+        // not yet in cache OR notificationSettings missing), prefer
+        // to SUPPRESS the notification rather than let it leak
+        // through. Eugenio's complaint "ho ricevuto notifiche da
+        // chat private silenziate" was rooted in the OPPOSITE
+        // defaults here: a chat that hadn't been fully synced from
+        // TDLib (or whose per-chat NotificationSettings field landed
+        // null during the brief cache-fill window) was treated as
+        // "not muted", and any incoming message slipped a heads-up
+        // through even though the chat was muted server-side. The
+        // worst-case downside of the safer default is a
+        // momentarily-missed legitimate notification right at app
+        // startup — much lower cost than leaking notifications from
+        // chats the user explicitly silenced.
+        if (chat == null) return true
+        val per = chat.notificationSettings ?: return true
         if (!per.useDefaultMuteFor) return per.muteFor > 0
         // Fall back to the right scope for this chat type.
         val scope = when (chat.type) {
@@ -141,15 +205,10 @@ object TdClient {
             }
             else -> null
         }
-        // SAFER DEFAULT: when scope is null (not yet received from
-        // TDLib — happens during the brief window between auth-ready
-        // and the first UpdateScopeNotificationSettings push) we
-        // prefer to SKIP the notification rather than let it leak
-        // through. Without this default, any message arriving in a
-        // scope-muted chat during app startup would fire heads-up
-        // even though the user had explicitly muted it (e.g. "Mute
-        // all groups" in Telegram settings, then a group msg lands
-        // before TDLib has pushed the group scope back to us).
+        // Same SAFER DEFAULT for the scope: when scope is null (not
+        // yet received from TDLib — the brief window between
+        // auth-ready and the first UpdateScopeNotificationSettings
+        // push) we prefer to SKIP the notification.
         if (scope == null) return true
         return scope.muteFor > 0
     }
@@ -191,6 +250,38 @@ object TdClient {
             Log.w(TAG, "Could not set log verbosity: ${e.message}")
         }
 
+        // Chat-action expiry sweeper. Walks the deadline map roughly
+        // every second and drops sender entries whose last
+        // UpdateChatAction landed more than 6.5s ago. This is the
+        // safety net for peers who quit typing without us seeing a
+        // ChatActionCancel (closed app, crash, lost connectivity). The
+        // sweeper runs forever — it's a few map lookups per tick and
+        // a no-op when nothing is expiring.
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(1000)
+                val now = System.currentTimeMillis()
+                val expired = chatActionDeadlines
+                    .filterValues { it < now }
+                    .keys
+                    .toList()
+                if (expired.isNotEmpty()) {
+                    expired.forEach { chatActionDeadlines.remove(it) }
+                    val current = _chatActions.value.toMutableMap()
+                    var changed = false
+                    expired.forEach { (chatId, senderId) ->
+                        val perChat = current[chatId]?.toMutableMap() ?: return@forEach
+                        if (perChat.remove(senderId) != null) {
+                            changed = true
+                            if (perChat.isEmpty()) current.remove(chatId)
+                            else current[chatId] = perChat
+                        }
+                    }
+                    if (changed) _chatActions.value = current
+                }
+            }
+        }
+
         scope.launch {
             val cfg = AppSettings.apiConfig.first()
             when {
@@ -225,6 +316,13 @@ object TdClient {
             }
             is TdApi.UpdateNewChat -> {
                 chatCache[obj.chat.id] = obj.chat
+                // Initialize last-known-server tracking. The chat
+                // ships with its current server-side mention/reaction
+                // count; we mirror that into our tracker so subsequent
+                // UpdateChatUnreadMentionCount echoes can be compared
+                // against this baseline.
+                lastKnownServerMentionCount[obj.chat.id] = obj.chat.unreadMentionCount
+                lastKnownServerReactionCount[obj.chat.id] = obj.chat.unreadReactionCount
                 refreshChats()
             }
             is TdApi.UpdateChatLastMessage -> {
@@ -245,6 +343,16 @@ object TdClient {
                     positions.removeAll { it.list.constructor == obj.position.list.constructor }
                     if (obj.position.order != 0L) positions.add(obj.position)
                     chat.positions = positions.toTypedArray()
+                }
+                // TDLib confirmed the position change. If the chat was in
+                // our optimistic "deleted" set AND the echoed position is
+                // order=0 on Main, the delete went through — we can
+                // safely clear the hidden flag now (the chat now has no
+                // Main position anyway, so refreshChats will exclude it
+                // naturally going forward, and any future restore by
+                // another device will re-add it cleanly).
+                if (obj.position.list is TdApi.ChatListMain && obj.position.order == 0L) {
+                    hiddenChats.remove(obj.chatId)
                 }
                 refreshChats()
             }
@@ -286,7 +394,26 @@ object TdClient {
                 refreshChats()
             }
             is TdApi.UpdateChatUnreadMentionCount -> {
-                chatCache[obj.chatId]?.unreadMentionCount = obj.unreadMentionCount
+                // Reconcile server echo with our optimistic client
+                // decrements. See lastKnownServerMentionCount kdoc for
+                // the three-case logic.
+                val previousServer = lastKnownServerMentionCount[obj.chatId] ?: 0
+                val newServer = obj.unreadMentionCount
+                val currentClient = chatCache[obj.chatId]?.unreadMentionCount ?: 0
+                val finalValue = if (newServer > previousServer) {
+                    // New mention(s) arrived server-side. Add the
+                    // delta to whatever the client currently has, so
+                    // the new mention is reflected even if our
+                    // optimistic decrements made currentClient lower
+                    // than previousServer.
+                    currentClient + (newServer - previousServer)
+                } else {
+                    // Server caught up (or no change). The echo's
+                    // value is the new truth.
+                    newServer
+                }
+                chatCache[obj.chatId]?.unreadMentionCount = finalValue.coerceAtLeast(0)
+                lastKnownServerMentionCount[obj.chatId] = newServer
                 refreshChats()
                 // Also notify per-chat observers (the in-chat mention
                 // chip in ChatScreen listens on chatUpdates to know
@@ -296,7 +423,16 @@ object TdClient {
                 scope.launch { _chatUpdates.emit(obj.chatId) }
             }
             is TdApi.UpdateChatUnreadReactionCount -> {
-                chatCache[obj.chatId]?.unreadReactionCount = obj.unreadReactionCount
+                val previousServer = lastKnownServerReactionCount[obj.chatId] ?: 0
+                val newServer = obj.unreadReactionCount
+                val currentClient = chatCache[obj.chatId]?.unreadReactionCount ?: 0
+                val finalValue = if (newServer > previousServer) {
+                    currentClient + (newServer - previousServer)
+                } else {
+                    newServer
+                }
+                chatCache[obj.chatId]?.unreadReactionCount = finalValue.coerceAtLeast(0)
+                lastKnownServerReactionCount[obj.chatId] = newServer
                 refreshChats()
                 // Same per-chat observer notify as mention count above.
                 scope.launch { _chatUpdates.emit(obj.chatId) }
@@ -308,6 +444,40 @@ object TdClient {
                 // never flips to "Riattiva" even though the mute actually took.
                 chatCache[obj.chatId]?.notificationSettings = obj.notificationSettings
                 refreshChats()
+            }
+            is TdApi.UpdateChatAction -> {
+                // Peer is typing / recording voice / picking sticker / etc.
+                // We only surface a "sta scrivendo" badge for ChatActionTyping
+                // — the other action variants (UploadingDocument, etc.) are
+                // ignored for now because stock Telegram on Android shows the
+                // same generic indicator regardless. The interesting bit is
+                // multiplexing per-sender so groups show "X, Y stanno
+                // scrivendo" with both avatars, not a single anonymous chip.
+                val senderId = when (val s = obj.senderId) {
+                    is TdApi.MessageSenderUser -> s.userId
+                    is TdApi.MessageSenderChat -> -s.chatId  // namespace away from user ids
+                    else -> 0L
+                }
+                if (senderId != 0L) {
+                    val current = _chatActions.value.toMutableMap()
+                    val perChat = current[obj.chatId]?.toMutableMap() ?: mutableMapOf()
+                    val action = obj.action
+                    if (action is TdApi.ChatActionCancel) {
+                        perChat.remove(senderId)
+                        chatActionDeadlines.remove(obj.chatId to senderId)
+                    } else {
+                        perChat[senderId] = action
+                        // Re-arm the auto-expiry deadline. TDLib resends
+                        // every ~5s while typing continues, so 6.5s gives
+                        // us a comfortable margin without leaving stale
+                        // entries lingering visibly.
+                        chatActionDeadlines[obj.chatId to senderId] =
+                            System.currentTimeMillis() + 6500
+                    }
+                    if (perChat.isEmpty()) current.remove(obj.chatId)
+                    else current[obj.chatId] = perChat
+                    _chatActions.value = current
+                }
             }
             is TdApi.UpdateChatDraftMessage -> {
                 // Drafts sync across devices: editing on Desktop pushes one of
@@ -339,6 +509,13 @@ object TdClient {
             }
             is TdApi.UpdateUser -> {
                 userCache[obj.user.id] = obj.user
+            }
+            is TdApi.UpdateSupergroup -> {
+                // Cache the supergroup record so we can synchronously read
+                // its isForum flag from ChatScreen (drives the topic-list
+                // panel) and similar properties without hitting TDLib
+                // every time the chat opens.
+                supergroupCache[obj.supergroup.id] = obj.supergroup
             }
             is TdApi.UpdateMessageContent -> {
                 scope.launch {
@@ -432,6 +609,12 @@ object TdClient {
         val rev = ++refreshRevision
         val list = chatCache.values
             .mapNotNull { chat ->
+                // Suppress chats the user has just deleted (optimistic
+                // hide). The entry is cleared by the UpdateChatPosition
+                // handler when TDLib confirms the chat's Main-list
+                // position dropped to 0, or by deleteChatHistory itself
+                // if the TDLib call throws.
+                if (chat.id in hiddenChats) return@mapNotNull null
                 val mainPos = chat.positions.firstOrNull { it.list is TdApi.ChatListMain }
                 val archivePos = chat.positions.firstOrNull { it.list is TdApi.ChatListArchive }
                 // Prefer the Main list position; fall back to Archive so
@@ -730,6 +913,68 @@ object TdClient {
         getChatHistory(chatId, fromMessageId, 0, limit)
 
     /**
+     * Fetch messages from a specific forum-topic thread. TDLib's
+     * GetMessageThreadHistory restricts to messages with the given
+     * messageThreadId, so the result is the topic's own timeline
+     * (not the whole chat). Used by ChatScreen when the user enters
+     * a forum topic via the topic list.
+     */
+    suspend fun getMessageThreadHistory(
+        chatId: Long,
+        messageThreadId: Long,
+        fromMessageId: Long,
+        offset: Int,
+        limit: Int
+    ): TdApi.Messages =
+        send(TdApi.GetMessageThreadHistory(
+            chatId, messageThreadId, fromMessageId, offset, limit
+        ))
+
+    /**
+     * List the forum topics in a supergroup. Used by the topic-list
+     * panel that opens automatically when entering a chat where
+     * Supergroup.isForum=true. Telegram caps the visible recent topics
+     * at ~100; we mirror that in [limit].
+     */
+    suspend fun getForumTopics(
+        chatId: Long,
+        limit: Int = 100
+    ): List<TdApi.ForumTopic> {
+        val r = runCatching {
+            send(TdApi.GetForumTopics(chatId, "", 0, 0L, 0L, limit)) as TdApi.ForumTopics
+        }.getOrNull() ?: return emptyList()
+        return r.topics.toList()
+    }
+
+    /**
+     * Search messages in a chat filtered by content type. Drives the
+     * media-gallery tabs in ChatInfoDialog: pass a TdApi filter (e.g.
+     * SearchMessagesFilterPhoto, SearchMessagesFilterDocument,
+     * SearchMessagesFilterUrl) and TDLib returns the matching subset
+     * of the chat's history newest-first. fromMessageId=0 means "from
+     * the newest"; non-zero paginates older.
+     *
+     * The senderId / topic-thread args are 0 — we want EVERYTHING in
+     * the chat across all senders / topics. ChatInfoDialog renders
+     * the full chat scope, not a topic-scoped one, even when opened
+     * from inside a forum topic; that mirrors official Telegram's
+     * "Chat info → Media" which also spans the whole chat.
+     */
+    suspend fun searchChatMessages(
+        chatId: Long,
+        filter: TdApi.SearchMessagesFilter,
+        fromMessageId: Long = 0L,
+        limit: Int = 100
+    ): List<TdApi.Message> {
+        val r = runCatching {
+            send(TdApi.SearchChatMessages(
+                chatId, "", null, fromMessageId, 0, limit, filter, 0L, 0L
+            )) as TdApi.FoundChatMessages
+        }.getOrNull() ?: return emptyList()
+        return r.messages.toList()
+    }
+
+    /**
      * Build the InputMessageReplyTo for the SendMessage call. Returns null
      * when there's no reply (TDLib treats null as "not a reply"). The 0/""
      * trailing args are the checklist/poll-option fields, irrelevant for
@@ -740,9 +985,28 @@ object TdClient {
             TdApi.InputMessageReplyToMessage(it, null, 0, "")
         }
 
-    suspend fun sendText(chatId: Long, text: String, replyToMessageId: Long? = null) {
+    suspend fun sendText(
+        chatId: Long,
+        text: String,
+        replyToMessageId: Long? = null,
+        messageThreadId: Long = 0L
+    ) {
         val content = TdApi.InputMessageText(TdApi.FormattedText(text, emptyArray()), null, true)
-        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
+    }
+
+    /**
+     * Announce a "X is doing Y" action to the chat. Telegram clients
+     * call this every ~5 seconds while the user is composing a message
+     * (and once with [TdApi.ChatActionCancel] when they stop) so peers
+     * see a live "sta scrivendo…" indicator. Errors are swallowed —
+     * action emissions are best-effort and a single missed call just
+     * means the peer's typing bubble blinks out a beat early.
+     */
+    suspend fun sendChatAction(chatId: Long, action: TdApi.ChatAction) {
+        runCatching {
+            send(TdApi.SendChatAction(chatId, 0L, null, action))
+        }
     }
 
     // ===== Editing =====
@@ -849,31 +1113,49 @@ object TdClient {
         }
     }
 
-    suspend fun sendPhoto(chatId: Long, filePath: String, caption: String? = null, replyToMessageId: Long? = null) {
+    suspend fun sendPhoto(
+        chatId: Long,
+        filePath: String,
+        caption: String? = null,
+        replyToMessageId: Long? = null,
+        messageThreadId: Long = 0L
+    ) {
         val content = TdApi.InputMessagePhoto(
             TdApi.InputFileLocal(filePath),
             null, null, intArrayOf(), 0, 0,
             caption?.let { TdApi.FormattedText(it, emptyArray()) },
             false, null, false
         )
-        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
     }
 
-    suspend fun sendDocument(chatId: Long, filePath: String, caption: String? = null, replyToMessageId: Long? = null) {
+    suspend fun sendDocument(
+        chatId: Long,
+        filePath: String,
+        caption: String? = null,
+        replyToMessageId: Long? = null,
+        messageThreadId: Long = 0L
+    ) {
         val content = TdApi.InputMessageDocument(
             TdApi.InputFileLocal(filePath),
             null, false,
             caption?.let { TdApi.FormattedText(it, emptyArray()) }
         )
-        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
     }
 
-    suspend fun sendVoiceNote(chatId: Long, filePath: String, durationSeconds: Int, replyToMessageId: Long? = null) {
+    suspend fun sendVoiceNote(
+        chatId: Long,
+        filePath: String,
+        durationSeconds: Int,
+        replyToMessageId: Long? = null,
+        messageThreadId: Long = 0L
+    ) {
         val content = TdApi.InputMessageVoiceNote(
             TdApi.InputFileLocal(filePath),
             durationSeconds, ByteArray(0), null, null
         )
-        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
     }
 
     /**
@@ -882,7 +1164,13 @@ object TdClient {
      * supportsStreaming=true so the recipient can start playback before the
      * download finishes (TDLib will adjust based on the actual container).
      */
-    suspend fun sendVideo(chatId: Long, filePath: String, caption: String? = null, replyToMessageId: Long? = null) {
+    suspend fun sendVideo(
+        chatId: Long,
+        filePath: String,
+        caption: String? = null,
+        replyToMessageId: Long? = null,
+        messageThreadId: Long = 0L
+    ) {
         val content = TdApi.InputMessageVideo(
             TdApi.InputFileLocal(filePath),
             null, null, 0,           // thumbnail, cover, start_timestamp
@@ -892,7 +1180,7 @@ object TdClient {
             caption?.let { TdApi.FormattedText(it, emptyArray()) },
             false, null, false       // show_caption_above_media, self_destruct, has_spoiler
         )
-        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
     }
 
     /**
@@ -900,7 +1188,13 @@ object TdClient {
      * file (an actual .gif or an mp4) and renders it as an auto-playing
      * animation on every client.
      */
-    suspend fun sendAnimation(chatId: Long, filePath: String, caption: String? = null, replyToMessageId: Long? = null) {
+    suspend fun sendAnimation(
+        chatId: Long,
+        filePath: String,
+        caption: String? = null,
+        replyToMessageId: Long? = null,
+        messageThreadId: Long = 0L
+    ) {
         val content = TdApi.InputMessageAnimation(
             TdApi.InputFileLocal(filePath),
             null,                    // thumbnail
@@ -909,8 +1203,75 @@ object TdClient {
             caption?.let { TdApi.FormattedText(it, emptyArray()) },
             false, false             // show_caption_above_media, has_spoiler
         )
-        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
     }
+
+    /**
+     * Send multiple photos and/or videos as a single Telegram media group
+     * (a.k.a. "album"). The first item carries the optional caption — this
+     * matches official Telegram behaviour where the caption appears under
+     * the first thumb and applies to the entire group.
+     *
+     * Mixing rules (Telegram-side, enforced by the server):
+     *   - Photos and videos can share an album
+     *   - Documents must be their own album (no mixing with photo/video)
+     *   - All-or-nothing per kind in mixed-doc scenarios
+     * The caller is expected to honour these — passing a mix of docs +
+     * photos will surface a TDLib error.
+     *
+     * Album size limit is 10 items per TDLib; we DON'T enforce it here
+     * since the photo picker already caps at 10. If a caller passes more
+     * TDLib will reject the request and we propagate the error.
+     */
+    suspend fun sendMediaGroup(
+        chatId: Long,
+        items: List<MediaGroupItem>,
+        caption: String? = null,
+        replyToMessageId: Long? = null,
+        messageThreadId: Long = 0L
+    ) {
+        if (items.isEmpty()) return
+        val contents: Array<TdApi.InputMessageContent> = Array(items.size) { idx ->
+            val it = items[idx]
+            // Caption only on the FIRST item — TDLib carries it as the
+            // group's caption when rendered. Captions on subsequent items
+            // would each get their own line under the group, which isn't
+            // what stock Telegram does.
+            val itemCaption = if (idx == 0) caption?.let {
+                TdApi.FormattedText(it, emptyArray())
+            } else null
+            when (it.kind) {
+                MediaGroupItemKind.Photo -> TdApi.InputMessagePhoto(
+                    TdApi.InputFileLocal(it.filePath),
+                    null, null, intArrayOf(), 0, 0,
+                    itemCaption, false, null, false
+                )
+                MediaGroupItemKind.Video -> TdApi.InputMessageVideo(
+                    TdApi.InputFileLocal(it.filePath),
+                    null, null, 0,
+                    intArrayOf(),
+                    0, 0, 0,
+                    true,
+                    itemCaption,
+                    false, null, false
+                )
+                MediaGroupItemKind.Document -> TdApi.InputMessageDocument(
+                    TdApi.InputFileLocal(it.filePath),
+                    null, false,
+                    itemCaption
+                )
+            }
+        }
+        send(TdApi.SendMessageAlbum(
+            chatId, messageThreadId, buildReplyTo(replyToMessageId), null, contents
+        ))
+    }
+
+    /** Kind discriminator used by [sendMediaGroup]. */
+    enum class MediaGroupItemKind { Photo, Video, Document }
+
+    /** Single item inside a [sendMediaGroup] call. */
+    data class MediaGroupItem(val filePath: String, val kind: MediaGroupItemKind)
 
     /** Recently used stickers (most-recently-sent first). */
     suspend fun getRecentStickers(): TdApi.Stickers =
@@ -1214,6 +1575,32 @@ object TdClient {
         return res?.commands?.toList() ?: emptyList()
     }
 
+    /**
+     * Tap a Callback inline-keyboard button on a bot message. TDLib
+     * round-trips through the bot's webhook and returns a
+     * CallbackQueryAnswer with optional text/url/alert flag — we surface
+     * those to the caller so the UI can show a toast / open a URL /
+     * pop a dialog as the bot intends.
+     *
+     * `payload` is the `data` field from the button (a small opaque byte
+     * blob the bot uses to route the callback on its side). We pass it
+     * wrapped in CallbackQueryPayloadData. The other payload kinds
+     * (Game / PasswordCheck) are rare in user-facing flows; we handle
+     * the basic Data path here and fail soft on the rest.
+     */
+    suspend fun sendCallbackQuery(
+        chatId: Long,
+        messageId: Long,
+        data: ByteArray
+    ): TdApi.CallbackQueryAnswer {
+        return send(
+            TdApi.GetCallbackQueryAnswer(
+                chatId, messageId,
+                TdApi.CallbackQueryPayloadData(data)
+            )
+        ) as TdApi.CallbackQueryAnswer
+    }
+
     /** Full info about a basic group, including its description and members. */
     suspend fun getBasicGroupFullInfo(basicGroupId: Long): TdApi.BasicGroupFullInfo =
         send(TdApi.GetBasicGroupFullInfo(basicGroupId))
@@ -1299,18 +1686,52 @@ object TdClient {
      * Delete messages. `revoke=true` removes the messages for everyone in the
      * chat when allowed (private chats, own messages in groups), otherwise it
      * only deletes the local copy.
+     *
+     * Emits the DeleteEvent OPTIMISTICALLY before the TDLib call so the UI
+     * can drop the bubbles instantly — without this, weak-connection users
+     * tap "Elimina per me", the sheet closes, and the message stays
+     * visible for 1-3 seconds while the round-trip completes, which reads
+     * as "il delete non funziona". If the TDLib call ultimately fails the
+     * message will reappear on the next history fetch (rare); the
+     * trade-off is right.
      */
     suspend fun deleteMessages(chatId: Long, messageIds: LongArray, revoke: Boolean) {
+        _deletedMessages.emit(DeleteEvent(chatId, messageIds))
         send(TdApi.DeleteMessages(chatId, messageIds, revoke))
     }
+
+    /**
+     * Chats the user just asked us to delete. We don't actually mutate
+     * chatCache (that would corrupt state if the delete fails) — instead
+     * refreshChats() filters these ids out of the published list, so the
+     * row vanishes instantly even on weak connections. We clear the
+     * entry once TDLib echoes via UpdateChatPosition (order=0 on
+     * Main list) confirming the delete landed, OR if the TDLib call
+     * throws.
+     */
+    private val hiddenChats = mutableSetOf<Long>()
 
     /**
      * Delete the entire history of a chat. removeFromChatList=true also drops
      * the chat from the user's chat list (Telegram's "Delete chat" behaviour).
      * revoke=true erases the messages for everyone where permitted.
+     *
+     * Optimistically hides the chat from the chat list BEFORE the TDLib
+     * round-trip completes — see [hiddenChats]. Restores it on failure
+     * so the user can retry.
      */
     suspend fun deleteChatHistory(chatId: Long, removeFromChatList: Boolean, revoke: Boolean) {
-        send(TdApi.DeleteChatHistory(chatId, removeFromChatList, revoke))
+        if (removeFromChatList) {
+            hiddenChats.add(chatId)
+            refreshChats()
+        }
+        try {
+            send(TdApi.DeleteChatHistory(chatId, removeFromChatList, revoke))
+        } catch (t: Throwable) {
+            hiddenChats.remove(chatId)
+            refreshChats()
+            throw t
+        }
     }
 
     /**
@@ -1653,6 +2074,7 @@ object TdClient {
 
     fun getCachedChat(id: Long): TdApi.Chat? = chatCache[id]
     fun getCachedUser(id: Long): TdApi.User? = userCache[id]
+    fun getCachedSupergroup(id: Long): TdApi.Supergroup? = supergroupCache[id]
 }
 
 class TdException(val code: Int, message: String) : RuntimeException(message)
