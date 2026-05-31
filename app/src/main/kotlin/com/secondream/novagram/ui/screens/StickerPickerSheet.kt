@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -37,10 +40,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.animation.togetherWith
 import coil.compose.AsyncImage
 import com.secondream.novagram.R
 import com.secondream.novagram.td.TdClient
@@ -187,42 +193,62 @@ fun StickerPickerSheet(
                 Spacer(Modifier.height(12.dp))
             }
 
-            val current: List<TdApi.Sticker>? = when {
-                isSearching -> searchResults
-                selectedTab == 0 -> favorites
-                selectedTab == 1 -> recents
-                else -> allInstalled
-            }
-            val isLoading = (isSearching && (searchInFlight || searchResults == null)) ||
-                (!isSearching && current == null)
-
-            when {
-                isLoading -> Box(
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp),
-                    contentAlignment = Alignment.Center
-                ) { CircularProgressIndicator() }
-
-                current == null || current.isEmpty() -> Box(
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        stringResourceSafe(R.string.sticker_picker_empty),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            // Which "view" is on screen: -1 = search results, else the tab
+            // index. AnimatedContent crossfades + slides between them, and the
+            // whole region is pinned to a FIXED height so switching tabs no
+            // longer makes the sheet jump. The lists have wildly different
+            // lengths (favorites might be 8, "Tutti" 300+) and the old
+            // heightIn(min..max) let each one resize the sheet — exactly the
+            // "il modal cambia altezza con stacchi brutti" Eugenio hit.
+            val viewState = if (isSearching) -1 else selectedTab
+            androidx.compose.animation.AnimatedContent(
+                targetState = viewState,
+                transitionSpec = {
+                    val dx = if (targetState > initialState) 1 else -1
+                    (androidx.compose.animation.slideInHorizontally(
+                        animationSpec = androidx.compose.animation.core.tween(220)
+                    ) { w -> dx * w / 5 } + androidx.compose.animation.fadeIn(
+                        animationSpec = androidx.compose.animation.core.tween(200)
+                    )) togetherWith (androidx.compose.animation.slideOutHorizontally(
+                        animationSpec = androidx.compose.animation.core.tween(220)
+                    ) { w -> -dx * w / 5 } + androidx.compose.animation.fadeOut(
+                        animationSpec = androidx.compose.animation.core.tween(140)
+                    ))
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(360.dp),
+                label = "sticker-view"
+            ) { state ->
+                val list: List<TdApi.Sticker>? = when (state) {
+                    -1 -> searchResults
+                    0 -> favorites
+                    1 -> recents
+                    else -> allInstalled
                 }
-
-                else -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(4),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 240.dp, max = 480.dp),
-                    contentPadding = PaddingValues(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                val loading = if (state == -1) (searchInFlight || searchResults == null)
+                              else list == null
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
-                    items(current, key = { it.sticker.id }) { st ->
-                        StickerCell(sticker = st, onClick = { onPick(st) })
+                    when {
+                        loading -> CircularProgressIndicator()
+                        list.isNullOrEmpty() -> Text(
+                            stringResourceSafe(R.string.sticker_picker_empty),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        else -> LazyVerticalGrid(
+                            columns = GridCells.Fixed(4),
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(list, key = { it.sticker.id }) { st ->
+                                StickerCell(sticker = st, onClick = { onPick(st) })
+                            }
+                        }
                     }
                 }
             }
@@ -252,11 +278,19 @@ fun StickerPickerSheet(
 @Composable
 private fun StickerCell(sticker: TdApi.Sticker, onClick: () -> Unit) {
     val thumbFile: TdApi.File? = sticker.thumbnail?.file ?: sticker.sticker
+    val alreadyReady = thumbFile?.local?.isDownloadingCompleted == true &&
+        !thumbFile.local.path.isNullOrBlank()
     var fileState by remember(thumbFile?.id) {
         mutableStateOf(thumbFile)
     }
     LaunchedEffect(thumbFile?.id) {
         val f = thumbFile ?: return@LaunchedEffect
+        // Fast path: the thumb came back from TDLib already downloaded —
+        // skip the GetFile round-trip AND the fileUpdates subscription
+        // entirely. On the "Tutti" tab the grid can hold hundreds of
+        // stickers; firing a TDLib call per cell as it scrolled into view
+        // was a real source of the "liste laggose" stutter.
+        if (alreadyReady) return@LaunchedEffect
         // Snapshot the live state on (re-)entry. Without this a tile
         // that scrolled offscreen then back can stay stuck on the
         // emoji fallback even though the thumb finished downloading
@@ -273,19 +307,43 @@ private fun StickerCell(sticker: TdApi.Sticker, onClick: () -> Unit) {
         }
     }
 
+    // Tactile press feedback: the tile springs down to 86% while held and
+    // bounces back on release. Cheap (only visible cells are composed) and
+    // makes the picker feel responsive instead of a flat grid of buttons.
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (pressed) 0.86f else 1f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = 0.45f,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+        ),
+        label = "sticker-press"
+    )
+
     Box(
         modifier = Modifier
             .aspectRatio(1f)
+            .scale(pressScale)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick
+            )
             .padding(4.dp),
         contentAlignment = Alignment.Center
     ) {
         val path = fileState?.local?.path
         if (!path.isNullOrBlank() && fileState?.local?.isDownloadingCompleted == true) {
             AsyncImage(
-                model = path,
+                model = coil.request.ImageRequest.Builder(
+                    androidx.compose.ui.platform.LocalContext.current
+                )
+                    .data(path)
+                    .crossfade(true)
+                    .build(),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize()
             )
@@ -311,30 +369,58 @@ private fun StickerTabs(
     val primary = MaterialTheme.colorScheme.primary
     val onPrimary = MaterialTheme.colorScheme.onPrimary
     val onMuted = MaterialTheme.colorScheme.onSurfaceVariant
-    Row(
+    // Sliding-pill tabs: instead of the selected tab's background hard-
+    // cutting on/off, a single rounded pill springs across to sit under
+    // the active tab, and the label colours crossfade in step. The fixed
+    // height lets the pill fillMaxHeight cleanly inside BoxWithConstraints.
+    androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .height(44.dp)
+            .clip(RoundedCornerShape(22.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(4.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(4.dp)
     ) {
-        titles.forEachIndexed { i, title ->
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(if (selected == i) primary else androidx.compose.ui.graphics.Color.Transparent)
-                    .clickable { onSelect(i) }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (selected == i) onPrimary else onMuted,
-                    fontWeight = if (selected == i) FontWeight.SemiBold else FontWeight.Medium
+        val count = titles.size.coerceAtLeast(1)
+        val pillWidth = maxWidth / count
+        val pillX by androidx.compose.animation.core.animateDpAsState(
+            targetValue = pillWidth * selected.coerceIn(0, count - 1),
+            animationSpec = androidx.compose.animation.core.spring(
+                dampingRatio = 0.82f,
+                stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+            ),
+            label = "sticker-tab-pill"
+        )
+        Box(
+            modifier = Modifier
+                .offset(x = pillX)
+                .width(pillWidth)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(18.dp))
+                .background(primary)
+        )
+        Row(modifier = Modifier.fillMaxSize()) {
+            titles.forEachIndexed { i, title ->
+                val labelColor by androidx.compose.animation.animateColorAsState(
+                    targetValue = if (selected == i) onPrimary else onMuted,
+                    animationSpec = androidx.compose.animation.core.tween(220),
+                    label = "sticker-tab-label"
                 )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(18.dp))
+                        .clickable { onSelect(i) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = labelColor,
+                        fontWeight = if (selected == i) FontWeight.SemiBold else FontWeight.Medium
+                    )
+                }
             }
         }
     }

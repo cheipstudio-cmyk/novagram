@@ -81,6 +81,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -1105,34 +1106,32 @@ fun ChatScreen(
                 run { val m = messages[idx]; messages.removeAt(idx); messages.add(idx, m) }
                 interactionRevisions[upd.messageId] =
                     (interactionRevisions[upd.messageId] ?: 0) + 1
-                // Safety net: TDLib normally emits UpdateMessageContent
-                // alongside UpdateMessageEdited for an edit, but on some
-                // edit paths (notably media caption edits on our own
-                // outgoing messages) the content update arrives late or
-                // not at all — leaving the visible caption / text stale
-                // even though the "modificato" tag has appeared. We
-                // refresh the message authoritatively via GetMessage on
-                // a tiny delay so:
-                //  (a) if UpdateMessageContent already landed, the
-                //      refetch is a no-op overwrite with identical
-                //      values — cheap;
-                //  (b) if the content update never landed, the fetched
-                //      content fills in the gap and the bubble updates
-                //      without needing the user to close+reopen.
-                // 150ms is the empirical sweet spot — short enough that
-                // the user perceives the text catching up to the tag,
-                // long enough to let an in-flight UpdateMessageContent
-                // win the race when present.
+                // Real-time content sync for the OPEN chat. TDLib reliably
+                // fires UpdateMessageEdited for every edit, but it does NOT
+                // always fire UpdateMessageContent — own-message text and
+                // caption edits frequently skip it, so the content collector
+                // above never runs and the visible bubble stays stale until
+                // the user leaves and re-enters (the chat-list preview still
+                // updates via UpdateChatLastMessage, which is exactly why
+                // Eugenio saw it "in anteprima" but not in the open chat).
+                // Fix: fetch the authoritative message and REPLACE the list
+                // element with that fresh TdApi.Message reference. A new
+                // reference under the same id key is the strongest possible
+                // recompose signal — MessageBubble can't strong-skip a
+                // changed `message` param, so it re-reads content / editDate
+                // / markup from scratch. We retry a few times because TDLib
+                // occasionally returns the pre-edit content if queried in the
+                // same instant the edit lands; each swap is idempotent once
+                // the content settles.
                 scope.launch {
-                    kotlinx.coroutines.delay(150)
-                    val fresh = runCatching {
-                        TdClient.getMessage(upd.chatId, upd.messageId)
-                    }.getOrNull() ?: return@launch
-                    val curIdx = messages.indexOfFirst { it.id == upd.messageId }
-                    if (curIdx < 0) return@launch
-                    if (messages[curIdx].content !== fresh.content) {
-                        messages[curIdx].content = fresh.content
-                        run { val m = messages[curIdx]; messages.removeAt(curIdx); messages.add(curIdx, m) }
+                    repeat(3) { attempt ->
+                        kotlinx.coroutines.delay(if (attempt == 0) 80L else 220L)
+                        val fresh = runCatching {
+                            TdClient.getMessage(upd.chatId, upd.messageId)
+                        }.getOrNull() ?: return@repeat
+                        val curIdx = messages.indexOfFirst { it.id == upd.messageId }
+                        if (curIdx < 0) return@launch
+                        messages[curIdx] = fresh
                         messageContentOverrides[upd.messageId] = fresh.content
                         interactionRevisions[upd.messageId] =
                             (interactionRevisions[upd.messageId] ?: 0) + 1
@@ -1360,28 +1359,39 @@ fun ChatScreen(
                 // pagination case (animating through freshly-inserted
                 // items causes the "scatto bruttissimo" jitter).
                 suspend fun preciseRefine() {
-                    // Place the target's TOP at ~15% from the viewport top, then
-                    // RE-PLACE whenever its measured height changes. Image/video
-                    // bubbles decode their thumbnail a frame or two later and
-                    // grow, which used to shove the target back off-screen —
-                    // exactly the "I have to scroll down 3-4 messages to find it"
-                    // symptom. We watch the measured height and only re-scroll on
-                    // a change (no per-frame jitter), stopping once it holds
-                    // steady for ~3 frames or we run out of attempts (~400ms),
-                    // so the target reliably ends up on screen at the upper third.
+                    // Place the target's TOP at ~23% from the viewport top, then
+                    // RE-PLACE whenever its measured height changes (media bubbles
+                    // decode their thumbnail a frame or two later and grow). The
+                    // critical change vs the old version: if the target is NOT in
+                    // visibleItemsInfo it means a prior scroll OVERSHOT it off the
+                    // TOP of the screen — the old code just `return@repeat`-skipped
+                    // that frame and never recovered, so the target stayed above
+                    // the fold and the user had to scroll down to find it (exactly
+                    // "mi porta troppo in alto"). We now pull it back to the bottom
+                    // edge — always visible and measurable — then re-place on the
+                    // next frame. Stops once the height holds steady for ~3 frames
+                    // or we exhaust the attempts (~500ms).
                     // Geometry (reverseLayout=true): scrollToItem(idx, K) puts the
-                    // item's top at vp-(K+size); K = vp*85/100 - size → top at 15%.
+                    // item's top at vp-(K+size); K = vp*77/100 - size → top at ~23%.
                     var lastH = -1
                     var stableFrames = 0
-                    repeat(24) {
+                    repeat(30) {
                         kotlinx.coroutines.delay(16)
                         val vp = listState.layoutInfo.viewportSize.height
+                        if (vp <= 0) return@repeat
                         val item = listState.layoutInfo.visibleItemsInfo
                             .find { it.index == idx }
-                        if (vp <= 0 || item == null) return@repeat
+                        if (item == null) {
+                            // Overshot off-screen — anchor to the bottom so it's
+                            // visible again, then re-measure on the next frame.
+                            runCatching { listState.scrollToItem(idx, 0) }
+                            lastH = -1
+                            stableFrames = 0
+                            return@repeat
+                        }
                         val targetH = item.size
                         if (targetH != lastH) {
-                            val precise = (vp * 85 / 100 - targetH).coerceAtLeast(0)
+                            val precise = (vp * 77 / 100 - targetH).coerceAtLeast(0)
                             runCatching { listState.scrollToItem(idx, precise) }
                             lastH = targetH
                             stableFrames = 0
@@ -1401,19 +1411,21 @@ fun ChatScreen(
                 val existing = listState.layoutInfo.visibleItemsInfo
                     .find { it.index == idx }
                 if (existing != null && viewportH0 > 0 && wasAlreadyLoaded) {
-                    val precise = (viewportH0 * 85 / 100 - existing.size).coerceAtLeast(0)
+                    // Already on screen → animate straight to the resting
+                    // offset so search-arrow navigation reads as motion,
+                    // then settle for any post-decode height growth.
+                    val precise = (viewportH0 * 77 / 100 - existing.size).coerceAtLeast(0)
                     runCatching { listState.animateScrollToItem(idx, precise) }
-                    // Re-settle in case it's a media bubble that grows after
-                    // the animated scroll (thumbnail decode) — keeps the target
-                    // pinned at the upper third instead of drifting off-screen.
                     preciseRefine()
                 } else {
-                    val roughOffset = if (viewportH0 > 0) (viewportH0 - 400).coerceAtLeast(200) else 200
-                    if (wasAlreadyLoaded) {
-                        runCatching { listState.animateScrollToItem(idx, roughOffset) }
-                    } else {
-                        runCatching { listState.scrollToItem(idx, roughOffset) }
-                    }
+                    // Not on screen (just paginated in, or far away). Bring
+                    // it on screen RELIABLY first by anchoring its bottom to
+                    // the viewport bottom: scrollToItem(idx, 0) can never
+                    // overshoot off the top the way the old (vp - 400) rough
+                    // offset did for tall bubbles, and it guarantees the
+                    // target is present in visibleItemsInfo so preciseRefine
+                    // can measure it and lift it to the ~23% resting spot.
+                    runCatching { listState.scrollToItem(idx, 0) }
                     preciseRefine()
                 }
                 flashMessageId = targetId
@@ -1612,6 +1624,21 @@ fun ChatScreen(
     // Set true by the menu item; the dialog itself clears it.
     var ttlDialogOpen by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
+    // Deferred media-viewer open requested from the chat-info dialog.
+    // Navigating to the viewer route AND dismissing the info Dialog in the
+    // same frame races the Dialog-window teardown against the NavHost push,
+    // so the freshly-pushed viewer was getting popped straight back and the
+    // user landed at the chat ("il pulsante apri foto/file/video... molte
+    // volte mi porta indietro"). The dialog now stashes the path in
+    // MediaViewerHolder, dismisses itself, and flips this flag; the effect
+    // below fires once the Dialog is gone and navigates cleanly.
+    var pendingViewerOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(pendingViewerOpen) {
+        if (pendingViewerOpen) {
+            onOpenMediaViewer()
+            pendingViewerOpen = false
+        }
+    }
     var deleteOpen by remember { mutableStateOf(false) }
     var leaveOpen by remember { mutableStateOf(false) }
     // Non-reactive snapshot of the cached chat. Used for header
@@ -2210,16 +2237,19 @@ fun ChatScreen(
                             androidx.compose.material3.SmallFloatingActionButton(
                                 onClick = {
                                     scope.launch {
-                                        // Jump to the first unread mention, then clear
-                                        // ALL unread mentions in this chat server-side.
-                                        // readAllChatMentions is the dedicated TDLib call;
-                                        // viewMessages / openMessageContent did NOT reliably
-                                        // decrement the count in this build, so the badge
-                                        // never went away. The UpdateChatUnreadMentionCount
-                                        // echo then drives the cache to 0 → chip hides.
                                         val msg = runCatching {
                                             TdClient.findFirstUnreadMention(chatId)
                                         }.getOrNull()
+                                        // Hide the chip the instant it's tapped, exactly
+                                        // like the reaction chip does. Tapping reads ALL
+                                        // mentions, so we optimistically ZERO the cached
+                                        // count instead of waiting on the
+                                        // UpdateChatUnreadMentionCount echo — that echo
+                                        // lags and is sometimes never delivered, which is
+                                        // why the "@" badge "non sparisce" on tap. The
+                                        // server-side readAllChatMentions still runs and
+                                        // its echo confirms 0.
+                                        TdClient.clearChatMentionCountLocal(chatId)
                                         if (msg != null) jumpToMessage(msg.id)
                                         runCatching { TdClient.readAllChatMentions(chatId) }
                                     }
@@ -2837,6 +2867,9 @@ fun ChatScreen(
                         if (send) {
                             val res = recorder.stop()
                             if (res != null) {
+                                if (appearance.messageSounds) {
+                                    com.secondream.novagram.util.SoundFx.playSend(context)
+                                }
                                 val rid = replyTarget?.id
                                 replyTarget = null
                                 scope.launch {
@@ -2861,6 +2894,9 @@ fun ChatScreen(
                     scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                         val mime = (context.contentResolver.getType(uri) ?: "").lowercase()
                         val file = com.secondream.novagram.util.FileUtils.copyUriToCache(context, uri) ?: return@launch
+                        if (appearance.messageSounds) {
+                            com.secondream.novagram.util.SoundFx.playSend(context)
+                        }
                         runCatching {
                             if (mime == "image/gif" || mime == "video/mp4") {
                                 TdClient.sendAnimation(chatId, file.absolutePath)
@@ -2904,6 +2940,9 @@ fun ChatScreen(
                 val rid = replyTarget?.id
                 showStickerPicker = false
                 replyTarget = null
+                if (appearance.messageSounds) {
+                    com.secondream.novagram.util.SoundFx.playSend(context)
+                }
                 scope.launch { runCatching { TdClient.sendSticker(chatId, sticker, rid) } }
             }
         )
@@ -2950,7 +2989,8 @@ fun ChatScreen(
             onStartChat = { newChatId ->
                 profileSheetUserId = null
                 onOpenChat(newChatId, null)
-            }
+            },
+            onOpenMediaViewer = { pendingViewerOpen = true }
         )
     }
 
@@ -3503,7 +3543,7 @@ fun ChatScreen(
                 infoOpen = false
                 jumpToMessage(mid)
             },
-            onOpenMediaViewer = onOpenMediaViewer
+            onOpenMediaViewer = { pendingViewerOpen = true }
         )
     }
 
@@ -3625,6 +3665,7 @@ internal fun ChatInfoDialog(
 ) {
     val chat = remember(chatId) { TdClient.getCachedChat(chatId) }
     val title = chat?.title ?: stringResource(R.string.chat_default_title)
+    val infoScope = androidx.compose.runtime.rememberCoroutineScope()
 
     var subtitle by remember(chatId) { mutableStateOf<String?>(null) }
     var description by remember(chatId) { mutableStateOf<String?>(null) }
@@ -3696,7 +3737,20 @@ internal fun ChatInfoDialog(
         pageCount = { tabs.size }
     )
     val scope = rememberCoroutineScope()
-
+    // Tab pill row scroll state, kept in sync with the pager so swiping the
+    // content to a later tab (Voce / Musica / Membri) animates the pill row
+    // along and the active pill never stays stranded off-screen — Eugenio's
+    // "quando facciamo swipe fino all'ultima, quella dopo non si vede, deve
+    // rientrare con animazione". animateScrollToItem brings it smoothly in.
+    val tabsListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    // Search query for the media tabs (Foto/Video/File/Link/Voce/Musica),
+    // shown in a search bar below the pills. Cleared whenever the tab changes
+    // so each category starts fresh.
+    var mediaQuery by remember(chatId) { mutableStateOf("") }
+    LaunchedEffect(pagerState.currentPage) {
+        mediaQuery = ""
+        runCatching { tabsListState.animateScrollToItem(pagerState.currentPage) }
+    }
     var selectedMediaMessage by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
     var selectedMember by remember(chatId) { mutableStateOf<TdApi.ChatMember?>(null) }
     // Bumped after a member action so the Membri list reloads in place (the
@@ -3733,11 +3787,40 @@ internal fun ChatInfoDialog(
                         .padding(horizontal = 24.dp, vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    // The header avatar springs up into place when the sheet
+                    // opens (a satisfying "lands in the centre" beat) and, on
+                    // tap, opens the full-resolution profile photo full-screen
+                    // via the in-app media viewer.
+                    var avatarIn by remember { mutableStateOf(false) }
+                    LaunchedEffect(Unit) { avatarIn = true }
+                    val avatarScale by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = if (avatarIn) 1f else 0.55f,
+                        animationSpec = androidx.compose.animation.core.spring(
+                            dampingRatio = 0.6f,
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                        ),
+                        label = "info-avatar-in"
+                    )
                     com.secondream.novagram.ui.components.Avatar(
                         file = chat?.photo?.small,
                         fallbackText = title,
                         bgColor = com.secondream.novagram.ui.screens.avatarBackgroundFor(chatId),
-                        size = 84.dp
+                        size = 84.dp,
+                        modifier = Modifier
+                            .graphicsLayer { scaleX = avatarScale; scaleY = avatarScale }
+                            .clip(CircleShape)
+                            .clickable {
+                                val big = chat?.photo?.big ?: return@clickable
+                                infoScope.launch {
+                                    val path = ensureDownloaded(big)
+                                    if (path != null) {
+                                        com.secondream.novagram.ui.screens.MediaViewerHolder.isVideo = false
+                                        com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
+                                        onOpenMediaViewer()
+                                        onDismiss()
+                                    }
+                                }
+                            }
                     )
                     Spacer(Modifier.height(10.dp))
                     Text(
@@ -3760,6 +3843,7 @@ internal fun ChatInfoDialog(
                 }
                 // Icon tab row (home-pill style), synced to the pager.
                 androidx.compose.foundation.lazy.LazyRow(
+                    state = tabsListState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp),
@@ -3811,6 +3895,33 @@ internal fun ChatInfoDialog(
                     color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
                     thickness = 0.5.dp
                 )
+                // Search bar for the media tabs — lets the user find a specific
+                // photo / video / file / link by caption or name. Hidden on the
+                // Info and Membri tabs where it doesn't apply.
+                val onMediaTab = pagerState.currentPage != 0 &&
+                    pagerState.currentPage != membersIndex
+                androidx.compose.animation.AnimatedVisibility(visible = onMediaTab) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = mediaQuery,
+                        onValueChange = { mediaQuery = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        placeholder = { Text("Cerca in questa categoria") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(18.dp),
+                        leadingIcon = {
+                            Icon(phos.MagnifyingGlass, contentDescription = null)
+                        },
+                        trailingIcon = if (mediaQuery.isNotEmpty()) {
+                            {
+                                androidx.compose.material3.IconButton(onClick = { mediaQuery = "" }) {
+                                    Icon(phos.X, contentDescription = null)
+                                }
+                            }
+                        } else null
+                    )
+                }
                 androidx.compose.foundation.pager.HorizontalPager(
                     state = pagerState,
                     modifier = Modifier
@@ -3832,6 +3943,7 @@ internal fun ChatInfoDialog(
                                 chatId = chatId,
                                 filter = filter,
                                 isGrid = isGrid,
+                                query = mediaQuery,
                                 onItemTap = { selectedMediaMessage = it }
                             )
                         }
@@ -4330,22 +4442,81 @@ private fun ChatMediaItemActions(
             )
         }
     }
+    // Per-kind "Salva" action: download (the top badge shows during the
+    // fetch) then copy into Downloads/Nova. Null for links/text where there's
+    // nothing to save.
+    val saveAction: (() -> Unit)? = remember(message.id) {
+        when (val c = message.content) {
+            is TdApi.MessagePhoto -> {
+                val f = c.photo.sizes.lastOrNull()?.photo
+                val a: () -> Unit = {
+                    saveMediaToDevice(scope, ctx, f, "photo_${message.id}.jpg", "image/jpeg",
+                        com.secondream.novagram.util.FileUtils.SaveCategory.Media, onDismiss)
+                }
+                a
+            }
+            is TdApi.MessageVideo -> {
+                val v = c.video
+                val a: () -> Unit = {
+                    saveMediaToDevice(scope, ctx, v.video, v.fileName.ifBlank { "video_${message.id}.mp4" },
+                        v.mimeType.ifBlank { "video/mp4" },
+                        com.secondream.novagram.util.FileUtils.SaveCategory.Media, onDismiss)
+                }
+                a
+            }
+            is TdApi.MessageDocument -> {
+                val d = c.document
+                val a: () -> Unit = {
+                    saveMediaToDevice(scope, ctx, d.document, d.fileName.ifBlank { "file_${message.id}" },
+                        d.mimeType.ifBlank { "application/octet-stream" },
+                        com.secondream.novagram.util.FileUtils.SaveCategory.File, onDismiss)
+                }
+                a
+            }
+            is TdApi.MessageAudio -> {
+                val au = c.audio
+                val a: () -> Unit = {
+                    saveMediaToDevice(scope, ctx, au.audio, au.fileName.ifBlank { "audio_${message.id}.mp3" },
+                        au.mimeType.ifBlank { "audio/mpeg" },
+                        com.secondream.novagram.util.FileUtils.SaveCategory.File, onDismiss)
+                }
+                a
+            }
+            is TdApi.MessageVoiceNote -> {
+                val vn = c.voiceNote
+                val a: () -> Unit = {
+                    saveMediaToDevice(scope, ctx, vn.voice, "voice_${message.id}.ogg",
+                        vn.mimeType.ifBlank { "audio/ogg" },
+                        com.secondream.novagram.util.FileUtils.SaveCategory.File, onDismiss)
+                }
+                a
+            }
+            else -> null
+        }
+    }
     com.secondream.novagram.ui.components.ActionBottomSheet(
         title = ctx.getString(R.string.chat_info_media_action_title),
         onDismiss = onDismiss,
-        tiles = listOf(
+        tiles = listOfNotNull(
             com.secondream.novagram.ui.components.ActionTile(
                 label = openLabel,
                 icon = openIcon,
                 onClick = openAction
             ),
+            saveAction?.let {
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = "Salva",
+                    icon = phos.DownloadSimple,
+                    onClick = it
+                )
+            },
             com.secondream.novagram.ui.components.ActionTile(
                 label = ctx.getString(R.string.chat_info_media_view_in_chat),
                 icon = phos.ChatCircle,
                 onClick = onJumpToMessage
             )
         ),
-        tilesPerRow = 2
+        tilesPerRow = 3
     )
 }
 
@@ -4360,9 +4531,44 @@ private suspend fun ensureDownloaded(file: TdApi.File?): String? {
         it.isNotEmpty() && java.io.File(it).exists()
     }
     if (existing != null) return existing
+    // Kick the download off immediately (non-blocking) so the top transfer
+    // badge appears the instant the user taps "Apri"/"Salva", then await the
+    // finished file below for the path.
+    TdClient.startDownload(file.id)
     val downloaded = runCatching { TdClient.downloadFile(file.id) }.getOrNull()
     return downloaded?.local?.path?.takeIf {
         it.isNotEmpty() && java.io.File(it).exists()
+    }
+}
+
+/**
+ * Download [file] if needed (the transfer badge shows during the fetch) and
+ * copy it into the public Downloads/Nova folder so it survives outside the
+ * app, then toast the outcome. Backs the "Salva" tile in the media sheet.
+ */
+private fun saveMediaToDevice(
+    scope: kotlinx.coroutines.CoroutineScope,
+    context: android.content.Context,
+    file: TdApi.File?,
+    displayName: String,
+    mimeType: String,
+    category: com.secondream.novagram.util.FileUtils.SaveCategory,
+    onDone: () -> Unit
+) {
+    if (file == null) { onDone(); return }
+    scope.launch {
+        val path = ensureDownloaded(file)
+        val ok = path != null && kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.secondream.novagram.util.FileUtils.saveToDownloads(
+                context, path, displayName, mimeType, category
+            )
+        }
+        android.widget.Toast.makeText(
+            context,
+            if (ok) "Salvato in Download/Nova" else "Salvataggio non riuscito",
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
+        onDone()
     }
 }
 
@@ -4704,56 +4910,85 @@ private fun InputBar(
             // backed flow.
             val online by com.secondream.novagram.connectivity
                 .ConnectivityState.isOnline.collectAsState()
-            if (!recording && (value.text.isNotBlank() || hasPendingMedia)) {
-                // Press-scale feedback: the send button dips when pressed
-                // and springs back, giving the tap a tactile feel. Mirrors
-                // the AttachTile press animation; it's a single graphicsLayer
-                // scale (no layout pass) so it stays smooth on low-end
-                // phones.
-                val sendInteraction = remember {
-                    androidx.compose.foundation.interaction.MutableInteractionSource()
-                }
-                val sendPressed by sendInteraction.collectIsPressedAsState()
-                val sendScale by androidx.compose.animation.core.animateFloatAsState(
-                    targetValue = if (sendPressed) 0.82f else 1f,
-                    animationSpec = androidx.compose.animation.core.spring(
-                        dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
-                        stiffness = androidx.compose.animation.core.Spring.StiffnessHigh
-                    ),
-                    label = "send-press"
-                )
-                IconButton(
-                    onClick = { if (online) onSend() },
-                    enabled = online,
-                    interactionSource = sendInteraction,
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .graphicsLayer { scaleX = sendScale; scaleY = sendScale }
-                            .clip(CircleShape)
-                            .background(
-                                if (online) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(20.dp)
+            val showSend = !recording && (value.text.isNotBlank() || hasPendingMedia)
+            androidx.compose.animation.AnimatedContent(
+                targetState = showSend,
+                transitionSpec = {
+                    // The send button springs in with a little bounce while the
+                    // mic fades out, and vice-versa when the text clears. Keyed
+                    // strictly on `showSend` — which stays false through the
+                    // ENTIRE mic press (recording flips the first condition
+                    // false regardless of text) — so the mic button is never
+                    // disposed mid-gesture, preserving the press→record→release
+                    // chain the single-instance note below warns about.
+                    (androidx.compose.animation.scaleIn(
+                        initialScale = 0.5f,
+                        animationSpec = androidx.compose.animation.core.spring(
+                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
                         )
+                    ) + androidx.compose.animation.fadeIn(
+                        androidx.compose.animation.core.tween(120)
+                    )) togetherWith (androidx.compose.animation.scaleOut(
+                        targetScale = 0.5f,
+                        animationSpec = androidx.compose.animation.core.tween(140)
+                    ) + androidx.compose.animation.fadeOut(
+                        androidx.compose.animation.core.tween(110)
+                    ))
+                },
+                label = "send-mic"
+            ) { sending ->
+                if (sending) {
+                    // Press-scale feedback: the send button dips when pressed
+                    // and springs back, giving the tap a tactile feel. Mirrors
+                    // the AttachTile press animation; it's a single graphicsLayer
+                    // scale (no layout pass) so it stays smooth on low-end
+                    // phones.
+                    val sendInteraction = remember {
+                        androidx.compose.foundation.interaction.MutableInteractionSource()
                     }
+                    val sendPressed by sendInteraction.collectIsPressedAsState()
+                    val sendScale by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = if (sendPressed) 0.82f else 1f,
+                        animationSpec = androidx.compose.animation.core.spring(
+                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessHigh
+                        ),
+                        label = "send-press"
+                    )
+                    IconButton(
+                        onClick = { if (online) onSend() },
+                        enabled = online,
+                        interactionSource = sendInteraction,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .graphicsLayer { scaleX = sendScale; scaleY = sendScale }
+                                .clip(CircleShape)
+                                .background(
+                                    if (online) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                } else {
+                    MicButton(
+                        recording = recording,
+                        enabled = online,
+                        onDown = { if (online) onMicDown() },
+                        onUp = { released -> if (online) onMicUp(released) }
+                    )
                 }
-            } else {
-                MicButton(
-                    recording = recording,
-                    enabled = online,
-                    onDown = { if (online) onMicDown() },
-                    onUp = { released -> if (online) onMicUp(released) }
-                )
             }
         }
     }

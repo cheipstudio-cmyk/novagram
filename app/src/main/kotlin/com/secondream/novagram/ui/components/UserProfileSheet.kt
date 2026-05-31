@@ -33,6 +33,10 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import com.secondream.novagram.td.TdClient
 import kotlinx.coroutines.launch
 import org.drinkless.tdlib.TdApi
@@ -62,7 +66,8 @@ import org.drinkless.tdlib.TdApi
 fun UserProfileSheet(
     userId: Long,
     onDismiss: () -> Unit,
-    onStartChat: (Long) -> Unit
+    onStartChat: (Long) -> Unit,
+    onOpenMediaViewer: () -> Unit = {}
 ) {
     var user by remember(userId) { mutableStateOf<TdApi.User?>(null) }
     var fullInfo by remember(userId) { mutableStateOf<TdApi.UserFullInfo?>(null) }
@@ -113,11 +118,39 @@ fun UserProfileSheet(
                 return@Column
             }
             Spacer(Modifier.height(8.dp))
+            // Avatar springs up as the sheet opens and, on tap, opens the
+            // full-resolution profile photo full-screen in the media viewer.
+            var avatarIn by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) { avatarIn = true }
+            val avatarScale by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (avatarIn) 1f else 0.55f,
+                animationSpec = androidx.compose.animation.core.spring(
+                    dampingRatio = 0.6f,
+                    stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                ),
+                label = "profile-avatar-in"
+            )
             Avatar(
                 file = u.profilePhoto?.small,
                 fallbackText = u.firstName.ifBlank { "?" },
                 bgColor = com.secondream.novagram.ui.screens.avatarBackgroundFor(userId),
-                size = 96.dp
+                size = 96.dp,
+                modifier = Modifier
+                    .graphicsLayer { scaleX = avatarScale; scaleY = avatarScale }
+                    .clip(CircleShape)
+                    .clickable {
+                        val big = u.profilePhoto?.big ?: return@clickable
+                        scope.launch {
+                            val dl = runCatching { TdClient.downloadFile(big.id) }.getOrNull()
+                            val p = dl?.local?.path
+                            if (!p.isNullOrBlank() && java.io.File(p).exists()) {
+                                com.secondream.novagram.ui.screens.MediaViewerHolder.isVideo = false
+                                com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = p
+                                onOpenMediaViewer()
+                                onDismiss()
+                            }
+                        }
+                    }
             )
             Spacer(Modifier.height(14.dp))
             val displayName = "${u.firstName} ${u.lastName}".trim()

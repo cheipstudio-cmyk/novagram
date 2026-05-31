@@ -194,14 +194,18 @@ internal fun MediaTabContent(
     chatId: Long,
     filter: TdApi.SearchMessagesFilter,
     isGrid: Boolean,
+    query: String = "",
     onItemTap: (TdApi.Message) -> Unit
 ) {
     val key = filter::class.java.name
     var loading by remember(chatId, key) { mutableStateOf(true) }
     var messages by remember(chatId, key) { mutableStateOf<List<TdApi.Message>>(emptyList()) }
-    LaunchedEffect(chatId, key) {
+    LaunchedEffect(chatId, key, query) {
         loading = true
-        messages = runCatching { TdClient.searchChatMessages(chatId, filter) }
+        // Debounce typing so we don't hit TDLib on every keystroke; an empty
+        // query loads the whole category exactly as before.
+        if (query.isNotEmpty()) kotlinx.coroutines.delay(300)
+        messages = runCatching { TdClient.searchChatMessages(chatId, filter, query.trim()) }
             .getOrDefault(emptyList())
         loading = false
     }

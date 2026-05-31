@@ -979,6 +979,7 @@ object TdClient {
     suspend fun searchChatMessages(
         chatId: Long,
         filter: TdApi.SearchMessagesFilter,
+        query: String = "",
         fromMessageId: Long = 0L,
         limit: Int = 100
     ): List<TdApi.Message> {
@@ -987,7 +988,7 @@ object TdClient {
             // arg and dropped the trailing thread/topic Longs. We pass null
             // for it — we want the chat-wide media gallery, not topic-scoped.
             send(TdApi.SearchChatMessages(
-                chatId, null, "", null, fromMessageId, 0, limit, filter
+                chatId, null, query, null, fromMessageId, 0, limit, filter
             )) as TdApi.FoundChatMessages
         }.getOrNull() ?: return emptyList()
         return r.messages.toList()
@@ -1359,6 +1360,17 @@ object TdClient {
 
     suspend fun downloadFile(fileId: Int): TdApi.File {
         return send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
+    }
+
+    /**
+     * Kick off a download WITHOUT waiting for completion (synchronous=false).
+     * Returns the moment TDLib accepts the request; progress then streams via
+     * UpdateFile, which TransferTracker turns into the top download badge.
+     * Used so tapping "Apri" on an un-downloaded item shows feedback (the
+     * badge) instantly, while the caller separately awaits the finished path.
+     */
+    suspend fun startDownload(fileId: Int) {
+        runCatching { send(TdApi.DownloadFile(fileId, 32, 0, 0, false)) }
     }
 
     /**
@@ -2035,6 +2047,26 @@ object TdClient {
         val c = chatCache[chatId] ?: return
         if (c.unreadMentionCount > 0) {
             c.unreadMentionCount = c.unreadMentionCount - 1
+            scope.launch { _chatUpdates.emit(chatId) }
+            refreshChats()
+        }
+    }
+
+    /**
+     * Optimistically ZERO the unread mention count so the in-chat "@" chip
+     * vanishes the instant it's tapped. Tapping the chip calls
+     * readAllChatMentions, which clears every mention in the chat
+     * server-side; the UpdateChatUnreadMentionCount echo then confirms 0.
+     * Without this the chip waited on that echo — which lags and is
+     * occasionally never delivered — so it appeared stuck (Eugenio's "il
+     * badge menzione cliccando non sparisce"). Unlike
+     * [decrementChatMentionCount] this drops the count straight to 0
+     * because "read all" consumes every pending mention at once.
+     */
+    fun clearChatMentionCountLocal(chatId: Long) {
+        val c = chatCache[chatId] ?: return
+        if (c.unreadMentionCount != 0) {
+            c.unreadMentionCount = 0
             scope.launch { _chatUpdates.emit(chatId) }
             refreshChats()
         }
