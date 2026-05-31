@@ -1232,47 +1232,38 @@ fun ChatScreen(
             // fallback, so there's nothing more to do here.
             if (idx < 0) return@launch
             run {
-                // Two-phase precise scroll. v0.10.63 iteration: places
-                // the target's CENTER at viewportH * 0.40 — 40% from
-                // the top of the LazyColumn area, which puts the
-                // highlighted bubble in the upper-middle region with
-                // 60% of viewport below for the newer-context the
-                // user typically wants to see after a jump (mention/
-                // reaction/t.me deeplink/pinned-list/search arrow).
+                // Two-phase precise scroll for jump-to-message (mention /
+                // reaction / t.me deeplink / pinned-list / search arrow).
+                // Lands the target's TOP edge at ~30% of viewport height
+                // from the top — the upper third. This is the middle
+                // ground between the two positions that were tried and
+                // rejected: pinning the top ~80px from the top felt
+                // "troppo in alto", while centring it vertically
+                // ((vp-targetH)/2) felt "troppo in basso, bisogna
+                // scorrere per vedere i messaggi sotto". Upper-third keeps
+                // the target immediately visible up top while still
+                // leaving ~70% of the screen below it for newer context.
                 //
-                // History of tries: viewportH/4 (way too high),
-                // viewportH/2 (too high, tall bubbles clipped),
-                // viewportH/3 (still too high — user "ci porta sempre
-                // un po' troppo in alto"), centered at viewportH/2
-                // (too low — user "appare un po' troppo in basso,
-                // bisogna scorrere per vedere 2-5 messaggi sotto"),
-                // 40%-from-top still too low. Tried 30%-from-top
-                // (vp*7/10 - targetH/2) but user reported target
-                // landing BELOW the visible area (had to scroll down
-                // to see it), and explicit request "deve mostrarmelo
-                // subito in alto il messaggio target". Switched
-                // approach: always pin target's TOP edge ~80px from
-                // viewport top so the message is the first thing the
-                // eye sees, with the rest of the screen showing
-                // newer-context below it.
-                //
-                // Math (reverseLayout=true scrollOffset measures
-                // distance from visual-bottom up to item's
-                // visual-bottom edge): we want target's TOP at 80px
-                // from viewport top = (vp - 80) from viewport bottom.
-                // Target's bottom = target's top - targetH = (vp - 80)
-                // - targetH from viewport bottom. So scrollOffset =
-                // vp - 80 - targetH. Clamp at 0 for bubbles taller
-                // than (vp - 80) — they can't sit fully in-view, so
-                // we settle for top-aligned-as-much-as-possible by
-                // anchoring bottom to viewport bottom (scrollOffset=0).
+                // Geometry (reverseLayout=true): scrollOffset is the gap
+                // between the item's bottom edge and the viewport bottom,
+                // so a LARGER offset pushes the item HIGHER. We want the
+                // target's top at 0.30*vp from the viewport top, i.e. at
+                // (vp - 0.30*vp) = 0.70*vp from the bottom; subtract the
+                // bubble height to get its bottom edge:
+                //     scrollOffset = vp*7/10 - targetH
+                // Using the full targetH (not targetH/2) is what keeps the
+                // TOP at a true 30% regardless of bubble height — an
+                // earlier attempt used targetH/2 and tall bubbles slid off
+                // the bottom of the screen. Clamp at 0 so a bubble taller
+                // than 0.70*vp simply anchors to the viewport bottom
+                // instead of producing a negative offset.
                 //
                 // Phase 1: rough scroll using (vp - 400) as a
                 // targetH-agnostic approximation (assumes a "typical"
                 // 300-400px bubble). Phase 2 (after a single-frame
                 // delay for layout to place the target) reads
                 // layoutInfo.visibleItemsInfo for the actual measured
-                // size and refines to the precise top-at-80px offset.
+                // size and refines to the precise upper-third offset.
                 //
                 // The animate-vs-snap choice from the legacy code is
                 // preserved: animate for the already-loaded case (so
@@ -1291,7 +1282,7 @@ fun ChatScreen(
                             .find { it.index == idx }
                         if (vp > 0 && item != null) {
                             val targetH = item.size
-                            val precise = (vp - targetH - 80).coerceAtLeast(0)
+                            val precise = (vp * 7 / 10 - targetH).coerceAtLeast(0)
                             // Snap for refinement: the rough scroll
                             // already animated/snapped to the
                             // approximate region, the refine is a
@@ -1315,7 +1306,7 @@ fun ChatScreen(
                 val existing = listState.layoutInfo.visibleItemsInfo
                     .find { it.index == idx }
                 if (existing != null && viewportH0 > 0 && wasAlreadyLoaded) {
-                    val precise = (viewportH0 - existing.size - 80).coerceAtLeast(0)
+                    val precise = (viewportH0 * 7 / 10 - existing.size).coerceAtLeast(0)
                     runCatching { listState.animateScrollToItem(idx, precise) }
                 } else {
                     val roughOffset = if (viewportH0 > 0) (viewportH0 - 400).coerceAtLeast(200) else 200
@@ -1530,7 +1521,26 @@ fun ChatScreen(
     // reactive (subscribes to chatUpdates) so muting from the action
     // sheet flips the bell icon live without losing the rest of this
     // header snapshot.
-    val cachedChatLive = TdClient.getCachedChat(chatId)
+    // Live cached chat: re-resolves on every chatUpdates emission for
+    // this chatId. Drives the title-bar avatar/name/online state, mute
+    // bell, protected-content flag, and every other "current state of
+    // the chat" read in this composable. Previously this was a plain
+    // `val = getCachedChat(...)` snapshot taken once at compose time —
+    // muting from another device, peer-photo change, hasProtectedContent
+    // flip etc. wouldn't reflect until the user left the chat and came
+    // back. The pulseTick state forces a re-read on every chatUpdates
+    // event without going through a flow (the cached Chat is already
+    // mutated in place inside TdClient; we just need to retrigger the
+    // read so the Composable observes it).
+    var cachedChatPulse by remember(chatId) { mutableStateOf(0) }
+    LaunchedEffect(chatId) {
+        TdClient.chatUpdates.collect { cid ->
+            if (cid == chatId) cachedChatPulse++
+        }
+    }
+    val cachedChatLive = remember(chatId, cachedChatPulse) {
+        TdClient.getCachedChat(chatId)
+    }
     // Live mute state: subscribes to chatUpdates so toggling mute from
     // the action sheet (or from the chat-list swipe action, or from
     // another device) flips the BellSlash icon in the title immediately
@@ -2116,6 +2126,15 @@ fun ChatScreen(
                                             // decrement holds anyway.
                                             runCatching {
                                                 TdClient.viewMessages(chatId, longArrayOf(msg.id))
+                                                // Per-mention server-side read. Required:
+                                                // plain viewMessages doesn't decrement
+                                                // unread_mention_count on the server in
+                                                // this TDLib version, so the next
+                                                // UpdateChatUnreadMentionCount echo
+                                                // reverts our optimistic decrement and
+                                                // the chip "comes back". openMessageContent
+                                                // triggers the actual server decrement.
+                                                TdClient.openMessageContent(chatId, msg.id)
                                             }
                                         }
                                     }

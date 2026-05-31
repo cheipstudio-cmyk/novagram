@@ -444,6 +444,13 @@ object TdClient {
                 // never flips to "Riattiva" even though the mute actually took.
                 chatCache[obj.chatId]?.notificationSettings = obj.notificationSettings
                 refreshChats()
+                // Wake per-chat observers (in-chat title-bar bell icon,
+                // mute toggle label in the action sheet) — they listen
+                // on chatUpdates rather than on the chat-list flow.
+                // Without this emit, muting from another device or via
+                // the action sheet doesn't flip the in-chat bell icon
+                // until the user leaves and re-enters the chat.
+                scope.launch { _chatUpdates.emit(obj.chatId) }
             }
             is TdApi.UpdateChatAction -> {
                 // Peer is typing / recording voice / picking sticker / etc.
@@ -857,6 +864,20 @@ object TdClient {
     suspend fun closeChat(chatId: Long) { send(TdApi.CloseChat(chatId)) }
     suspend fun viewMessages(chatId: Long, ids: LongArray) {
         send(TdApi.ViewMessages(chatId, ids, TdApi.MessageSourceChatHistory(), true))
+    }
+
+    /**
+     * Tell TDLib the user "opened" this message — i.e., looked at its
+     * content directly, not just scrolled past it. Required to decrement
+     * server-side unread_mention_count for mention messages: plain
+     * viewMessages(forceRead=true) is enough for regular read receipts
+     * but mentions need this stronger signal in current TDLib versions
+     * or the server keeps the chat's mention badge non-zero, which then
+     * gets echoed back through UpdateChatUnreadMentionCount and reverts
+     * any optimistic client-side decrement.
+     */
+    suspend fun openMessageContent(chatId: Long, messageId: Long) {
+        runCatching { send(TdApi.OpenMessageContent(chatId, messageId)) }
     }
 
     suspend fun getChat(chatId: Long): TdApi.Chat = send(TdApi.GetChat(chatId))
@@ -1295,6 +1316,18 @@ object TdClient {
 
     suspend fun downloadFile(fileId: Int): TdApi.File {
         return send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
+    }
+
+    /**
+     * Variant of [downloadFile] that lets the caller specify a priority
+     * 1..32. Used by background warmers (e.g. chat-info media gallery
+     * thumbs) that want to populate the cache without competing for
+     * bandwidth with foreground downloads the user is actively waiting
+     * on. Priority 1 = lowest; 32 = highest (the default for ad-hoc
+     * downloads).
+     */
+    suspend fun downloadFile(fileId: Int, priority: Int): TdApi.File {
+        return send(TdApi.DownloadFile(fileId, priority.coerceIn(1, 32), 0, 0, true))
     }
 
     /**

@@ -230,6 +230,23 @@ private fun MediaGridCell(msg: TdApi.Message, onClick: () -> Unit) {
         val localPath = thumbFile?.local?.path?.takeIf {
             it.isNotEmpty() && java.io.File(it).exists()
         }
+        // Auto-download missing thumbs. The user explicitly asked for
+        // the chat-info gallery to populate without having to scroll
+        // through the chat first to "warm" the cache. We kick off a
+        // background DownloadFile per thumb (TDLib dedupes if already
+        // pending). Priority 1 = lowest; doesn't compete with foreground
+        // chat downloads when the user is also scrolling messages.
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        LaunchedEffect(thumbFile?.id) {
+            val f = thumbFile ?: return@LaunchedEffect
+            if (localPath == null && !f.local.isDownloadingActive && f.id != 0) {
+                scope.launch {
+                    runCatching {
+                        com.secondream.novagram.td.TdClient.downloadFile(f.id, priority = 1)
+                    }
+                }
+            }
+        }
         if (localPath != null) {
             val bmp = remember(localPath) {
                 runCatching { android.graphics.BitmapFactory.decodeFile(localPath) }.getOrNull()
@@ -253,13 +270,13 @@ private fun MediaGridCell(msg: TdApi.Message, onClick: () -> Unit) {
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                 modifier = Modifier.size(28.dp).align(Alignment.Center)
             )
-            // Kick off a download for the thumbnail so it shows up
-            // the next time the user re-opens the gallery. We don't
-            // block the UI on it.
-            LaunchedEffect(thumbFile?.id) {
-                val id = thumbFile?.id ?: return@LaunchedEffect
-                runCatching { TdClient.downloadFile(id) }
-            }
+            // NOTE: the thumb download is kicked off by the single
+            // priority-1 LaunchedEffect at the top of this Box (it fires
+            // whenever localPath == null). We deliberately do NOT start a
+            // second download here: a duplicate DownloadFile for the same
+            // fileId makes TDLib bump the request to the higher priority,
+            // which would defeat the low-priority intent and waste a
+            // round-trip on every grid cell while the user scrolls.
         }
         // Video overlay — play glyph in the corner so users can tell
         // photos from videos at a glance in the grid.

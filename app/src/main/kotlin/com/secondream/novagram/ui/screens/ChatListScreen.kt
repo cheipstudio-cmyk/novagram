@@ -1110,27 +1110,16 @@ private fun PublicResultRow(
     // Heuristic for "already member": TDLib only includes a chat in chat
     // lists (positions) once you're in it. searchPublicChats returns
     // both joinable and joined chats; for the latter, positions is
-    // non-empty.
+    // non-empty. The badge on the right uses this to render the
+    // "Unisciti" CTA for non-members. Tapping the row body opens the
+    // chat in view-mode regardless of membership — NotificationHelper
+    // gates by membership too, so a viewed-but-not-joined chat won't
+    // start spamming heads-up notifications.
     val alreadyMember = chat.positions != null && chat.positions.isNotEmpty()
-    // Row body tap routes to onOpen only when the user is already a
-    // member (or it's a private chat, which doesn't have a "join"
-    // concept). For non-member groups/channels, tapping the row body
-    // does NOTHING — the user must explicitly tap the "Unisciti"
-    // button on the right. This protects against the pattern where
-    // tapping a public group in search auto-subscribes you to update
-    // streams (and therefore notifications) without ever clicking
-    // "Join". Previously the row's clickable opened the chat
-    // unconditionally; openChat() + TDLib's update fan-out then
-    // started pushing UpdateNewMessage from a group the user had
-    // never agreed to be in.
-    val rowTapEnabled = isPrivate || alreadyMember
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .then(
-                if (rowTapEnabled) Modifier.clickable { onOpen() }
-                else Modifier
-            )
+            .clickable { onOpen() }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

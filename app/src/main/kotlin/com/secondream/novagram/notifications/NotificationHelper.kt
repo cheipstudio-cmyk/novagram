@@ -284,6 +284,18 @@ object NotificationHelper {
         val muted = TdClient.isChatMuted(chat)
         if (muted && !isPersonalPing) return
 
+        // Skip notifications for chats the user is not actually a member of.
+        // TDLib pushes UpdateNewMessage for every chat we hold a reference
+        // to — including public groups / channels the user has only
+        // "viewed" via search (no join). Without this gate, opening any
+        // public chat starts streaming notifications from it forever.
+        // Heuristic: a chat with no positions in any chat list is not in
+        // the user's chat-list view → they haven't joined. Private chats
+        // and Saved Messages always have positions when active, so this
+        // doesn't false-positive on normal conversations.
+        val isMember = chat?.positions?.isNotEmpty() == true
+        if (!isMember) return
+
         // Skip ALL notifications for archived chats: the archive folder
         // is the user's "out of sight, out of mind" pile and should not
         // ping. The position carries an `order > 0` in ChatListArchive
