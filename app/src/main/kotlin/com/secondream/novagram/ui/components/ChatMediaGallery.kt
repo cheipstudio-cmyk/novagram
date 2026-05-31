@@ -236,14 +236,19 @@ private fun MediaGridCell(msg: TdApi.Message, onClick: () -> Unit) {
         // background DownloadFile per thumb (TDLib dedupes if already
         // pending). Priority 1 = lowest; doesn't compete with foreground
         // chat downloads when the user is also scrolling messages.
-        val scope = androidx.compose.runtime.rememberCoroutineScope()
         LaunchedEffect(thumbFile?.id) {
             val f = thumbFile ?: return@LaunchedEffect
             if (localPath == null && !f.local.isDownloadingActive && f.id != 0) {
-                scope.launch {
-                    runCatching {
-                        com.secondream.novagram.td.TdClient.downloadFile(f.id, priority = 1)
-                    }
+                // Call the suspend download directly — a LaunchedEffect
+                // body is already a coroutine, so there's no need for a
+                // rememberCoroutineScope()/scope.launch wrapper (that
+                // wrapper also pulled in a kotlinx.coroutines.launch
+                // import that was never added, which broke
+                // compileReleaseKotlin). Tying the download to the effect
+                // is also correct: if the cell is recycled to another
+                // message the key changes and the stale warm is cancelled.
+                runCatching {
+                    com.secondream.novagram.td.TdClient.downloadFile(f.id, priority = 1)
                 }
             }
         }
