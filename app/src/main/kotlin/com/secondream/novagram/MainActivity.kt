@@ -92,6 +92,19 @@ class MainActivity : ComponentActivity() {
                 initial = com.secondream.novagram.settings.AppearancePrefs()
             )
             val chatToOpen by pendingChatId.collectAsState()
+            // Download-panel "jump to message" requests: the global transfer
+            // tracker raises (chatId, messageId) when the user taps a transfer
+            // row; we feed it through the same pendingChatId path a deep link
+            // uses, so AppRouter opens the chat and ChatScreen scrolls to the
+            // message that's downloading the file.
+            val transferJump by com.secondream.novagram.transfer.TransferTracker
+                .jumpRequest.collectAsState()
+            androidx.compose.runtime.LaunchedEffect(transferJump) {
+                transferJump?.let { (cid, mid) ->
+                    pendingChatId.value = PendingOpen(cid, mid)
+                    com.secondream.novagram.transfer.TransferTracker.consumeJump()
+                }
+            }
             NovaTheme(
                 themeMode = appearance.themeMode,
                 accentColor = appearance.accentColor,

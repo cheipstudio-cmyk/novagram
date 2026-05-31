@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -181,6 +182,52 @@ fun ChatMediaGallery(
 
 private enum class MediaLayout { Grid, List }
 
+/**
+ * One media tab's content, used as a HorizontalPager page in the full-screen
+ * chat-info view. Fetches the matching messages once via searchChatMessages,
+ * then renders a 3-col grid (photos/videos) or a vertical list. Fills its
+ * container so swiping between pages never re-measures the parent — the fix
+ * for the old bottom sheet that snapped up/down on every tab switch.
+ */
+@Composable
+internal fun MediaTabContent(
+    chatId: Long,
+    filter: TdApi.SearchMessagesFilter,
+    isGrid: Boolean,
+    onItemTap: (TdApi.Message) -> Unit
+) {
+    val key = filter::class.java.name
+    var loading by remember(chatId, key) { mutableStateOf(true) }
+    var messages by remember(chatId, key) { mutableStateOf<List<TdApi.Message>>(emptyList()) }
+    LaunchedEffect(chatId, key) {
+        loading = true
+        messages = runCatching { TdClient.searchChatMessages(chatId, filter) }
+            .getOrDefault(emptyList())
+        loading = false
+    }
+    Box(modifier = Modifier.fillMaxSize()) {
+        when {
+            loading && messages.isEmpty() -> {
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+            messages.isEmpty() -> {
+                Text(
+                    "Niente da mostrare in questa categoria",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+            isGrid -> MediaGrid(messages = messages, onItemTap = onItemTap)
+            else -> MediaList(messages = messages, filter = filter, onItemTap = onItemTap)
+        }
+    }
+}
+
 private data class MediaTab(
     val label: String,
     val filter: TdApi.SearchMessagesFilter,
@@ -227,29 +274,26 @@ private fun MediaGridCell(msg: TdApi.Message, onClick: () -> Unit) {
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(onClick = onClick)
     ) {
-        val localPath = thumbFile?.local?.path?.takeIf {
-            it.isNotEmpty() && java.io.File(it).exists()
+        var localPath by remember(thumbFile?.id) {
+            mutableStateOf(
+                thumbFile?.local?.path?.takeIf {
+                    it.isNotEmpty() && java.io.File(it).exists()
+                }
+            )
         }
-        // Auto-download missing thumbs. The user explicitly asked for
-        // the chat-info gallery to populate without having to scroll
-        // through the chat first to "warm" the cache. We kick off a
-        // background DownloadFile per thumb (TDLib dedupes if already
-        // pending). Priority 1 = lowest; doesn't compete with foreground
-        // chat downloads when the user is also scrolling messages.
+        // Await the (priority-32, synchronous) download and update state so the
+        // cell recomposes into the image the moment the thumb lands. The old
+        // code fired a low-priority download but never re-read the path, so the
+        // grid sat on the placeholder until the user scrolled the chat to warm
+        // the cache — exactly the "tabs don't load unless I scroll first" bug.
         LaunchedEffect(thumbFile?.id) {
             val f = thumbFile ?: return@LaunchedEffect
-            if (localPath == null && !f.local.isDownloadingActive && f.id != 0) {
-                // Call the suspend download directly — a LaunchedEffect
-                // body is already a coroutine, so there's no need for a
-                // rememberCoroutineScope()/scope.launch wrapper (that
-                // wrapper also pulled in a kotlinx.coroutines.launch
-                // import that was never added, which broke
-                // compileReleaseKotlin). Tying the download to the effect
-                // is also correct: if the cell is recycled to another
-                // message the key changes and the stale warm is cancelled.
-                runCatching {
-                    com.secondream.novagram.td.TdClient.downloadFile(f.id, priority = 1)
-                }
+            if (localPath == null && f.id != 0) {
+                val downloaded = runCatching {
+                    com.secondream.novagram.td.TdClient.downloadFile(f.id)
+                }.getOrNull()
+                val p = downloaded?.local?.path
+                if (!p.isNullOrEmpty() && java.io.File(p).exists()) localPath = p
             }
         }
         if (localPath != null) {

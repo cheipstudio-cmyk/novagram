@@ -359,6 +359,8 @@
     <string name="offline_banner">Nessuna connessione internet</string>
     <string name="settings_privacy_typing">Mostra quando scrivo</string>
     <string name="settings_privacy_typing_desc">Notifica i contatti quando stai scrivendo un messaggio</string>
+    <string name="settings_sounds">Suoni messaggi</string>
+    <string name="settings_sounds_desc">Riproduci un suono all\'invio (toc) e alla ricezione (ding) di un messaggio</string>
     <string name="action_in_progress_muting">Silenziando…</string>
     <string name="action_in_progress_unmuting">Ripristinando…</string>
     <string name="action_in_progress_banning">Bannando…</string>

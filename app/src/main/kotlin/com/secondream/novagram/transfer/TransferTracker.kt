@@ -33,7 +33,12 @@ object TransferTracker {
         val isUpload: Boolean,
         val totalBytes: Long,
         val transferredBytes: Long,
-        val fileName: String?
+        val fileName: String?,
+        /** Chat + message this file belongs to, when known (registered by the
+         *  message bubble that rendered it). Lets the panel jump straight to
+         *  the message that's downloading the file. Null = no jump target. */
+        val chatId: Long? = null,
+        val messageId: Long? = null
     ) {
         val progress: Float
             get() = if (totalBytes > 0)
@@ -43,6 +48,37 @@ object TransferTracker {
 
     private val _transfers = MutableStateFlow<List<Transfer>>(emptyList())
     val transfers: StateFlow<List<Transfer>> = _transfers.asStateFlow()
+
+    /**
+     * fileId → (chatId, messageId) of the message that owns the file. Populated
+     * by MessageBubble as it renders media (the bubble is the one place that
+     * knows both the file and its message). Read from [onFile] to tag each
+     * Transfer with a jump target. ConcurrentHashMap because registration
+     * happens on the compose/main thread while [onFile] runs on Dispatchers.
+     */
+    private val locations = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, Long>>()
+
+    /** Record where a file lives so a panel tap can jump to it. */
+    fun registerLocation(fileId: Int, chatId: Long, messageId: Long) {
+        if (fileId != 0 && messageId != 0L) locations[fileId] = chatId to messageId
+    }
+
+    /**
+     * A pending "open this chat at this message" request raised when the user
+     * taps a transfer row. MainActivity observes it and routes through its
+     * pendingChatId pipeline (same path as a deep link), then calls
+     * [consumeJump]. Pair is (chatId, messageId).
+     */
+    private val _jumpRequest = MutableStateFlow<Pair<Long, Long>?>(null)
+    val jumpRequest: StateFlow<Pair<Long, Long>?> = _jumpRequest.asStateFlow()
+
+    fun requestJump(chatId: Long, messageId: Long) {
+        _jumpRequest.value = chatId to messageId
+    }
+
+    fun consumeJump() {
+        _jumpRequest.value = null
+    }
 
     private val active = mutableMapOf<Int, Transfer>()
     private val mutex = Any()
@@ -69,6 +105,7 @@ object TransferTracker {
         val uploaded = file.remote.uploadedSize
         val total = file.size.coerceAtLeast(0L)
         synchronized(mutex) {
+            val loc = locations[file.id]
             when {
                 downloading -> {
                     active[file.id] = Transfer(
@@ -76,7 +113,9 @@ object TransferTracker {
                         isUpload = false,
                         totalBytes = total,
                         transferredBytes = downloaded,
-                        fileName = null
+                        fileName = null,
+                        chatId = loc?.first,
+                        messageId = loc?.second
                     )
                 }
                 uploading -> {
@@ -85,7 +124,9 @@ object TransferTracker {
                         isUpload = true,
                         totalBytes = total,
                         transferredBytes = uploaded,
-                        fileName = null
+                        fileName = null,
+                        chatId = loc?.first,
+                        messageId = loc?.second
                     )
                 }
                 else -> {

@@ -47,6 +47,8 @@ class App : Application(), ImageLoaderFactory {
         super.onCreate()
         instance = this
         AppSettings.init(this)
+        // Preload the send/receive sound effects so the first blip is instant.
+        com.secondream.novagram.util.SoundFx.init(this)
 
         val tag = runBlocking { AppSettings.currentLanguageTag() }
         val locales = if (tag == "system") {

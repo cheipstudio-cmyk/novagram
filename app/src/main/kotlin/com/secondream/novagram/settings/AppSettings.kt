@@ -118,7 +118,13 @@ data class AppearancePrefs(
      * Telegram has no server-side privacy rule for typing status, so
      * the only knob is "do we emit the action or not".
      */
-    val sendTypingStatus: Boolean = true
+    val sendTypingStatus: Boolean = true,
+    /**
+     * Whether in-app sound effects play: a soft "toc" when the user sends a
+     * message and a "ding" when one arrives while the chat is open and
+     * foregrounded. Default true. Purely client-side, never sent to TDLib.
+     */
+    val messageSounds: Boolean = true
 )
 
 /**
@@ -170,6 +176,7 @@ object AppSettings {
     private val SHOW_ALL_TAB = androidx.datastore.preferences.core.booleanPreferencesKey("show_all_tab")
     private val SWAP_SWIPE_REPLY = androidx.datastore.preferences.core.booleanPreferencesKey("swap_swipe_reply")
     private val SEND_TYPING_STATUS = androidx.datastore.preferences.core.booleanPreferencesKey("send_typing_status")
+    private val MESSAGE_SOUNDS = androidx.datastore.preferences.core.booleanPreferencesKey("message_sounds")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -215,7 +222,8 @@ object AppSettings {
                 showAllTab = prefs[SHOW_ALL_TAB] ?: true,
                 swapSwipeReply = prefs[SWAP_SWIPE_REPLY] ?: true,
                 showLastSeen = prefs[SHOW_LAST_SEEN] ?: true,
-                sendTypingStatus = prefs[SEND_TYPING_STATUS] ?: true
+                sendTypingStatus = prefs[SEND_TYPING_STATUS] ?: true,
+                messageSounds = prefs[MESSAGE_SOUNDS] ?: true
             )
         }
 
@@ -233,6 +241,10 @@ object AppSettings {
 
     suspend fun setSendTypingStatus(enabled: Boolean) {
         appContext.dataStore.edit { it[SEND_TYPING_STATUS] = enabled }
+    }
+
+    suspend fun setMessageSounds(enabled: Boolean) {
+        appContext.dataStore.edit { it[MESSAGE_SOUNDS] = enabled }
     }
 
     suspend fun setShowLastSeen(enabled: Boolean) {

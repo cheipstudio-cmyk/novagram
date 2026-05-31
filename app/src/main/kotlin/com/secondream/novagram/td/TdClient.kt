@@ -1314,6 +1314,20 @@ object TdClient {
     suspend fun getSupergroupMembers(supergroupId: Long, limit: Int = 100): TdApi.ChatMembers =
         send(TdApi.GetSupergroupMembers(supergroupId, null, 0, limit.coerceIn(1, 200)))
 
+    /**
+     * Filtered variant used by the chat-info "Membri" tab and the admin-label
+     * cache. Pass SupergroupMembersFilterAdministrators() to list owner+admins,
+     * SupergroupMembersFilterSearch(query) for username/name search, or
+     * SupergroupMembersFilterRecent() for the default roster. Distinct name from
+     * the no-filter overload above to avoid a default-argument call ambiguity.
+     */
+    suspend fun getSupergroupMembersFiltered(
+        supergroupId: Long,
+        filter: TdApi.SupergroupMembersFilter?,
+        limit: Int = 200
+    ): TdApi.ChatMembers =
+        send(TdApi.GetSupergroupMembers(supergroupId, filter, 0, limit.coerceIn(1, 200)))
+
     suspend fun downloadFile(fileId: Int): TdApi.File {
         return send(TdApi.DownloadFile(fileId, 32, 0, 0, true))
     }
@@ -1535,6 +1549,48 @@ object TdClient {
     }
 
     /**
+     * Promote a member to administrator with a sensible default rights set
+     * (manage chat, change info, delete messages, restrict/ban, pin, invite,
+     * manage topics & video chats) but deliberately WITHOUT can_promote_members
+     * — handing out the ability to mint more admins is a heavier decision than
+     * a one-tap promote should make. The owner can still grant that from
+     * Telegram's full admin editor if they want it.
+     */
+    suspend fun promoteToAdmin(chatId: Long, userId: Long) {
+        val rights = TdApi.ChatAdministratorRights(
+            true,  // canManageChat
+            true,  // canChangeInfo
+            false, // canPostMessages (channels only)
+            false, // canEditMessages (channels only)
+            true,  // canDeleteMessages
+            true,  // canInviteUsers
+            true,  // canRestrictMembers
+            true,  // canPinMessages
+            true,  // canManageTopics
+            false, // canPromoteMembers
+            true,  // canManageVideoChats
+            false, // canPostStories
+            false, // canEditStories
+            false, // canDeleteStories
+            false, // canManageDirectMessages
+            false, // canManageTags
+            false  // isAnonymous
+        )
+        send(TdApi.SetChatMemberStatus(
+            chatId, TdApi.MessageSenderUser(userId),
+            TdApi.ChatMemberStatusAdministrator(true, rights)
+        ))
+    }
+
+    /** Reverse of [promoteToAdmin]: drop the user back to a plain member. */
+    suspend fun demoteFromAdmin(chatId: Long, userId: Long) {
+        send(TdApi.SetChatMemberStatus(
+            chatId, TdApi.MessageSenderUser(userId),
+            TdApi.ChatMemberStatusMember(0)
+        ))
+    }
+
+    /**
      * Fetch the list of users who reacted to a message with a specific
      * reaction type. Used by MessageActionsSheet to render the avatar
      * stack next to each reaction chip. limit=12 fits one row of small
@@ -1562,12 +1618,27 @@ object TdClient {
      * differ from its private-chat command set).
      */
     suspend fun getBotCommandsForChat(chatId: Long): List<TdApi.BotCommand> {
-        // The "any bot" form: pass scope=BotCommandScopeChat and TDLib
-        // returns the merged command list across every bot in the chat.
-        val res = runCatching {
-            send(TdApi.GetCommands(TdApi.BotCommandScopeChat(chatId), ""))
-        }.getOrNull()
-        return res?.commands?.toList() ?: emptyList()
+        // GetCommands is a *bot-only* TDLib method: called from a regular
+        // user account (which is what this client always is) it returns
+        // nothing, which is exactly why the slash-command picker stayed
+        // empty in groups — the user typed "/" and saw no suggestions.
+        //
+        // The commands that bots have REGISTERED for a group live on the
+        // group's full info instead: SupergroupFullInfo.botCommands /
+        // BasicGroupFullInfo.botCommands, each entry being one bot's
+        // command set (botUserId + its BotCommand[]). We fetch the full
+        // info (TDLib caches it after the first call, so this is cheap on
+        // repeat opens) and flatten every bot's commands into one list the
+        // picker filters live as the user types.
+        val chat = getCachedChat(chatId)
+        val arrays: Array<TdApi.BotCommands>? = when (val t = chat?.type) {
+            is TdApi.ChatTypeSupergroup ->
+                runCatching { getSupergroupFullInfo(t.supergroupId) }.getOrNull()?.botCommands
+            is TdApi.ChatTypeBasicGroup ->
+                runCatching { getBasicGroupFullInfo(t.basicGroupId) }.getOrNull()?.botCommands
+            else -> null
+        }
+        return arrays?.flatMap { it.commands.toList() } ?: emptyList()
     }
 
     /**
@@ -1603,6 +1674,23 @@ object TdClient {
     /** Full info about a supergroup or channel: description, member count, link. */
     suspend fun getSupergroupFullInfo(supergroupId: Long): TdApi.SupergroupFullInfo =
         send(TdApi.GetSupergroupFullInfo(supergroupId))
+
+    /**
+     * Who has *viewed* this message in the group (distinct from who
+     * reacted). Returns the viewer user ids in TDLib's order. TDLib only
+     * yields a non-empty set for our own recently-sent messages, in groups
+     * small enough to track read receipts, and within the view window;
+     * outside those conditions it returns an empty set and the caller
+     * simply renders no "seen by" row. Wrapped in runCatching because
+     * TDLib errors (message too old, group too large, channel) come back
+     * as exceptions and we treat them all as "no viewers".
+     */
+    suspend fun getMessageViewers(chatId: Long, messageId: Long): List<Long> {
+        val res = runCatching {
+            send(TdApi.GetMessageViewers(chatId, messageId))
+        }.getOrNull() ?: return emptyList()
+        return res.viewers.map { it.userId }.filter { it != 0L }
+    }
 
     /** Update the signed-in user's first/last name (last name may be empty). */
     suspend fun setName(firstName: String, lastName: String) {

@@ -10,7 +10,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.secondream.novagram.MainActivity
 import com.secondream.novagram.R
-import kotlinx.coroutines.launch
 import com.secondream.novagram.td.TdClient
 import org.drinkless.tdlib.TdApi
 
@@ -159,22 +158,33 @@ object NotificationHelper {
     }
 
     /**
-     * Kick off a TDLib download for the avatar file when it's not yet
-     * local. Fire-and-forget: we don't block the notification on this,
-     * but on the next message-for-this-chat we'll have the bitmap
-     * ready. Without this nudge, TDLib may never pull chat photos for
-     * inactive chats (it only auto-downloads avatars for chats the
-     * user has scrolled past in the chat list), which means
-     * notifications from rarely-opened chats would NEVER get an
-     * avatar.
+     * Resolve an avatar to a circular bitmap, downloading the thumb first if
+     * TDLib hasn't cached it yet.
+     *
+     * The old approach merely *kicked off* a download and then immediately
+     * tried to load the file — which had almost always not finished, so the
+     * very first notification for a chat (and every notification for chats
+     * whose avatar TDLib hadn't pre-fetched) fell back to the letter circle.
+     * That's the "it keeps showing the initial" bug.
+     *
+     * TDLib's DownloadFile is synchronous in this client (see
+     * TdClient.downloadFile → the trailing `true`), so we can simply await it.
+     * Avatar thumbs are a few KB, so this resolves in well under a second on
+     * the common path; we still cap it with a timeout so a stalled transfer
+     * can never hang the notification. Blocking here is safe: showMessage runs
+     * off the main thread on the newMessages collector and already uses
+     * runBlocking for self-id resolution. Once a thumb is cached the
+     * isDownloadingCompleted fast-path makes every later notification instant.
      */
-    private fun ensureAvatarDownload(file: TdApi.File?) {
-        if (file == null) return
-        if (file.local?.isDownloadingCompleted == true) return
-        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { TdClient.downloadFile(file.id) }
-        }
+    private fun resolveAvatarBitmap(file: TdApi.File?): android.graphics.Bitmap? {
+        if (file == null) return null
+        if (file.local?.isDownloadingCompleted == true) return loadAvatarBitmap(file)
+        val downloaded = runCatching {
+            kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                kotlinx.coroutines.withTimeoutOrNull(2500) { TdClient.downloadFile(file.id) }
+            }
+        }.getOrNull()
+        return loadAvatarBitmap(downloaded ?: file)
     }
 
     private fun ensureSelfUserId(): Long {
@@ -350,8 +360,7 @@ object NotificationHelper {
         // the peer's photo would defeat the point.
         val avatarFile = if (isSecretChat) null
             else pickAvatarFile(chat, message, isGroup, isChannel)
-        ensureAvatarDownload(avatarFile)
-        val avatarBitmap = loadAvatarBitmap(avatarFile)
+        val avatarBitmap = resolveAvatarBitmap(avatarFile)
         val avatarIcon = avatarBitmap?.let {
             androidx.core.graphics.drawable.IconCompat.createWithAdaptiveBitmap(it)
         }
@@ -436,8 +445,7 @@ object NotificationHelper {
         // the group photo. The sender's photo is already shown inline
         // via the Person.icon in the MessagingStyle row.
         val largeIconFile = if (isSecretChat) null else chat?.photo?.small
-        ensureAvatarDownload(largeIconFile)
-        val largeIconBitmap = loadAvatarBitmap(largeIconFile)
+        val largeIconBitmap = resolveAvatarBitmap(largeIconFile)
             ?: avatarBitmap  // fall back to per-message avatar if chat has none
         val notif = NotificationCompat.Builder(appContext, CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_stat_messenger)

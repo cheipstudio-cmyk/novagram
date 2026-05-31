@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -311,11 +312,45 @@ fun ChatScreen(
             else -> false
         }
     }
+    // Owner/admin labels for group message bubbles. Fetched once per group:
+    // supergroups via the Administrators filter, basic groups from the full
+    // member list. userId → "Proprietario" / "Amministratore". Empty for
+    // private chats or on any fetch failure (bubbles just show no badge).
+    var adminLabels by remember(chatId) { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    LaunchedEffect(chatId) {
+        if (!isGroupChat) return@LaunchedEffect
+        val chat = TdClient.getCachedChat(chatId) ?: return@LaunchedEffect
+        val out = mutableMapOf<Long, String>()
+        val members: List<TdApi.ChatMember> = when (val t = chat.type) {
+            is TdApi.ChatTypeSupergroup -> runCatching {
+                TdClient.getSupergroupMembersFiltered(
+                    t.supergroupId,
+                    TdApi.SupergroupMembersFilterAdministrators(),
+                    200
+                )
+            }.getOrNull()?.members?.toList().orEmpty()
+            is TdApi.ChatTypeBasicGroup -> runCatching {
+                TdClient.getBasicGroupFullInfo(t.basicGroupId)
+            }.getOrNull()?.members?.toList().orEmpty()
+            else -> emptyList()
+        }
+        for (m in members) {
+            val uid = (m.memberId as? TdApi.MessageSenderUser)?.userId ?: continue
+            when (m.status) {
+                is TdApi.ChatMemberStatusCreator -> out[uid] = "Proprietario"
+                is TdApi.ChatMemberStatusAdministrator -> out[uid] = "Amministratore"
+                else -> {}
+            }
+        }
+        adminLabels = out
+    }
+
     // Re-evaluate membership whenever TDLib echoes a status change on
     // this chat — covers our own join landing (status flips from Left
     // → Member) AND being kicked while in the chat (Member → Banned,
     // input goes back to a CTA).
     LaunchedEffect(chatId) {
+        var lastAdminRefresh = 0L
         TdClient.chatUpdates.collect { cid ->
             if (cid != chatId) return@collect
             val me = myUserId ?: return@collect
@@ -330,6 +365,39 @@ fun ChatScreen(
                     !hasListPosition
                 }
                 else -> false
+            }
+            // Keep owner/admin bubble labels live: re-pull the admin roster
+            // when this chat echoes a change (promote / demote / ban) so a
+            // status change reflects in the bubbles immediately, not only on
+            // re-open. Throttled to once / 3s so a busy chat's stream of
+            // updates doesn't spam GetSupergroupMembers.
+            val now = System.currentTimeMillis()
+            if (now - lastAdminRefresh > 3000) {
+                lastAdminRefresh = now
+                val chatNow = TdClient.getCachedChat(chatId)
+                val refreshed = mutableMapOf<Long, String>()
+                val mem: List<TdApi.ChatMember> = when (val t = chatNow?.type) {
+                    is TdApi.ChatTypeSupergroup -> runCatching {
+                        TdClient.getSupergroupMembersFiltered(
+                            t.supergroupId,
+                            TdApi.SupergroupMembersFilterAdministrators(),
+                            200
+                        )
+                    }.getOrNull()?.members?.toList().orEmpty()
+                    is TdApi.ChatTypeBasicGroup -> runCatching {
+                        TdClient.getBasicGroupFullInfo(t.basicGroupId)
+                    }.getOrNull()?.members?.toList().orEmpty()
+                    else -> emptyList()
+                }
+                for (m in mem) {
+                    val uid = (m.memberId as? TdApi.MessageSenderUser)?.userId ?: continue
+                    when (m.status) {
+                        is TdApi.ChatMemberStatusCreator -> refreshed[uid] = "Proprietario"
+                        is TdApi.ChatMemberStatusAdministrator -> refreshed[uid] = "Amministratore"
+                        else -> {}
+                    }
+                }
+                adminLabels = refreshed
             }
         }
     }
@@ -883,15 +951,27 @@ fun ChatScreen(
     // them and then fires UpdateChatReadInbox, which our handler
     // applies to the chatCache → chat-list badge drops in real time.
     LaunchedEffect(chatId) {
+        val openedMentions = mutableSetOf<Long>()
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
             .distinctUntilChanged()
             .collect { indices ->
                 if (indices.isEmpty()) return@collect
-                val ids = indices.mapNotNull { idx ->
-                    messages.getOrNull(idx)?.let { m -> if (!m.isOutgoing) m.id else null }
-                }.toLongArray()
+                val visible = indices.mapNotNull { idx -> messages.getOrNull(idx) }
+                val ids = visible.mapNotNull { m -> if (!m.isOutgoing) m.id else null }.toLongArray()
                 if (ids.isNotEmpty()) {
                     runCatching { TdClient.viewMessages(chatId, ids) }
+                }
+                // Mentions: plain viewMessages does NOT decrement
+                // unread_mention_count in this TDLib build, so reading a
+                // mention by scrolling to it left the @ badge stuck. For any
+                // visible message that still carries an unread mention we
+                // additionally open its content — that's what clears it
+                // server-side (→ UpdateChatUnreadMentionCount → chip drops).
+                // The set guards against re-opening the same id every frame.
+                visible.forEach { m ->
+                    if (m.containsUnreadMention && openedMentions.add(m.id)) {
+                        runCatching { TdClient.openMessageContent(chatId, m.id) }
+                    }
                 }
             }
     }
@@ -907,6 +987,16 @@ fun ChatScreen(
                 }
                 if (!msg.isOutgoing) {
                     runCatching { TdClient.viewMessages(chatId, longArrayOf(msg.id)) }
+                    // In-app receive blip ("ding"), but only while the app is
+                    // actually foregrounded on this chat — when backgrounded the
+                    // system notification carries its own sound, so gating on
+                    // isInForeground prevents a double chime. Toggleable via the
+                    // messageSounds pref.
+                    if (appearance.messageSounds &&
+                        com.secondream.novagram.AppForegroundState.isInForeground
+                    ) {
+                        com.secondream.novagram.util.SoundFx.playReceive(context)
+                    }
                 }
             }
         }
@@ -1252,10 +1342,10 @@ fun ChatScreen(
                 // bubble height to get its bottom edge:
                 //     scrollOffset = vp*7/10 - targetH
                 // Using the full targetH (not targetH/2) is what keeps the
-                // TOP at a true 30% regardless of bubble height — an
+                // TOP at a true 15% regardless of bubble height — an
                 // earlier attempt used targetH/2 and tall bubbles slid off
                 // the bottom of the screen. Clamp at 0 so a bubble taller
-                // than 0.70*vp simply anchors to the viewport bottom
+                // than 0.85*vp simply anchors to the viewport bottom
                 // instead of producing a negative offset.
                 //
                 // Phase 1: rough scroll using (vp - 400) as a
@@ -1271,27 +1361,46 @@ fun ChatScreen(
                 // pagination case (animating through freshly-inserted
                 // items causes the "scatto bruttissimo" jitter).
                 suspend fun preciseRefine() {
-                    // One frame is usually enough for LazyColumn to
-                    // place the freshly-scrolled-to item and update
-                    // layoutInfo. Up to 3 attempts handles slower
-                    // device frames / async media measure passes.
-                    repeat(3) {
+                    // Find the freshly-scrolled-to item in layoutInfo, then
+                    // place it precisely. Up to 8 attempts (≈128ms) handles
+                    // slow device frames and async media measure passes —
+                    // the old 3-attempt window sometimes expired before a
+                    // freshly-paginated item appeared in visibleItemsInfo,
+                    // leaving the target stuck at the rough offset.
+                    repeat(8) {
                         kotlinx.coroutines.delay(16)
                         val vp = listState.layoutInfo.viewportSize.height
                         val item = listState.layoutInfo.visibleItemsInfo
                             .find { it.index == idx }
                         if (vp > 0 && item != null) {
                             val targetH = item.size
-                            val precise = (vp * 7 / 10 - targetH).coerceAtLeast(0)
-                            // Snap for refinement: the rough scroll
-                            // already animated/snapped to the
-                            // approximate region, the refine is a
-                            // small correction that should land
-                            // instantly. Animating it would create a
-                            // second visible motion right after the
-                            // first, which feels like the chat is
-                            // "twitching" into place.
+                            // Place the target's TOP at ~15% from the top of
+                            // the viewport (was 30%, which the user still
+                            // found too low). Geometry (reverseLayout=true):
+                            // scrollToItem(idx, K) puts the item's top at
+                            // vp-(K+size) from the visual top, so K =
+                            // vp*85/100 - size lands the top at 15%. Clamp
+                            // at 0 so a bubble taller than 0.85*vp anchors to
+                            // the viewport bottom instead of a negative
+                            // offset.
+                            val precise = (vp * 85 / 100 - targetH).coerceAtLeast(0)
                             runCatching { listState.scrollToItem(idx, precise) }
+                            // Re-settle: image/video bubbles grow a frame or
+                            // two later when the thumbnail finishes decoding,
+                            // which shifts the just-placed target back down.
+                            // Wait a touch longer and, if the measured height
+                            // changed, correct once more so the target holds
+                            // its slot instead of drifting — this was the
+                            // "have to scroll down a bit to see it" symptom
+                            // for media targets.
+                            kotlinx.coroutines.delay(90)
+                            val item2 = listState.layoutInfo.visibleItemsInfo
+                                .find { it.index == idx }
+                            val vp2 = listState.layoutInfo.viewportSize.height
+                            if (item2 != null && vp2 > 0 && item2.size != targetH) {
+                                val precise2 = (vp2 * 85 / 100 - item2.size).coerceAtLeast(0)
+                                runCatching { listState.scrollToItem(idx, precise2) }
+                            }
                             return
                         }
                     }
@@ -1306,7 +1415,7 @@ fun ChatScreen(
                 val existing = listState.layoutInfo.visibleItemsInfo
                     .find { it.index == idx }
                 if (existing != null && viewportH0 > 0 && wasAlreadyLoaded) {
-                    val precise = (viewportH0 * 7 / 10 - existing.size).coerceAtLeast(0)
+                    val precise = (viewportH0 * 85 / 100 - existing.size).coerceAtLeast(0)
                     runCatching { listState.animateScrollToItem(idx, precise) }
                 } else {
                     val roughOffset = if (viewportH0 > 0) (viewportH0 - 400).coerceAtLeast(200) else 200
@@ -1608,6 +1717,16 @@ fun ChatScreen(
     ) {
 
     Scaffold(
+        // The bottom navigation-bar inset is owned by the InputBar (and the
+        // join-chat / non-member boxes), each of which applies
+        // navigationBarsPadding() itself. If we ALSO let the Scaffold add the
+        // system bottom inset to `padding`, the nav bar is counted twice — a
+        // barely-visible gap with gesture nav but a huge dead band with the
+        // 3-button bar. Zeroing contentWindowInsets makes the InputBar the
+        // single source of truth for the bottom inset. (The status-bar inset
+        // at the top is still handled by TopAppBar's own windowInsets, so the
+        // header is unaffected.)
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             Column {
             // Saved Messages pseudo-chat detection: re-derives on every
@@ -1986,6 +2105,8 @@ fun ChatScreen(
                             MessageBubble(
                                 message = msg,
                                 showSender = isGroupChat,
+                                adminLabel = (msg.senderId as? TdApi.MessageSenderUser)
+                                    ?.userId?.let { adminLabels[it] },
                                 onLongPress = { deleteTarget = it },
                                 onMediaTap = { path ->
                                     com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
@@ -2517,6 +2638,14 @@ fun ChatScreen(
                     val media = pendingMedia
                     val rid = replyTarget?.id
                     val editing = editTarget
+                    // Send blip ("toc") — only for an actual new outgoing
+                    // message (text and/or media), never for edits. Toggleable
+                    // via the messageSounds pref.
+                    if (editing == null && (text.isNotEmpty() || media.isNotEmpty()) &&
+                        appearance.messageSounds
+                    ) {
+                        com.secondream.novagram.util.SoundFx.playSend(context)
+                    }
                     when {
                         editing != null -> {
                             // Edit branch: dispatch EditMessageText for plain
@@ -3518,7 +3647,10 @@ fun ChatScreen(
  * peek, not a profile screen, which we'll add as its own route in a later
  * round.
  */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class
+)
 @Composable
 internal fun ChatInfoDialog(
     chatId: Long,
@@ -3532,6 +3664,15 @@ internal fun ChatInfoDialog(
     var description by remember(chatId) { mutableStateOf<String?>(null) }
     var phone by remember(chatId) { mutableStateOf<String?>(null) }
     var username by remember(chatId) { mutableStateOf<String?>(null) }
+
+    // Group/admin context — drives whether the "Membri" tab appears.
+    val chatType = chat?.type
+    val supergroupId = (chatType as? TdApi.ChatTypeSupergroup)?.supergroupId
+    val basicGroupId = (chatType as? TdApi.ChatTypeBasicGroup)?.basicGroupId
+    val isChannel = (chatType as? TdApi.ChatTypeSupergroup)?.isChannel == true
+    val isGroup = (supergroupId != null && !isChannel) || basicGroupId != null
+    var myUserId by remember(chatId) { mutableStateOf(0L) }
+    var isSelfAdmin by remember(chatId) { mutableStateOf(false) }
 
     LaunchedEffect(chatId) {
         val c = chat ?: return@LaunchedEffect
@@ -3554,150 +3695,539 @@ internal fun ChatInfoDialog(
                 val info = runCatching { TdClient.getSupergroupFullInfo(t.supergroupId) }.getOrNull()
                 subtitle = info?.memberCount?.let { "$it ${labelMembers(it, channel = t.isChannel)}" }
                 description = info?.description?.takeIf { it.isNotBlank() }
-                username = TdClient.getCachedChat(chatId)?.let {
-                    (it.type as? TdApi.ChatTypeSupergroup)?.let { _ -> null } // username not on Chat; fetch via supergroup
-                }
             }
             else -> {}
         }
     }
 
-    // Full-bleed modal sheet — replaces the tiny AlertDialog with something
-    // that feels like a profile screen: big circular avatar, name, subtitle,
-    // detail rows (bio/description, username, phone). Dismissed by swiping
-    // down or tapping outside.
-    androidx.compose.material3.ModalBottomSheet(
+    // Resolve self id + admin status (gates the Membri tab).
+    LaunchedEffect(chatId) {
+        val me = runCatching { TdClient.getMe().id }.getOrNull() ?: return@LaunchedEffect
+        myUserId = me
+        val status = TdClient.getChatMemberStatus(chatId, me)
+        isSelfAdmin = status is TdApi.ChatMemberStatusCreator ||
+            status is TdApi.ChatMemberStatusAdministrator
+    }
+
+    val showMembers = isGroup && isSelfAdmin
+    val phos = com.secondream.novagram.ui.icons.PhosphorIcons
+    val tabs = remember(showMembers) {
+        buildList {
+            add(ChatInfoTab("Info", phos.Info))
+            add(ChatInfoTab("Foto", phos.Image))
+            add(ChatInfoTab("Video", phos.Play))
+            add(ChatInfoTab("File", phos.FileText))
+            add(ChatInfoTab("Link", phos.Paperclip))
+            add(ChatInfoTab("Voce", phos.Microphone))
+            add(ChatInfoTab("Musica", phos.FileAudio))
+            if (showMembers) add(ChatInfoTab("Membri", phos.UsersThree))
+        }
+    }
+    val membersIndex = if (showMembers) tabs.lastIndex else -1
+
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(
+        initialPage = 0,
+        pageCount = { tabs.size }
+    )
+    val scope = rememberCoroutineScope()
+
+    var selectedMediaMessage by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
+    var selectedMember by remember(chatId) { mutableStateOf<TdApi.ChatMember?>(null) }
+    // Bumped after a member action so the Membri list reloads in place (the
+    // action already lands server-side; this gives immediate visual feedback).
+    var membersRefresh by remember(chatId) { mutableStateOf(0) }
+
+    androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
-        sheetState = androidx.compose.material3.rememberModalBottomSheetState(
-            skipPartiallyExpanded = true
-        ),
-        containerColor = MaterialTheme.colorScheme.surface,
-        dragHandle = { androidx.compose.material3.BottomSheetDefaults.DragHandle() }
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp)
-                .navigationBarsPadding(),
-            horizontalAlignment = Alignment.CenterHorizontally
+        androidx.compose.material3.Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surface
         ) {
-            // Big circular avatar — 120dp, centered.
-            com.secondream.novagram.ui.components.Avatar(
-                file = chat?.photo?.small,
-                fallbackText = title,
-                bgColor = com.secondream.novagram.ui.screens.avatarBackgroundFor(chatId),
-                size = 120.dp
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                title,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            )
-            subtitle?.let {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
-            }
-            Spacer(Modifier.height(24.dp))
-
-            description?.let {
-                ProfileDetailRow(
-                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Info,
-                    label = stringResource(R.string.chat_info_bio_label),
-                    value = it,
-                    linkify = true
-                )
-            }
-            username?.let {
-                ProfileDetailRow(
-                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.At,
-                    label = stringResource(R.string.chat_info_username_label),
-                    value = "@$it",
-                    copyValue = "@$it"
-                )
-            }
-            phone?.let {
-                ProfileDetailRow(
-                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Phone,
-                    label = stringResource(R.string.chat_info_phone_label),
-                    value = it,
-                    copyValue = it
-                )
-            }
-            if (description == null && username == null && phone == null && subtitle == null) {
-                Text(
-                    stringResource(R.string.chat_info_no_details),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                )
-            }
-
-            // MEDIA GALLERY — six-tab section with chat-wide media,
-            // links, files, voice, and music. Items tap into a small
-            // ActionBottomSheet offering "Apri" (open in viewer / via
-            // Intent) and "Visualizza in chat" (jumps to that message
-            // in the parent ChatScreen via onJumpToMessage).
-            Spacer(Modifier.height(20.dp))
-            androidx.compose.material3.HorizontalDivider(
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                thickness = 0.5.dp
-            )
-            Spacer(Modifier.height(12.dp))
-            var selectedMediaMessage by remember(chatId) {
-                mutableStateOf<TdApi.Message?>(null)
-            }
-            com.secondream.novagram.ui.components.ChatMediaGallery(
-                chatId = chatId,
-                onItemTap = { msg -> selectedMediaMessage = msg }
-            )
-            selectedMediaMessage?.let { msg ->
-                val ctx = LocalContext.current
-                ChatMediaItemActions(
-                    message = msg,
-                    onDismiss = { selectedMediaMessage = null },
-                    onJumpToMessage = {
-                        selectedMediaMessage = null
-                        onJumpToMessage(msg.id)
+            Column(modifier = Modifier.fillMaxSize()) {
+                androidx.compose.material3.TopAppBar(
+                    title = {
+                        Text(
+                            title,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
                     },
-                    onOpenInViewer = { path ->
-                        selectedMediaMessage = null
-                        com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
-                        // We don't have direct router access from inside
-                        // this dialog, so we hand the path off via the
-                        // global holder + dismiss the dialog. The user
-                        // re-opens the chat avatar / name if they want
-                        // the gallery back. Future iteration: thread a
-                        // dedicated onOpenMediaViewer callback through.
-                        onDismiss()
-                    },
-                    onOpenViaIntent = { path, mime ->
-                        selectedMediaMessage = null
-                        runCatching {
-                            val file = java.io.File(path)
-                            val uri = androidx.core.content.FileProvider.getUriForFile(
-                                ctx,
-                                ctx.packageName + ".fileprovider",
-                                file
-                            )
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
-                                .setDataAndType(uri, mime)
-                                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            ctx.startActivity(intent)
+                    navigationIcon = {
+                        androidx.compose.material3.IconButton(onClick = onDismiss) {
+                            Icon(phos.CaretLeft, contentDescription = "Indietro")
                         }
                     }
                 )
+                // Compact identity header.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    com.secondream.novagram.ui.components.Avatar(
+                        file = chat?.photo?.small,
+                        fallbackText = title,
+                        bgColor = com.secondream.novagram.ui.screens.avatarBackgroundFor(chatId),
+                        size = 84.dp
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                    subtitle?.let {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+                // Icon tab row (home-pill style), synced to the pager.
+                androidx.compose.foundation.lazy.LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+                ) {
+                    items(tabs.size) { idx ->
+                        val selected = pagerState.currentPage == idx
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                )
+                                .clickable { scope.launch { pagerState.animateScrollToPage(idx) } }
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                tabs[idx].icon,
+                                contentDescription = null,
+                                tint = if (selected) MaterialTheme.colorScheme.onPrimary
+                                    else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                tabs[idx].label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimary
+                                    else MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+                androidx.compose.material3.HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                    thickness = 0.5.dp
+                )
+                androidx.compose.foundation.pager.HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) { page ->
+                    when (page) {
+                        0 -> ChatInfoDetailPage(description, username, phone)
+                        membersIndex -> ChatMembersTab(
+                            chatId = chatId,
+                            supergroupId = supergroupId,
+                            basicGroupId = basicGroupId,
+                            refreshKey = membersRefresh,
+                            onMemberTap = { selectedMember = it }
+                        )
+                        else -> {
+                            val (filter, isGrid) = mediaFilterForPage(page)
+                            com.secondream.novagram.ui.components.MediaTabContent(
+                                chatId = chatId,
+                                filter = filter,
+                                isGrid = isGrid,
+                                onItemTap = { selectedMediaMessage = it }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Media item actions (open / jump-to-chat). Same behavior as before.
+        selectedMediaMessage?.let { msg ->
+            val ctx = LocalContext.current
+            ChatMediaItemActions(
+                message = msg,
+                onDismiss = { selectedMediaMessage = null },
+                onJumpToMessage = {
+                    selectedMediaMessage = null
+                    onJumpToMessage(msg.id)
+                },
+                onOpenInViewer = { path ->
+                    selectedMediaMessage = null
+                    com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
+                    onDismiss()
+                },
+                onOpenViaIntent = { path, mime ->
+                    selectedMediaMessage = null
+                    runCatching {
+                        val file = java.io.File(path)
+                        val uri = androidx.core.content.FileProvider.getUriForFile(
+                            ctx,
+                            ctx.packageName + ".fileprovider",
+                            file
+                        )
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                            .setDataAndType(uri, mime)
+                            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        ctx.startActivity(intent)
+                    }
+                }
+            )
+        }
+
+        // Member actions (ban / mute / promote), shown when a member row is tapped.
+        selectedMember?.let { member ->
+            MemberActionSheet(
+                chatId = chatId,
+                member = member,
+                onDismiss = { selectedMember = null },
+                onChanged = { membersRefresh++ }
+            )
+        }
+    }
+}
+
+private data class ChatInfoTab(
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+)
+
+/** Maps a pager page index (1..6) to its media filter + grid/list layout. */
+private fun mediaFilterForPage(page: Int): Pair<TdApi.SearchMessagesFilter, Boolean> = when (page) {
+    1 -> TdApi.SearchMessagesFilterPhoto() to true
+    2 -> TdApi.SearchMessagesFilterVideo() to true
+    3 -> TdApi.SearchMessagesFilterDocument() to false
+    4 -> TdApi.SearchMessagesFilterUrl() to false
+    5 -> TdApi.SearchMessagesFilterVoiceNote() to false
+    else -> TdApi.SearchMessagesFilterAudio() to false
+}
+
+/** Info tab: scrollable detail rows (bio / username / phone) or a placeholder. */
+@Composable
+private fun ChatInfoDetailPage(
+    description: String?,
+    username: String?,
+    phone: String?
+) {
+    val phos = com.secondream.novagram.ui.icons.PhosphorIcons
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 12.dp)
+    ) {
+        description?.let {
+            ProfileDetailRow(
+                icon = phos.Info,
+                label = stringResource(R.string.chat_info_bio_label),
+                value = it,
+                linkify = true
+            )
+        }
+        username?.let {
+            ProfileDetailRow(
+                icon = phos.At,
+                label = stringResource(R.string.chat_info_username_label),
+                value = "@$it",
+                copyValue = "@$it"
+            )
+        }
+        phone?.let {
+            ProfileDetailRow(
+                icon = phos.Phone,
+                label = stringResource(R.string.chat_info_phone_label),
+                value = it,
+                copyValue = it
+            )
+        }
+        if (description == null && username == null && phone == null) {
+            Text(
+                stringResource(R.string.chat_info_no_details),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
+    }
+}
+
+/** Members tab (admins only): search field + member list. */
+@Composable
+private fun ChatMembersTab(
+    chatId: Long,
+    supergroupId: Long?,
+    basicGroupId: Long?,
+    refreshKey: Int,
+    onMemberTap: (TdApi.ChatMember) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var members by remember(chatId) { mutableStateOf<List<TdApi.ChatMember>>(emptyList()) }
+    var loading by remember(chatId) { mutableStateOf(true) }
+    LaunchedEffect(chatId, query, supergroupId, basicGroupId, refreshKey) {
+        loading = true
+        members = when {
+            supergroupId != null -> {
+                val filter = if (query.isBlank())
+                    TdApi.SupergroupMembersFilterRecent()
+                else TdApi.SupergroupMembersFilterSearch(query)
+                runCatching {
+                    TdClient.getSupergroupMembersFiltered(supergroupId, filter, 200)
+                }.getOrNull()?.members?.toList().orEmpty()
+            }
+            basicGroupId != null -> {
+                val all = runCatching {
+                    TdClient.getBasicGroupFullInfo(basicGroupId)
+                }.getOrNull()?.members?.toList().orEmpty()
+                if (query.isBlank()) all
+                else all.filter { m ->
+                    val uid = (m.memberId as? TdApi.MessageSenderUser)?.userId
+                    val u = uid?.let { TdClient.getCachedUser(it) }
+                    val hay = listOfNotNull(
+                        u?.firstName, u?.lastName, u?.usernames?.editableUsername
+                    ).joinToString(" ").lowercase()
+                    hay.contains(query.lowercase())
+                }
+            }
+            else -> emptyList()
+        }
+        loading = false
+    }
+    Column(modifier = Modifier.fillMaxSize()) {
+        androidx.compose.material3.OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            placeholder = { Text("Cerca per nome o username") },
+            leadingIcon = {
+                Icon(
+                    com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass,
+                    contentDescription = null
+                )
+            },
+            singleLine = true
+        )
+        when {
+            loading && members.isEmpty() -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 3.dp
+                    )
+                }
+            }
+            members.isEmpty() -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "Nessun membro trovato",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            else -> {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(members) { m ->
+                        ChatMemberRow(member = m, onClick = { onMemberTap(m) })
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun ChatMemberRow(member: TdApi.ChatMember, onClick: () -> Unit) {
+    val uid = (member.memberId as? TdApi.MessageSenderUser)?.userId
+    var user by remember(uid) {
+        mutableStateOf<TdApi.User?>(uid?.let { TdClient.getCachedUser(it) })
+    }
+    LaunchedEffect(uid) {
+        if (user == null && uid != null) {
+            user = runCatching { TdClient.getUser(uid) }.getOrNull()
+        }
+    }
+    val name = user?.let { "${it.firstName} ${it.lastName}".trim() }
+        ?.takeIf { it.isNotBlank() } ?: "Utente"
+    val statusLabel = when (member.status) {
+        is TdApi.ChatMemberStatusCreator -> "Proprietario"
+        is TdApi.ChatMemberStatusAdministrator -> "Amministratore"
+        is TdApi.ChatMemberStatusRestricted -> "Limitato"
+        is TdApi.ChatMemberStatusBanned -> "Bannato"
+        else -> null
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        com.secondream.novagram.ui.components.Avatar(
+            file = user?.profilePhoto?.small,
+            fallbackText = name,
+            size = 40.dp
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+            val uname = user?.usernames?.editableUsername
+            if (uname != null) {
+                Text(
+                    "@$uname",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+        }
+        if (statusLabel != null) {
+            Text(
+                statusLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+/** Ban / mute / promote action sheet for a tapped group member. */
+@Composable
+private fun MemberActionSheet(
+    chatId: Long,
+    member: TdApi.ChatMember,
+    onDismiss: () -> Unit,
+    onChanged: () -> Unit = {}
+) {
+    val scope = rememberCoroutineScope()
+    val uid = (member.memberId as? TdApi.MessageSenderUser)?.userId ?: return
+    val status = member.status
+    val phos = com.secondream.novagram.ui.icons.PhosphorIcons
+    val isBanned = status is TdApi.ChatMemberStatusBanned
+    val isMuted = status is TdApi.ChatMemberStatusRestricted
+    val isAdmin = status is TdApi.ChatMemberStatusAdministrator
+    val isCreator = status is TdApi.ChatMemberStatusCreator
+    val tiles = buildList {
+        if (isBanned) {
+            add(com.secondream.novagram.ui.components.ActionTile(
+                label = "Sbanna",
+                icon = phos.User,
+                onClick = {
+                    onDismiss()
+                    scope.launch {
+                        runCatching { TdClient.unbanGroupUser(chatId, uid) }
+                        onChanged()
+                    }
+                }
+            ))
+        } else if (!isCreator) {
+            add(com.secondream.novagram.ui.components.ActionTile(
+                label = "Banna",
+                icon = phos.UserMinus,
+                destructive = true,
+                onClick = {
+                    onDismiss()
+                    scope.launch {
+                        runCatching { TdClient.kickGroupUser(chatId, uid) }
+                        onChanged()
+                    }
+                }
+            ))
+        }
+        if (isMuted) {
+            add(com.secondream.novagram.ui.components.ActionTile(
+                label = "Smuta",
+                icon = phos.Bell,
+                onClick = {
+                    onDismiss()
+                    scope.launch {
+                        runCatching { TdClient.unmuteGroupUser(chatId, uid) }
+                        onChanged()
+                    }
+                }
+            ))
+        } else if (!isCreator && !isBanned) {
+            add(com.secondream.novagram.ui.components.ActionTile(
+                label = "Muta",
+                icon = phos.SpeakerSlash,
+                onClick = {
+                    onDismiss()
+                    scope.launch {
+                        runCatching { TdClient.muteGroupUser(chatId, uid) }
+                        onChanged()
+                    }
+                }
+            ))
+        }
+        if (!isCreator) {
+            if (isAdmin) {
+                add(com.secondream.novagram.ui.components.ActionTile(
+                    label = "Rimuovi amministratore",
+                    icon = phos.UserMinus,
+                    onClick = {
+                        onDismiss()
+                        scope.launch {
+                            runCatching { TdClient.demoteFromAdmin(chatId, uid) }
+                            onChanged()
+                        }
+                    }
+                ))
+            } else if (!isBanned) {
+                add(com.secondream.novagram.ui.components.ActionTile(
+                    label = "Rendi amministratore",
+                    icon = phos.Sparkle,
+                    onClick = {
+                        onDismiss()
+                        scope.launch {
+                            runCatching { TdClient.promoteToAdmin(chatId, uid) }
+                            onChanged()
+                        }
+                    }
+                ))
+            }
+        }
+        add(com.secondream.novagram.ui.components.ActionTile(
+            label = "Annulla",
+            icon = phos.X,
+            onClick = { onDismiss() }
+        ))
+    }
+    com.secondream.novagram.ui.components.ActionBottomSheet(
+        title = "Gestisci membro",
+        onDismiss = onDismiss,
+        tiles = tiles,
+        tilesPerRow = if (tiles.size >= 4) 2 else tiles.size.coerceAtLeast(1)
+    )
 }
 
 /**
@@ -4186,14 +4716,33 @@ private fun InputBar(
             val online by com.secondream.novagram.connectivity
                 .ConnectivityState.isOnline.collectAsState()
             if (!recording && (value.text.isNotBlank() || hasPendingMedia)) {
+                // Press-scale feedback: the send button dips when pressed
+                // and springs back, giving the tap a tactile feel. Mirrors
+                // the AttachTile press animation; it's a single graphicsLayer
+                // scale (no layout pass) so it stays smooth on low-end
+                // phones.
+                val sendInteraction = remember {
+                    androidx.compose.foundation.interaction.MutableInteractionSource()
+                }
+                val sendPressed by sendInteraction.collectIsPressedAsState()
+                val sendScale by androidx.compose.animation.core.animateFloatAsState(
+                    targetValue = if (sendPressed) 0.82f else 1f,
+                    animationSpec = androidx.compose.animation.core.spring(
+                        dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessHigh
+                    ),
+                    label = "send-press"
+                )
                 IconButton(
                     onClick = { if (online) onSend() },
                     enabled = online,
+                    interactionSource = sendInteraction,
                     modifier = Modifier.size(48.dp)
                 ) {
                     Box(
                         modifier = Modifier
                             .size(40.dp)
+                            .graphicsLayer { scaleX = sendScale; scaleY = sendScale }
                             .clip(CircleShape)
                             .background(
                                 if (online) MaterialTheme.colorScheme.primary
@@ -4565,6 +5114,78 @@ private fun MessageActionsSheet(
         containerColor = MaterialTheme.colorScheme.surface
     ) {
         Column(modifier = Modifier.padding(20.dp).navigationBarsPadding()) {
+            // "Seen by" row — who has VIEWED my message in the group
+            // (distinct from who reacted, which is rendered below). Only
+            // shown for our own outgoing messages: TDLib returns an empty
+            // viewer set for incoming messages, channels, large groups, or
+            // messages outside the read-receipt window, so in all those
+            // cases this block simply renders nothing. Sits ABOVE the
+            // reactions so "who saw it" reads before "who reacted",
+            // matching the user's request.
+            if (message.isOutgoing) {
+                val seenBy = remember(message.id) {
+                    androidx.compose.runtime.mutableStateListOf<Long>()
+                }
+                LaunchedEffect(message.id) {
+                    val ids = TdClient.getMessageViewers(message.chatId, message.id)
+                    // Warm the user cache so the avatars resolve to real
+                    // photos/initials instead of "?" placeholders.
+                    ids.forEach { uid ->
+                        if (TdClient.getCachedUser(uid) == null) {
+                            runCatching { TdClient.getUser(uid) }
+                        }
+                    }
+                    seenBy.clear()
+                    seenBy.addAll(ids)
+                }
+                if (seenBy.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("👁", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.width(8.dp))
+                        val shown = seenBy.take(6)
+                        Row {
+                            shown.forEachIndexed { i, uid ->
+                                val user = remember(uid) { TdClient.getCachedUser(uid) }
+                                val fallback = user?.let {
+                                    listOfNotNull(
+                                        it.firstName.takeIf { n -> n.isNotBlank() },
+                                        it.lastName.takeIf { n -> n.isNotBlank() }
+                                    ).joinToString(" ").ifBlank { "?" }
+                                } ?: "?"
+                                Box(
+                                    modifier = Modifier
+                                        .offset(x = (if (i == 0) 0 else -6 * i).dp)
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.surface)
+                                        .padding(1.dp)
+                                ) {
+                                    com.secondream.novagram.ui.components.Avatar(
+                                        file = user?.profilePhoto?.small,
+                                        fallbackText = fallback,
+                                        size = 22.dp
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            seenBy.size.toString(),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
             // If this message already has reactions, list them at the
             // top so the user can see at a glance what others picked
             // and (with a tap) join or leave the same emoji. Same chip

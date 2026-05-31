@@ -72,6 +72,10 @@ import java.util.Locale
 fun MessageBubble(
     message: TdApi.Message,
     showSender: Boolean = false,
+    /** Owner/admin label for this message's sender, e.g. "Proprietario" or
+     *  "Amministratore", shown as a small chip next to the sender name in
+     *  groups. Null = no badge (regular member or not a group). */
+    adminLabel: String? = null,
     onLongPress: (TdApi.Message) -> Unit = {},
     onMediaTap: (String) -> Unit = {},
     onSwipeReply: (TdApi.Message) -> Unit = {},
@@ -154,6 +158,26 @@ fun MessageBubble(
         RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp)
     } else {
         RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 4.dp, bottomEnd = 18.dp)
+    }
+
+    // Register this message's media file ids with the global transfer tracker
+    // so the persistent download panel can jump straight to the message a file
+    // belongs to when the user taps its row. Cheap: a few map puts per bubble.
+    LaunchedEffect(message.id) {
+        val ids = when (val c = message.content) {
+            is TdApi.MessagePhoto -> c.photo.sizes.map { it.photo.id }
+            is TdApi.MessageVideo -> listOfNotNull(c.video.video.id, c.video.thumbnail?.file?.id)
+            is TdApi.MessageDocument -> listOf(c.document.document.id)
+            is TdApi.MessageAudio -> listOf(c.audio.audio.id)
+            is TdApi.MessageVoiceNote -> listOf(c.voiceNote.voice.id)
+            is TdApi.MessageAnimation -> listOf(c.animation.animation.id)
+            else -> emptyList()
+        }
+        ids.forEach { fid ->
+            com.secondream.novagram.transfer.TransferTracker.registerLocation(
+                fid, message.chatId, message.id
+            )
+        }
     }
 
     // Resolve sender user once (groups/supergroups, non-outgoing).
@@ -484,11 +508,31 @@ fun MessageBubble(
             if (showSender && !mine) {
                 val name = senderUser?.let { "${it.firstName} ${it.lastName}".trim() }.orEmpty()
                 if (name.isNotBlank()) {
-                    Text(
-                        name,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            name,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (adminLabel != null) {
+                            Spacer(Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                    )
+                                    .padding(horizontal = 6.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    adminLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(2.dp))
                 }
             }

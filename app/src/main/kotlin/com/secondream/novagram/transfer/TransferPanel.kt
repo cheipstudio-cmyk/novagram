@@ -131,7 +131,21 @@ fun TransferPanel(modifier: Modifier = Modifier) {
                 ) {
                     LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
                         items(transfers, key = { it.fileId }) { t ->
-                            TransferRow(t)
+                            // Capture into locals so the non-null smart-cast is
+                            // guaranteed inside the deferred onClick lambda
+                            // (Kotlin won't smart-cast nullable properties into
+                            // a closure, only stable locals).
+                            val cid = t.chatId
+                            val mid = t.messageId
+                            TransferRow(
+                                t = t,
+                                onJump = if (cid != null && mid != null) {
+                                    {
+                                        TransferTracker.requestJump(cid, mid)
+                                        expanded = false
+                                    }
+                                } else null
+                            )
                             HorizontalDivider(
                                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
                             )
@@ -153,10 +167,11 @@ private fun buildLabel(down: Int, up: Int): String {
 }
 
 @Composable
-private fun TransferRow(t: TransferTracker.Transfer) {
+private fun TransferRow(t: TransferTracker.Transfer, onJump: (() -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (onJump != null) Modifier.clickable { onJump() } else Modifier)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -189,6 +204,15 @@ private fun TransferRow(t: TransferTracker.Transfer) {
                 "${(t.progress * 100).toInt()}% · ${formatMb(t.transferredBytes)} / ${formatMb(t.totalBytes)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (onJump != null) {
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                com.secondream.novagram.ui.icons.PhosphorIcons.Forward,
+                contentDescription = "Vai al messaggio",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.size(16.dp)
             )
         }
     }

@@ -562,6 +562,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                         scope.launch { AppSettings.setSendTypingStatus(enabled) }
                     }
                 )
+                Divider()
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_sounds),
+                    description = stringResource(R.string.settings_sounds_desc),
+                    checked = appearance.messageSounds,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setMessageSounds(enabled) }
+                    }
+                )
             }
 
             Spacer(Modifier.height(20.dp))
