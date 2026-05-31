@@ -951,7 +951,6 @@ fun ChatScreen(
     // them and then fires UpdateChatReadInbox, which our handler
     // applies to the chatCache → chat-list badge drops in real time.
     LaunchedEffect(chatId) {
-        val openedMentions = mutableSetOf<Long>()
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
             .distinctUntilChanged()
             .collect { indices ->
@@ -961,17 +960,17 @@ fun ChatScreen(
                 if (ids.isNotEmpty()) {
                     runCatching { TdClient.viewMessages(chatId, ids) }
                 }
-                // Mentions: plain viewMessages does NOT decrement
-                // unread_mention_count in this TDLib build, so reading a
-                // mention by scrolling to it left the @ badge stuck. For any
-                // visible message that still carries an unread mention we
-                // additionally open its content — that's what clears it
-                // server-side (→ UpdateChatUnreadMentionCount → chip drops).
-                // The set guards against re-opening the same id every frame.
-                visible.forEach { m ->
-                    if (m.containsUnreadMention && openedMentions.add(m.id)) {
-                        runCatching { TdClient.openMessageContent(chatId, m.id) }
-                    }
+                // Mentions: plain viewMessages / openMessageContent did NOT
+                // reliably clear unread_mention_count in this TDLib build, so
+                // reading a mention by scrolling to it left the @ badge stuck.
+                // When a visible message still carries an unread mention and
+                // the chat still has a positive count, clear them all via the
+                // dedicated readAllChatMentions. The count guard self-limits:
+                // once the echo zeroes the cache, this stops firing.
+                if (visible.any { it.containsUnreadMention } &&
+                    (TdClient.getCachedChat(chatId)?.unreadMentionCount ?: 0) > 0
+                ) {
+                    runCatching { TdClient.readAllChatMentions(chatId) }
                 }
             }
     }
@@ -1361,47 +1360,34 @@ fun ChatScreen(
                 // pagination case (animating through freshly-inserted
                 // items causes the "scatto bruttissimo" jitter).
                 suspend fun preciseRefine() {
-                    // Find the freshly-scrolled-to item in layoutInfo, then
-                    // place it precisely. Up to 8 attempts (≈128ms) handles
-                    // slow device frames and async media measure passes —
-                    // the old 3-attempt window sometimes expired before a
-                    // freshly-paginated item appeared in visibleItemsInfo,
-                    // leaving the target stuck at the rough offset.
-                    repeat(8) {
+                    // Place the target's TOP at ~15% from the viewport top, then
+                    // RE-PLACE whenever its measured height changes. Image/video
+                    // bubbles decode their thumbnail a frame or two later and
+                    // grow, which used to shove the target back off-screen —
+                    // exactly the "I have to scroll down 3-4 messages to find it"
+                    // symptom. We watch the measured height and only re-scroll on
+                    // a change (no per-frame jitter), stopping once it holds
+                    // steady for ~3 frames or we run out of attempts (~400ms),
+                    // so the target reliably ends up on screen at the upper third.
+                    // Geometry (reverseLayout=true): scrollToItem(idx, K) puts the
+                    // item's top at vp-(K+size); K = vp*85/100 - size → top at 15%.
+                    var lastH = -1
+                    var stableFrames = 0
+                    repeat(24) {
                         kotlinx.coroutines.delay(16)
                         val vp = listState.layoutInfo.viewportSize.height
                         val item = listState.layoutInfo.visibleItemsInfo
                             .find { it.index == idx }
-                        if (vp > 0 && item != null) {
-                            val targetH = item.size
-                            // Place the target's TOP at ~15% from the top of
-                            // the viewport (was 30%, which the user still
-                            // found too low). Geometry (reverseLayout=true):
-                            // scrollToItem(idx, K) puts the item's top at
-                            // vp-(K+size) from the visual top, so K =
-                            // vp*85/100 - size lands the top at 15%. Clamp
-                            // at 0 so a bubble taller than 0.85*vp anchors to
-                            // the viewport bottom instead of a negative
-                            // offset.
+                        if (vp <= 0 || item == null) return@repeat
+                        val targetH = item.size
+                        if (targetH != lastH) {
                             val precise = (vp * 85 / 100 - targetH).coerceAtLeast(0)
                             runCatching { listState.scrollToItem(idx, precise) }
-                            // Re-settle: image/video bubbles grow a frame or
-                            // two later when the thumbnail finishes decoding,
-                            // which shifts the just-placed target back down.
-                            // Wait a touch longer and, if the measured height
-                            // changed, correct once more so the target holds
-                            // its slot instead of drifting — this was the
-                            // "have to scroll down a bit to see it" symptom
-                            // for media targets.
-                            kotlinx.coroutines.delay(90)
-                            val item2 = listState.layoutInfo.visibleItemsInfo
-                                .find { it.index == idx }
-                            val vp2 = listState.layoutInfo.viewportSize.height
-                            if (item2 != null && vp2 > 0 && item2.size != targetH) {
-                                val precise2 = (vp2 * 85 / 100 - item2.size).coerceAtLeast(0)
-                                runCatching { listState.scrollToItem(idx, precise2) }
-                            }
-                            return
+                            lastH = targetH
+                            stableFrames = 0
+                        } else {
+                            stableFrames++
+                            if (stableFrames >= 3) return
                         }
                     }
                 }
@@ -1417,6 +1403,10 @@ fun ChatScreen(
                 if (existing != null && viewportH0 > 0 && wasAlreadyLoaded) {
                     val precise = (viewportH0 * 85 / 100 - existing.size).coerceAtLeast(0)
                     runCatching { listState.animateScrollToItem(idx, precise) }
+                    // Re-settle in case it's a media bubble that grows after
+                    // the animated scroll (thumbnail decode) — keeps the target
+                    // pinned at the upper third instead of drifting off-screen.
+                    preciseRefine()
                 } else {
                     val roughOffset = if (viewportH0 > 0) (viewportH0 - 400).coerceAtLeast(200) else 200
                     if (wasAlreadyLoaded) {
@@ -2220,44 +2210,18 @@ fun ChatScreen(
                             androidx.compose.material3.SmallFloatingActionButton(
                                 onClick = {
                                     scope.launch {
+                                        // Jump to the first unread mention, then clear
+                                        // ALL unread mentions in this chat server-side.
+                                        // readAllChatMentions is the dedicated TDLib call;
+                                        // viewMessages / openMessageContent did NOT reliably
+                                        // decrement the count in this build, so the badge
+                                        // never went away. The UpdateChatUnreadMentionCount
+                                        // echo then drives the cache to 0 → chip hides.
                                         val msg = runCatching {
                                             TdClient.findFirstUnreadMention(chatId)
                                         }.getOrNull()
-                                        if (msg != null) {
-                                            // Decrement IMMEDIATELY so the chip
-                                            // count updates before the jump's
-                                            // suspending getChatHistory call.
-                                            // The local cache decrement is the
-                                            // authoritative source of truth for
-                                            // the chip's count until TDLib's
-                                            // echo (filtered by the
-                                            // lastKnownServerMentionCount
-                                            // reconcile logic) confirms or
-                                            // rejects it. Each tap consumes ONE
-                                            // mention — Telegram-style per-mention
-                                            // navigation.
-                                            TdClient.decrementChatMentionCount(chatId)
-                                            jumpToMessage(msg.id)
-                                            // Mark this mention as read on the
-                                            // server. If TDLib decrements its
-                                            // unreadMentionCount echo, the
-                                            // reconcile keeps our optimistic
-                                            // value; if it doesn't (TDLib
-                                            // version quirk), our local
-                                            // decrement holds anyway.
-                                            runCatching {
-                                                TdClient.viewMessages(chatId, longArrayOf(msg.id))
-                                                // Per-mention server-side read. Required:
-                                                // plain viewMessages doesn't decrement
-                                                // unread_mention_count on the server in
-                                                // this TDLib version, so the next
-                                                // UpdateChatUnreadMentionCount echo
-                                                // reverts our optimistic decrement and
-                                                // the chip "comes back". openMessageContent
-                                                // triggers the actual server decrement.
-                                                TdClient.openMessageContent(chatId, msg.id)
-                                            }
-                                        }
+                                        if (msg != null) jumpToMessage(msg.id)
+                                        runCatching { TdClient.readAllChatMentions(chatId) }
                                     }
                                 },
                                 containerColor = MaterialTheme.colorScheme.primary,
@@ -3538,7 +3502,8 @@ fun ChatScreen(
             onJumpToMessage = { mid ->
                 infoOpen = false
                 jumpToMessage(mid)
-            }
+            },
+            onOpenMediaViewer = onOpenMediaViewer
         )
     }
 
@@ -3655,7 +3620,8 @@ fun ChatScreen(
 internal fun ChatInfoDialog(
     chatId: Long,
     onDismiss: () -> Unit,
-    onJumpToMessage: (Long) -> Unit
+    onJumpToMessage: (Long) -> Unit,
+    onOpenMediaViewer: () -> Unit = {}
 ) {
     val chat = remember(chatId) { TdClient.getCachedChat(chatId) }
     val title = chat?.title ?: stringResource(R.string.chat_default_title)
@@ -3802,13 +3768,25 @@ internal fun ChatInfoDialog(
                 ) {
                     items(tabs.size) { idx ->
                         val selected = pagerState.currentPage == idx
+                        // Smoothly cross-fade the pill colours on selection
+                        // (and during a pager swipe, as currentPage flips) so
+                        // tab switching feels fluid instead of snapping.
+                        val pillBg by androidx.compose.animation.animateColorAsState(
+                            targetValue = if (selected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            animationSpec = androidx.compose.animation.core.tween(220),
+                            label = "pillBg"
+                        )
+                        val pillFg by androidx.compose.animation.animateColorAsState(
+                            targetValue = if (selected) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onSurface,
+                            animationSpec = androidx.compose.animation.core.tween(220),
+                            label = "pillFg"
+                        )
                         Row(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(20.dp))
-                                .background(
-                                    if (selected) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                                )
+                                .background(pillBg)
                                 .clickable { scope.launch { pagerState.animateScrollToPage(idx) } }
                                 .padding(horizontal = 14.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -3816,16 +3794,14 @@ internal fun ChatInfoDialog(
                             Icon(
                                 tabs[idx].icon,
                                 contentDescription = null,
-                                tint = if (selected) MaterialTheme.colorScheme.onPrimary
-                                    else MaterialTheme.colorScheme.onSurface,
+                                tint = pillFg,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
                                 tabs[idx].label,
                                 style = MaterialTheme.typography.labelMedium,
-                                color = if (selected) MaterialTheme.colorScheme.onPrimary
-                                    else MaterialTheme.colorScheme.onSurface,
+                                color = pillFg,
                                 fontWeight = FontWeight.Medium
                             )
                         }
@@ -3876,7 +3852,14 @@ internal fun ChatInfoDialog(
                 },
                 onOpenInViewer = { path ->
                     selectedMediaMessage = null
+                    // Actually OPEN the in-app viewer: set the path then
+                    // navigate to the MediaViewer route (the only thing that
+                    // shows it). The old code just dismissed the info dialog,
+                    // which simply revealed the chat — hence "it takes me to
+                    // the chat instead of opening". isVideo is set by the
+                    // action sheet before this fires.
                     com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
+                    onOpenMediaViewer()
                     onDismiss()
                 },
                 onOpenViaIntent = { path, mime ->
@@ -4263,7 +4246,10 @@ private fun ChatMediaItemActions(
                         scope.launch {
                             val f = biggest ?: return@launch
                             val ready = ensureDownloaded(f)
-                            if (ready != null) onOpenInViewer(ready)
+                            if (ready != null) {
+                                com.secondream.novagram.ui.screens.MediaViewerHolder.isVideo = false
+                                onOpenInViewer(ready)
+                            }
                         }
                     }
                 )
@@ -4274,7 +4260,10 @@ private fun ChatMediaItemActions(
                 {
                     scope.launch {
                         val ready = ensureDownloaded(c.video.video)
-                        if (ready != null) onOpenInViewer(ready)
+                        if (ready != null) {
+                            com.secondream.novagram.ui.screens.MediaViewerHolder.isVideo = true
+                            onOpenInViewer(ready)
+                        }
                     }
                 }
             )

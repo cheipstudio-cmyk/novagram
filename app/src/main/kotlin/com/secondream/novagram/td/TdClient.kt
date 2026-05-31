@@ -323,6 +323,16 @@ object TdClient {
                 // against this baseline.
                 lastKnownServerMentionCount[obj.chat.id] = obj.chat.unreadMentionCount
                 lastKnownServerReactionCount[obj.chat.id] = obj.chat.unreadReactionCount
+                // Eagerly warm the avatar thumb so a later notification can
+                // render the photo from disk INSTANTLY instead of blocking on
+                // a synchronous download at notify time — the root cause of
+                // the "avatar never shows in notifications" bug. Fire-and-
+                // forget, a few KB, skipped when already downloaded.
+                obj.chat.photo?.small?.let { f ->
+                    if (f.local?.isDownloadingCompleted != true && f.id != 0) {
+                        scope.launch { runCatching { downloadFile(f.id) } }
+                    }
+                }
                 refreshChats()
             }
             is TdApi.UpdateChatLastMessage -> {
@@ -516,6 +526,14 @@ object TdClient {
             }
             is TdApi.UpdateUser -> {
                 userCache[obj.user.id] = obj.user
+                // Same avatar pre-warm as chats: lets group-message
+                // notifications render the SENDER's photo from disk instead
+                // of blocking on a download at notify time.
+                obj.user.profilePhoto?.small?.let { f ->
+                    if (f.local?.isDownloadingCompleted != true && f.id != 0) {
+                        scope.launch { runCatching { downloadFile(f.id) } }
+                    }
+                }
             }
             is TdApi.UpdateSupergroup -> {
                 // Cache the supergroup record so we can synchronously read
@@ -525,6 +543,17 @@ object TdClient {
                 supergroupCache[obj.supergroup.id] = obj.supergroup
             }
             is TdApi.UpdateMessageContent -> {
+                // If the edited message is the chat's LAST message, update the
+                // cached lastMessage content and refresh the list so the chat
+                // row's preview reflects the edit in real time — TDLib does
+                // NOT fire UpdateChatLastMessage for an in-place content edit,
+                // so without this the list preview stayed stale until reorder.
+                chatCache[obj.chatId]?.lastMessage?.let { lm ->
+                    if (lm.id == obj.messageId) {
+                        lm.content = obj.newContent
+                        refreshChats()
+                    }
+                }
                 scope.launch {
                     _messageContentUpdates.emit(MessageContentUpdate(obj.chatId, obj.messageId, obj.newContent))
                     _chatUpdates.emit(obj.chatId)

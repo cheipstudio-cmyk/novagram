@@ -181,7 +181,7 @@ object NotificationHelper {
         if (file.local?.isDownloadingCompleted == true) return loadAvatarBitmap(file)
         val downloaded = runCatching {
             kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                kotlinx.coroutines.withTimeoutOrNull(2500) { TdClient.downloadFile(file.id) }
+                kotlinx.coroutines.withTimeoutOrNull(8000) { TdClient.downloadFile(file.id) }
             }
         }.getOrNull()
         return loadAvatarBitmap(downloaded ?: file)
@@ -361,8 +361,12 @@ object NotificationHelper {
         val avatarFile = if (isSecretChat) null
             else pickAvatarFile(chat, message, isGroup, isChannel)
         val avatarBitmap = resolveAvatarBitmap(avatarFile)
+        // Plain bitmap icon, NOT adaptive: the bitmap is already circular-
+        // cropped, and adaptive icons get mask-cropped to the inner ~66% in
+        // notification slots, which over-zoomed the face or rendered blank on
+        // several launchers — part of why the avatar "wasn't showing".
         val avatarIcon = avatarBitmap?.let {
-            androidx.core.graphics.drawable.IconCompat.createWithAdaptiveBitmap(it)
+            androidx.core.graphics.drawable.IconCompat.createWithBitmap(it)
         }
         val person = androidx.core.app.Person.Builder()
             .setName(displayName)

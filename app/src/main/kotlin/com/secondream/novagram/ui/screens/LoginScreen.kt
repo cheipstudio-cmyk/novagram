@@ -110,7 +110,7 @@ fun LoginScreen() {
             // stable equality, so same-step re-emissions don't re-animate).
             Crossfade(
                 targetState = state,
-                animationSpec = tween(320),
+                animationSpec = tween(200),
                 label = "authStep"
             ) { s ->
                 Column(modifier = Modifier.fillMaxWidth()) {
