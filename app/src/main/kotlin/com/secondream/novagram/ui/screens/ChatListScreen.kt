@@ -1462,7 +1462,7 @@ private fun formatTime(ts: Long): String {
 @Composable
 private fun HomePage(
     allChats: List<ChatSummary>,
-    onChatClick: (Long) -> Unit,
+    onChatClick: (Long, Long?) -> Unit,
     onNewChat: () -> Unit = {}
 ) {
     val unread = allChats.filter { it.unread > 0 }

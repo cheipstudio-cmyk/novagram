@@ -12,9 +12,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
@@ -1552,27 +1550,20 @@ fun ChatScreen(
     }
 
     // Swipe-from-left-to-right closes the chat. Mirrors the Telegram /
-    // iOS pattern of "swipe right to pop". Implementation uses a
-    // custom pointer-event loop on the PointerEventPass.Initial pass
-    // so the parent claims rightward gestures BEFORE the per-bubble
-    // reply-swipe detector sees them — without this, bubbles consume
-    // the gesture in swap mode (where bubble swipes are left-only)
-    // and the back-swipe never fires anywhere except the bare
-    // background.
+    // iOS pattern of "swipe right to pop". Uses detectHorizontalDragGestures
+    // (the same API the per-bubble reply-swipe uses) — simpler than the
+    // custom pointer-event loop we tried first, and works against the
+    // Compose version on the runner.
     //
     // Activation zone:
-    //   swapSwipeReply=false → gesture must START in the leftmost
-    //     24dp (the bubble's reply-swipe is right, so we'd fight it
-    //     anywhere else). Same as Android's edge-back gesture.
+    //   swapSwipeReply=false → gesture must START in the leftmost 24dp
+    //     (the bubble's reply-swipe is right, so we'd fight it anywhere
+    //     else). Matches Android's edge-back gesture.
     //   swapSwipeReply=true  → gesture can start anywhere in the chat
     //     view. Bubble swipes are LEFT-only in swap mode, so the
-    //     parent's rightward claim doesn't steal anything user-visible
-    //     from them. This is the "swipe in chat to close" UX Eugenio
-    //     explicitly asked for as a feature of the swap toggle.
-    //
-    // Vertical drags (LazyColumn scroll) are detected by dominance and
-    // released back to children without consuming.
+    //     parent's rightward claim doesn't steal anything user-visible.
     var backDragAmount by remember { mutableFloatStateOf(0f) }
+    var backDragStartX by remember { mutableFloatStateOf(0f) }
     val density = androidx.compose.ui.platform.LocalDensity.current
     val backTriggerPx = with(density) { 120.dp.toPx() }
     val edgeZonePx = with(density) { 24.dp.toPx() }
@@ -1582,58 +1573,24 @@ fun ChatScreen(
             .fillMaxSize()
             .pointerInput("back-swipe-$chatId", appearance.swapSwipeReply) {
                 val swap = appearance.swapSwipeReply
-                val slopPx = viewConfiguration.touchSlop
-                androidx.compose.foundation.gestures.awaitEachGesture {
-                    val down = awaitFirstDown(
-                        requireUnconsumed = false,
-                        pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial
-                    )
-                    val startX = down.position.x
-                    var totalX = 0f
-                    var totalY = 0f
-                    var committed = false
-                    backDragAmount = 0f
-                    while (true) {
-                        val event = awaitPointerEvent(
-                            pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial
-                        )
-                        val change = event.changes.firstOrNull { it.id == down.id }
-                            ?: break
-                        if (!change.pressed) break
-                        val d = change.positionChange()
-                        totalX += d.x
-                        totalY += d.y
-                        if (!committed) {
-                            if (kotlin.math.abs(totalX) > slopPx ||
-                                kotlin.math.abs(totalY) > slopPx
-                            ) {
-                                val verticallyDominant =
-                                    kotlin.math.abs(totalY) > kotlin.math.abs(totalX)
-                                val rightward = totalX > 0
-                                val edgeStart = startX < edgeZonePx
-                                // Claim only if horizontal-dominant,
-                                // rightward, and (edge-started OR swap
-                                // mode). Anything else: pass through
-                                // for the LazyColumn / bubbles.
-                                val shouldClaim = !verticallyDominant &&
-                                    rightward &&
-                                    (edgeStart || swap)
-                                if (!shouldClaim) return@awaitEachGesture
-                                committed = true
-                                backDragAmount = totalX.coerceAtLeast(0f)
-                            } else {
-                                // Still below slop, don't commit yet.
-                                continue
-                            }
-                        }
-                        // committed=true from here. Consume the event
-                        // so children don't ALSO act on it.
-                        change.consume()
-                        backDragAmount = (backDragAmount + d.x).coerceAtLeast(0f)
-                    }
-                    if (committed) {
+                androidx.compose.foundation.gestures.detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        backDragStartX = offset.x
+                        backDragAmount = 0f
+                    },
+                    onDragEnd = {
                         if (backDragAmount > backTriggerPx) onBack()
                         backDragAmount = 0f
+                    },
+                    onDragCancel = { backDragAmount = 0f }
+                ) { _, dragAmount ->
+                    // Accumulate rightward drags only; left drags reset.
+                    // Edge mode (default): gesture must have started in
+                    // the leftmost 24dp. Swap mode: gesture can start
+                    // anywhere. Either way, we only count rightward.
+                    val inActivationZone = backDragStartX < edgeZonePx || swap
+                    if (inActivationZone && dragAmount > 0) {
+                        backDragAmount = (backDragAmount + dragAmount).coerceAtLeast(0f)
                     }
                 }
             }
