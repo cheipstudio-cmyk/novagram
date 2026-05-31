@@ -12,6 +12,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -1573,7 +1574,7 @@ fun ChatScreen(
             .fillMaxSize()
             .pointerInput("back-swipe-$chatId", appearance.swapSwipeReply) {
                 val swap = appearance.swapSwipeReply
-                androidx.compose.foundation.gestures.detectHorizontalDragGestures(
+                detectHorizontalDragGestures(
                     onDragStart = { offset ->
                         backDragStartX = offset.x
                         backDragAmount = 0f
