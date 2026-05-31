@@ -12,6 +12,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
@@ -232,24 +235,6 @@ fun ChatScreen(
     // chat list ever renders, so we read it synchronously.
     val isGroupChat = remember(chatId) {
         TdClient.getCachedChat(chatId)?.type !is TdApi.ChatTypePrivate
-    }
-
-    // Forum-topics detection. A supergroup is a "forum" (topic-enabled
-    // group) when its Supergroup.isForum flag is on. In that case
-    // entering the chat should land on a topic LIST first; the user
-    // picks a topic and only then sees the topic's message thread.
-    // selectedTopicId tracks the currently-open topic — null = the
-    // topic-list panel is being shown; non-null = chat body is
-    // filtered to that messageThreadId.
-    var selectedTopicId by remember(chatId) { mutableStateOf<Long?>(null) }
-    var selectedTopicName by remember(chatId) { mutableStateOf<String?>(null) }
-    val isForumChat = remember(chatId) {
-        val t = TdClient.getCachedChat(chatId)?.type
-        if (t is TdApi.ChatTypeSupergroup) {
-            runCatching {
-                TdClient.getCachedSupergroup(t.supergroupId)?.isForum == true
-            }.getOrDefault(false)
-        } else false
     }
 
     // Online status of the other participant in a private chat. Used to
@@ -653,29 +638,13 @@ fun ChatScreen(
     // or the server stops returning more — but if the chat has 100 unread
     // we keep iterating until that first unread is in the window, capped
     // so we don't try to backfill a thousand-message channel.
-    LaunchedEffect(chatId, selectedTopicId) {
-        // When entering a forum topic, the cached `messages` list still
-        // holds the previous content (the whole-chat history, or another
-        // topic's). Clear it up front so the cache-hit fast path below
-        // doesn't apply a stale top-up and the full reload below sees
-        // a clean slate. This is cheap (cache snapshot is in-memory) and
-        // only fires when a topic is actively selected.
-        if (selectedTopicId != null) {
-            messages.clear()
-            noMore = false
-        }
+    LaunchedEffect(chatId) {
         // Cache hit: ChatScreen was on this chat before — either popped
         // back from MediaViewer / a sub-screen, or re-entered from the
         // chat list. Skip the full clear/reload + scroll-to-unread
         // dance (running it again would yank the user to a different
         // position because by now unreadCount has hit zero, so we'd
         // snap to the bottom and lose their scroll anchor).
-        //
-        // When selectedTopicId changes (user picks a topic in a forum
-        // group, or pops back to the topic list), the key change forces
-        // a full reload — this is intentional: the topic-list overlay
-        // is showing during that transition so the user doesn't see
-        // the chat-body flicker.
         //
         // BUT we DO need to top up any messages that arrived while
         // ChatScreen wasn't composed. The TdClient.newMessages flow
@@ -695,9 +664,7 @@ fun ChatScreen(
             loading = false
             runCatching {
                 val cachedNewestId = messages.firstOrNull()?.id ?: 0L
-                val res = selectedTopicId?.let { tid ->
-                    TdClient.getMessageThreadHistory(chatId, tid, 0L, 0, 30)
-                } ?: TdClient.getChatHistory(chatId, 0L, 30)
+                val res = TdClient.getChatHistory(chatId, 0L, 30)
                 val toAdd = res.messages.filter { it.id > cachedNewestId }
                 for (m in toAdd.reversed()) {
                     if (messages.none { it.id == m.id }) {
@@ -805,9 +772,7 @@ fun ChatScreen(
             var consecutiveEmpty = 0
             val attemptCap = if (initialUnread > 0) 10 else 6
             while (messages.size < target && attempts < attemptCap && consecutiveEmpty < 2) {
-                val res = selectedTopicId?.let { tid ->
-                    TdClient.getMessageThreadHistory(chatId, tid, fromId, 0, 50)
-                } ?: TdClient.getChatHistory(chatId, fromId, 50)
+                val res = TdClient.getChatHistory(chatId, fromId, 50)
                 if (res.messages.isEmpty()) {
                     consecutiveEmpty++
                     if (consecutiveEmpty < 2) delay(350)
@@ -1178,9 +1143,7 @@ fun ChatScreen(
                 loadingMore = true
                 val oldest = messages.lastOrNull()?.id ?: 0L
                 runCatching {
-                    val res = selectedTopicId?.let { tid ->
-                        TdClient.getMessageThreadHistory(chatId, tid, oldest, 0, 30)
-                    } ?: TdClient.getChatHistory(chatId, oldest, 30)
+                    val res = TdClient.getChatHistory(chatId, oldest, 30)
                     if (res.messages.isEmpty()) noMore = true
                     else {
                         // Filter out anything already in the window — fast
@@ -1241,9 +1204,7 @@ fun ChatScreen(
             if (idx < 0) {
                 runCatching {
                     val limit = 50
-                    val ctx = selectedTopicId?.let { tid ->
-                        TdClient.getMessageThreadHistory(chatId, tid, targetId, -(limit / 2), limit)
-                    } ?: TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
+                    val ctx = TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
                     val toAdd = ctx.messages.toList().filter { m ->
                         messages.none { it.id == m.id }
                     }
@@ -1671,16 +1632,7 @@ fun ChatScreen(
                         backDragAmount = (backDragAmount + d.x).coerceAtLeast(0f)
                     }
                     if (committed) {
-                        if (backDragAmount > backTriggerPx) {
-                            // Forum-aware: same logic as the navigationIcon
-                            // back button — first pop returns to topic list.
-                            if (isForumChat && selectedTopicId != null) {
-                                selectedTopicId = null
-                                selectedTopicName = null
-                            } else {
-                                onBack()
-                            }
-                        }
+                        if (backDragAmount > backTriggerPx) onBack()
                         backDragAmount = 0f
                     }
                 }
@@ -1794,40 +1746,11 @@ fun ChatScreen(
                                     maxLines = 1
                                 )
                             }
-                            // In a forum topic: show the topic name as
-                            // subtitle so the user knows they're inside
-                            // a thread, not the main chat. The accent
-                            // color + small "#" prefix mirrors
-                            // Telegram's topic chip styling.
-                            if (isForumChat && selectedTopicId != null) {
-                                val tname = selectedTopicName.orEmpty()
-                                Text(
-                                    "# $tname",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
                         }
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        // Forum-aware back: if the user is currently
-                        // inside a topic of a forum group, popping
-                        // returns them to the topic LIST (within the
-                        // same chat screen), not all the way out of
-                        // the chat. The second back press from the
-                        // topic list goes through to onBack().
-                        if (isForumChat && selectedTopicId != null) {
-                            selectedTopicId = null
-                            selectedTopicName = null
-                        } else {
-                            onBack()
-                        }
-                    }) {
+                    IconButton(onClick = onBack) {
                         Icon(com.secondream.novagram.ui.icons.PhosphorIcons.CaretLeft, null)
                     }
                 },
@@ -2420,29 +2343,6 @@ fun ChatScreen(
                         }
                     }
                 }
-                // FORUM-TOPIC OVERLAY: when the chat is a forum (topics
-                // enabled) and no topic has been picked yet, paint the
-                // whole message-area Box with the topic list. The
-                // LazyColumn keeps composing beneath but is hidden — we
-                // intentionally don't gate the LazyColumn itself so its
-                // history-load / chatUpdates collectors keep running in
-                // the background; once the user picks a topic the
-                // overlay disappears and they see the threaded view.
-                if (isForumChat && selectedTopicId == null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background)
-                    ) {
-                        com.secondream.novagram.ui.components.TopicListPanel(
-                            chatId = chatId,
-                            onPickTopic = { tid, name ->
-                                selectedTopicId = tid
-                                selectedTopicName = name
-                            }
-                        )
-                    }
-                }
             }
 
             // Mention picker (popup just above the input bar). The detection
@@ -2502,7 +2402,7 @@ fun ChatScreen(
                             replyTarget = null
                             scope.launch {
                                 runCatching {
-                                    TdClient.sendText(chatId, cmdText, replyId, messageThreadId = selectedTopicId ?: 0L)
+                                    TdClient.sendText(chatId, cmdText, replyId)
                                 }
                             }
                         }
@@ -2757,11 +2657,11 @@ fun ChatScreen(
                                             val it = media.first()
                                             when (it.kind) {
                                                 PendingMediaKind.Photo ->
-                                                    TdClient.sendPhoto(chatId, it.file.absolutePath, caption, rid, messageThreadId = selectedTopicId ?: 0L)
+                                                    TdClient.sendPhoto(chatId, it.file.absolutePath, caption, rid)
                                                 PendingMediaKind.Video ->
-                                                    TdClient.sendVideo(chatId, it.file.absolutePath, caption, rid, messageThreadId = selectedTopicId ?: 0L)
+                                                    TdClient.sendVideo(chatId, it.file.absolutePath, caption, rid)
                                                 PendingMediaKind.Document ->
-                                                    TdClient.sendDocument(chatId, it.file.absolutePath, caption, rid, messageThreadId = selectedTopicId ?: 0L)
+                                                    TdClient.sendDocument(chatId, it.file.absolutePath, caption, rid)
                                             }
                                         }
                                         else -> {
@@ -2793,7 +2693,7 @@ fun ChatScreen(
                                                     }
                                                 )
                                             }
-                                            TdClient.sendMediaGroup(chatId, groupItems, caption, rid, messageThreadId = selectedTopicId ?: 0L)
+                                            TdClient.sendMediaGroup(chatId, groupItems, caption, rid)
                                         }
                                     }
                                 }
@@ -2804,7 +2704,7 @@ fun ChatScreen(
                             replyTarget = null
                             scope.launch {
                                 runCatching {
-                                    TdClient.sendText(chatId, text, rid, messageThreadId = selectedTopicId ?: 0L)
+                                    TdClient.sendText(chatId, text, rid)
                                 }.onFailure { err ->
                                     // Failures here are silent by default —
                                     // TDLib rejects sends for secret chats
@@ -2871,7 +2771,7 @@ fun ChatScreen(
                                 replyTarget = null
                                 scope.launch {
                                     runCatching {
-                                        TdClient.sendVoiceNote(chatId, res.file.absolutePath, res.durationSeconds, rid, messageThreadId = selectedTopicId ?: 0L)
+                                        TdClient.sendVoiceNote(chatId, res.file.absolutePath, res.durationSeconds, rid)
                                     }
                                 }
                             }
@@ -2893,9 +2793,9 @@ fun ChatScreen(
                         val file = com.secondream.novagram.util.FileUtils.copyUriToCache(context, uri) ?: return@launch
                         runCatching {
                             if (mime == "image/gif" || mime == "video/mp4") {
-                                TdClient.sendAnimation(chatId, file.absolutePath, messageThreadId = selectedTopicId ?: 0L)
+                                TdClient.sendAnimation(chatId, file.absolutePath)
                             } else {
-                                TdClient.sendPhoto(chatId, file.absolutePath, messageThreadId = selectedTopicId ?: 0L)
+                                TdClient.sendPhoto(chatId, file.absolutePath)
                             }
                         }
                     }
@@ -3076,7 +2976,7 @@ fun ChatScreen(
             onSendDirect = { aiReply ->
                 aiTarget = null
                 scope.launch {
-                    runCatching { TdClient.sendText(chatId, aiReply, target.id, messageThreadId = selectedTopicId ?: 0L) }
+                    runCatching { TdClient.sendText(chatId, aiReply, target.id) }
                 }
             }
         )

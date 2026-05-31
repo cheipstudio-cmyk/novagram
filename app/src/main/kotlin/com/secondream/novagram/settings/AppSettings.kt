@@ -380,7 +380,15 @@ object AppSettings {
         // right base mode (light vs dark) — otherwise a pastel-light bg
         // ends up under a dark base scheme and the cards look wrong.
         val bgArgb = appearance.customBgArgb ?: 0xFF0F1115.toInt()
-        val bgIsLight = androidx.compose.ui.graphics.Color(bgArgb).luminance() > 0.5f
+        // Manual perceived-luminance from the ARGB int — avoids a Compose
+        // UI dependency in the settings package (luminance() is in
+        // androidx.compose.ui.graphics which would couple this layer to
+        // the UI layer). Rec.709 coefficients match what Color.luminance
+        // does internally.
+        val r = ((bgArgb shr 16) and 0xFF) / 255f
+        val g = ((bgArgb shr 8) and 0xFF) / 255f
+        val b = (bgArgb and 0xFF) / 255f
+        val bgIsLight = (0.2126f * r + 0.7152f * g + 0.0722f * b) > 0.5f
         // A tiny timestamp suffix so back-to-back imports show up as
         // distinct rows instead of "Tema importato" repeated. Locale
         // aware so the format matches what the user expects to read.

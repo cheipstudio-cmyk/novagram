@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -235,7 +236,7 @@ private fun MediaGridCell(msg: TdApi.Message, onClick: () -> Unit) {
             }
             if (bmp != null) {
                 androidx.compose.foundation.Image(
-                    bitmap = androidx.compose.ui.graphics.asImageBitmap(bmp),
+                    bitmap = bmp.asImageBitmap(),
                     contentDescription = null,
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     modifier = Modifier.fillMaxWidth().aspectRatio(1f)

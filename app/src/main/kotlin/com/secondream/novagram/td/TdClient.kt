@@ -913,40 +913,6 @@ object TdClient {
         getChatHistory(chatId, fromMessageId, 0, limit)
 
     /**
-     * Fetch messages from a specific forum-topic thread. TDLib's
-     * GetMessageThreadHistory restricts to messages with the given
-     * messageThreadId, so the result is the topic's own timeline
-     * (not the whole chat). Used by ChatScreen when the user enters
-     * a forum topic via the topic list.
-     */
-    suspend fun getMessageThreadHistory(
-        chatId: Long,
-        messageThreadId: Long,
-        fromMessageId: Long,
-        offset: Int,
-        limit: Int
-    ): TdApi.Messages =
-        send(TdApi.GetMessageThreadHistory(
-            chatId, messageThreadId, fromMessageId, offset, limit
-        ))
-
-    /**
-     * List the forum topics in a supergroup. Used by the topic-list
-     * panel that opens automatically when entering a chat where
-     * Supergroup.isForum=true. Telegram caps the visible recent topics
-     * at ~100; we mirror that in [limit].
-     */
-    suspend fun getForumTopics(
-        chatId: Long,
-        limit: Int = 100
-    ): List<TdApi.ForumTopic> {
-        val r = runCatching {
-            send(TdApi.GetForumTopics(chatId, "", 0, 0L, 0L, limit)) as TdApi.ForumTopics
-        }.getOrNull() ?: return emptyList()
-        return r.topics.toList()
-    }
-
-    /**
      * Search messages in a chat filtered by content type. Drives the
      * media-gallery tabs in ChatInfoDialog: pass a TdApi filter (e.g.
      * SearchMessagesFilterPhoto, SearchMessagesFilterDocument,
@@ -967,8 +933,11 @@ object TdClient {
         limit: Int = 100
     ): List<TdApi.Message> {
         val r = runCatching {
+            // Newer TDLib added a `topic_id: MessageTopic?` slot as the 2nd
+            // arg and dropped the trailing thread/topic Longs. We pass null
+            // for it — we want the chat-wide media gallery, not topic-scoped.
             send(TdApi.SearchChatMessages(
-                chatId, "", null, fromMessageId, 0, limit, filter, 0L, 0L
+                chatId, null, "", null, fromMessageId, 0, limit, filter
             )) as TdApi.FoundChatMessages
         }.getOrNull() ?: return emptyList()
         return r.messages.toList()
@@ -988,11 +957,10 @@ object TdClient {
     suspend fun sendText(
         chatId: Long,
         text: String,
-        replyToMessageId: Long? = null,
-        messageThreadId: Long = 0L
+        replyToMessageId: Long? = null
     ) {
         val content = TdApi.InputMessageText(TdApi.FormattedText(text, emptyArray()), null, true)
-        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
     /**
@@ -1005,7 +973,7 @@ object TdClient {
      */
     suspend fun sendChatAction(chatId: Long, action: TdApi.ChatAction) {
         runCatching {
-            send(TdApi.SendChatAction(chatId, 0L, null, action))
+            send(TdApi.SendChatAction(chatId, null, null, action))
         }
     }
 
@@ -1117,8 +1085,7 @@ object TdClient {
         chatId: Long,
         filePath: String,
         caption: String? = null,
-        replyToMessageId: Long? = null,
-        messageThreadId: Long = 0L
+        replyToMessageId: Long? = null
     ) {
         val content = TdApi.InputMessagePhoto(
             TdApi.InputFileLocal(filePath),
@@ -1126,36 +1093,34 @@ object TdClient {
             caption?.let { TdApi.FormattedText(it, emptyArray()) },
             false, null, false
         )
-        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
     suspend fun sendDocument(
         chatId: Long,
         filePath: String,
         caption: String? = null,
-        replyToMessageId: Long? = null,
-        messageThreadId: Long = 0L
+        replyToMessageId: Long? = null
     ) {
         val content = TdApi.InputMessageDocument(
             TdApi.InputFileLocal(filePath),
             null, false,
             caption?.let { TdApi.FormattedText(it, emptyArray()) }
         )
-        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
     suspend fun sendVoiceNote(
         chatId: Long,
         filePath: String,
         durationSeconds: Int,
-        replyToMessageId: Long? = null,
-        messageThreadId: Long = 0L
+        replyToMessageId: Long? = null
     ) {
         val content = TdApi.InputMessageVoiceNote(
             TdApi.InputFileLocal(filePath),
             durationSeconds, ByteArray(0), null, null
         )
-        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
     /**
@@ -1168,8 +1133,7 @@ object TdClient {
         chatId: Long,
         filePath: String,
         caption: String? = null,
-        replyToMessageId: Long? = null,
-        messageThreadId: Long = 0L
+        replyToMessageId: Long? = null
     ) {
         val content = TdApi.InputMessageVideo(
             TdApi.InputFileLocal(filePath),
@@ -1180,7 +1144,7 @@ object TdClient {
             caption?.let { TdApi.FormattedText(it, emptyArray()) },
             false, null, false       // show_caption_above_media, self_destruct, has_spoiler
         )
-        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
     /**
@@ -1192,8 +1156,7 @@ object TdClient {
         chatId: Long,
         filePath: String,
         caption: String? = null,
-        replyToMessageId: Long? = null,
-        messageThreadId: Long = 0L
+        replyToMessageId: Long? = null
     ) {
         val content = TdApi.InputMessageAnimation(
             TdApi.InputFileLocal(filePath),
@@ -1203,7 +1166,7 @@ object TdClient {
             caption?.let { TdApi.FormattedText(it, emptyArray()) },
             false, false             // show_caption_above_media, has_spoiler
         )
-        send(TdApi.SendMessage(chatId, messageThreadId, buildReplyTo(replyToMessageId), null, null, content))
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
     }
 
     /**
@@ -1227,8 +1190,7 @@ object TdClient {
         chatId: Long,
         items: List<MediaGroupItem>,
         caption: String? = null,
-        replyToMessageId: Long? = null,
-        messageThreadId: Long = 0L
+        replyToMessageId: Long? = null
     ) {
         if (items.isEmpty()) return
         val contents: Array<TdApi.InputMessageContent> = Array(items.size) { idx ->
@@ -1263,7 +1225,7 @@ object TdClient {
             }
         }
         send(TdApi.SendMessageAlbum(
-            chatId, messageThreadId, buildReplyTo(replyToMessageId), null, contents
+            chatId, null, buildReplyTo(replyToMessageId), null, contents
         ))
     }
 
