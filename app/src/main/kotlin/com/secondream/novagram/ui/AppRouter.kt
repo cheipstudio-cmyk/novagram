@@ -222,7 +222,27 @@ fun AppRouter(
                 }
             )
         }
-        composable(Routes.MEDIA_VIEWER) {
+        composable(
+            Routes.MEDIA_VIEWER,
+            // Media opens by sliding UP from the bottom (and slides back down
+            // on close) instead of the global left-to-right page slide —
+            // Eugenio: "deve salire dal basso, non da sinistra a destra". The
+            // chat underneath holds still (see the CHAT route's conditional
+            // exit/popEnter below) so it reads as a sheet rising over the
+            // stationary conversation.
+            enterTransition = {
+                androidx.compose.animation.slideInVertically(
+                    animationSpec = slideEnterSpring,
+                    initialOffsetY = { fullHeight -> fullHeight }
+                ) + androidx.compose.animation.fadeIn(fadeInSpec)
+            },
+            popExitTransition = {
+                androidx.compose.animation.slideOutVertically(
+                    animationSpec = slideExitSpring,
+                    targetOffsetY = { fullHeight -> fullHeight }
+                ) + androidx.compose.animation.fadeOut(fadeOutSpec)
+            }
+        ) {
             // Capture the path ONCE. Previously onClose nulled
             // MediaViewerHolder.currentPath, which recomposed this block
             // with path==null and fired the else-branch popBackStack — a
@@ -233,7 +253,17 @@ fun AppRouter(
             if (path != null) {
                 MediaViewerScreen(
                     filePath = path,
-                    onClose = { nav.popBackStack() }
+                    onClose = {
+                        // If the viewer was launched from the chat-info dialog
+                        // or the profile sheet, reopen that surface rather than
+                        // landing on the bare chat. Pop FIRST, then invoke, so
+                        // the reopened Dialog draws over the restored chat and
+                        // not over the viewer that's sliding away.
+                        val reopen = MediaViewerHolder.onClosed
+                        MediaViewerHolder.onClosed = null
+                        nav.popBackStack()
+                        reopen?.invoke()
+                    }
                 )
             } else {
                 androidx.compose.runtime.LaunchedEffect(Unit) { nav.popBackStack() }
@@ -244,7 +274,23 @@ fun AppRouter(
             arguments = listOf(
                 navArgument("chatId") { type = NavType.LongType },
                 navArgument("msg") { type = NavType.LongType; defaultValue = 0L }
-            )
+            ),
+            // The chat holds perfectly still while the media viewer rises over
+            // it (the viewer is opaque, so a horizontal slide of the chat
+            // underneath would just look like jank peeking past the rising
+            // sheet). Returning null for every OTHER destination defers to the
+            // NavHost's global horizontal page slide, so chat↔chat and
+            // chat↔list keep their normal motion.
+            exitTransition = {
+                if (targetState.destination.route == Routes.MEDIA_VIEWER)
+                    androidx.compose.animation.ExitTransition.None
+                else null
+            },
+            popEnterTransition = {
+                if (initialState.destination.route == Routes.MEDIA_VIEWER)
+                    androidx.compose.animation.EnterTransition.None
+                else null
+            }
         ) { entry ->
             val id = entry.arguments?.getLong("chatId") ?: 0L
             val msg = entry.arguments?.getLong("msg") ?: 0L

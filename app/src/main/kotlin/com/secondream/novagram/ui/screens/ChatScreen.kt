@@ -1320,114 +1320,109 @@ fun ChatScreen(
             // fallback, so there's nothing more to do here.
             if (idx < 0) return@launch
             run {
-                // Two-phase precise scroll for jump-to-message (mention /
-                // reaction / t.me deeplink / pinned-list / search arrow).
-                // Lands the target's TOP edge at ~30% of viewport height
-                // from the top — the upper third. This is the middle
-                // ground between the two positions that were tried and
-                // rejected: pinning the top ~80px from the top felt
-                // "troppo in alto", while centring it vertically
-                // ((vp-targetH)/2) felt "troppo in basso, bisogna
-                // scorrere per vedere i messaggi sotto". Upper-third keeps
-                // the target immediately visible up top while still
-                // leaving ~70% of the screen below it for newer context.
+                // One repeatable, glitch-free placement. The two failure modes
+                // Eugenio kept hitting:
+                //   (a) "animazione estremamente glitchosa" — a long
+                //       animateScrollToItem across a variable-height list flings,
+                //       re-estimates the distance halfway, then hard-snaps at the
+                //       end. Unavoidable for far targets.
+                //   (b) "70% delle volte qualche messaggio sopra al target" — the
+                //       resting offset was computed from the bubble height measured
+                //       BEFORE its async image/text finished laying out, so the
+                //       real (taller) bubble pushed the target below the 23% mark.
+                // The cure for both:
+                //   • ANIMATE only when the target is already painted on screen — a
+                //     short hop that is always smooth. For an off-screen or freshly
+                //     paginated target we do a SINGLE INSTANT placement instead of
+                //     gliding through hundreds of bubbles; the flash highlight makes
+                //     that teleport read as intentional (this is what Telegram does).
+                //   • Before fixing the offset, WAIT for the target height to stop
+                //     changing (3 identical frames) so the 23% math uses the real
+                //     bubble height, never a placeholder — kills (b).
+                //   • The resting position is ALWAYS set with an INSTANT
+                //     scrollToItem (pixel-exact). After a short animated hop it is a
+                //     sub-pixel no-op; on the instant path it is the placement
+                //     itself. Either way the final spot is identical every jump.
                 //
-                // Geometry (reverseLayout=true): scrollOffset is the gap
-                // between the item's bottom edge and the viewport bottom,
-                // so a LARGER offset pushes the item HIGHER. We want the
-                // target's top at 0.30*vp from the viewport top, i.e. at
-                // (vp - 0.30*vp) = 0.70*vp from the bottom; subtract the
-                // bubble height to get its bottom edge:
-                //     scrollOffset = vp*7/10 - targetH
-                // Using the full targetH (not targetH/2) is what keeps the
-                // TOP at a true 15% regardless of bubble height — an
-                // earlier attempt used targetH/2 and tall bubbles slid off
-                // the bottom of the screen. Clamp at 0 so a bubble taller
-                // than 0.85*vp simply anchors to the viewport bottom
-                // instead of producing a negative offset.
-                //
-                // Phase 1: rough scroll using (vp - 400) as a
-                // targetH-agnostic approximation (assumes a "typical"
-                // 300-400px bubble). Phase 2 (after a single-frame
-                // delay for layout to place the target) reads
-                // layoutInfo.visibleItemsInfo for the actual measured
-                // size and refines to the precise upper-third offset.
-                //
-                // The animate-vs-snap choice from the legacy code is
-                // preserved: animate for the already-loaded case (so
-                // search arrows feel like motion), snap for the
-                // pagination case (animating through freshly-inserted
-                // items causes the "scatto bruttissimo" jitter).
-                suspend fun preciseRefine() {
-                    // Place the target's TOP at ~23% from the viewport top, then
-                    // RE-PLACE whenever its measured height changes (media bubbles
-                    // decode their thumbnail a frame or two later and grow). The
-                    // critical change vs the old version: if the target is NOT in
-                    // visibleItemsInfo it means a prior scroll OVERSHOT it off the
-                    // TOP of the screen — the old code just `return@repeat`-skipped
-                    // that frame and never recovered, so the target stayed above
-                    // the fold and the user had to scroll down to find it (exactly
-                    // "mi porta troppo in alto"). We now pull it back to the bottom
-                    // edge — always visible and measurable — then re-place on the
-                    // next frame. Stops once the height holds steady for ~3 frames
-                    // or we exhaust the attempts (~500ms).
-                    // Geometry (reverseLayout=true): scrollToItem(idx, K) puts the
-                    // item's top at vp-(K+size); K = vp*77/100 - size → top at ~23%.
+                // Geometry (reverseLayout=true): scrollToItem(idx, K) leaves K px
+                // between the item's bottom edge and the viewport bottom, so its
+                // top sits at vp-(K+size). K = vp*77/100 - size lands the top at
+                // ~23% (the spot Eugenio approved). coerceAtLeast(0) so a bubble
+                // taller than 0.77*vp simply anchors to the viewport bottom.
+                suspend fun preciseRefine(animate: Boolean) {
+                    val info0 = listState.layoutInfo
+                    val vp0 = info0.viewportSize.height
+                    if (vp0 <= 0) {
+                        runCatching { listState.scrollToItem(idx, 0) }
+                        return
+                    }
+
+                    // Already painted? Then it's a short, always-smooth hop and we
+                    // already know its real height. Otherwise teleport instantly.
+                    val visNow = info0.visibleItemsInfo
+                    val onScreen = visNow.any { it.index == idx }
+                    val doAnimate = animate && onScreen
+
+                    if (!doAnimate) {
+                        // INSTANT path. Pre-place near the 23% mark in one shot
+                        // using the best height estimate, so the teleport lands at
+                        // roughly the final spot (no bottom-snap intermediate frame).
+                        val selfH = visNow.find { it.index == idx }?.size ?: 0
+                        val measured = visNow.filter { it.size > 0 }
+                        val avgH = if (measured.isNotEmpty())
+                            measured.sumOf { it.size } / measured.size
+                        else vp0 * 18 / 100
+                        val estH = if (selfH > 0) selfH else avgH
+                        val approx = (vp0 * 77 / 100 - estH).coerceAtLeast(0)
+                        runCatching { listState.scrollToItem(idx, approx) }
+                        kotlinx.coroutines.delay(16)
+                    }
+
+                    // Let the target height settle WITHOUT scrolling (nothing moves
+                    // on screen here ⇒ no jitter). Hold for 3 identical frames or
+                    // time out at ~40 frames so a slow-loading photo can't leave us
+                    // measuring its placeholder height.
                     var lastH = -1
                     var stableFrames = 0
-                    repeat(30) {
-                        kotlinx.coroutines.delay(16)
-                        val vp = listState.layoutInfo.viewportSize.height
-                        if (vp <= 0) return@repeat
-                        val item = listState.layoutInfo.visibleItemsInfo
-                            .find { it.index == idx }
-                        if (item == null) {
-                            // Overshot off-screen — anchor to the bottom so it's
-                            // visible again, then re-measure on the next frame.
-                            runCatching { listState.scrollToItem(idx, 0) }
-                            lastH = -1
-                            stableFrames = 0
-                            return@repeat
-                        }
-                        val targetH = item.size
-                        if (targetH != lastH) {
-                            val precise = (vp * 77 / 100 - targetH).coerceAtLeast(0)
-                            runCatching { listState.scrollToItem(idx, precise) }
-                            lastH = targetH
-                            stableFrames = 0
-                        } else {
+                    var settledH = -1
+                    var frame = 0
+                    while (frame < 40 && settledH <= 0) {
+                        val h = listState.layoutInfo.visibleItemsInfo
+                            .find { it.index == idx }?.size ?: -1
+                        if (h > 0 && h == lastH) {
                             stableFrames++
-                            if (stableFrames >= 3) return
+                            if (stableFrames >= 3) {
+                                settledH = h
+                                break
+                            }
+                        } else {
+                            stableFrames = 0
+                            lastH = h
                         }
+                        kotlinx.coroutines.delay(16)
+                        frame++
                     }
+                    if (settledH <= 0) settledH = if (lastH > 0) lastH else (vp0 * 18 / 100)
+
+                    val vp = listState.layoutInfo.viewportSize.height
+                        .let { if (it > 0) it else vp0 }
+                    val exact = (vp * 77 / 100 - settledH).coerceAtLeast(0)
+
+                    // Short on-screen hop → glide. Because the heights are already
+                    // settled and the distance is short, animateScrollToItem can't
+                    // drift, so the lock below is a sub-pixel no-op.
+                    if (doAnimate) {
+                        runCatching { listState.animateScrollToItem(idx, exact) }
+                    }
+                    // Pixel-exact resting position on every path.
+                    runCatching { listState.scrollToItem(idx, exact) }
                 }
 
-                val viewportH0 = listState.layoutInfo.viewportSize.height
-                // If the target is ALREADY visible (no scroll needed),
-                // skip the rough phase entirely and refine in place.
-                // Reading layoutInfo on the current frame is safe here
-                // because we're in a coroutine that already yielded
-                // through the suspending getChatHistory above.
-                val existing = listState.layoutInfo.visibleItemsInfo
-                    .find { it.index == idx }
-                if (existing != null && viewportH0 > 0 && wasAlreadyLoaded) {
-                    // Already on screen → animate straight to the resting
-                    // offset so search-arrow navigation reads as motion,
-                    // then settle for any post-decode height growth.
-                    val precise = (viewportH0 * 77 / 100 - existing.size).coerceAtLeast(0)
-                    runCatching { listState.animateScrollToItem(idx, precise) }
-                    preciseRefine()
-                } else {
-                    // Not on screen (just paginated in, or far away). Bring
-                    // it on screen RELIABLY first by anchoring its bottom to
-                    // the viewport bottom: scrollToItem(idx, 0) can never
-                    // overshoot off the top the way the old (vp - 400) rough
-                    // offset did for tall bubbles, and it guarantees the
-                    // target is present in visibleItemsInfo so preciseRefine
-                    // can measure it and lift it to the ~23% resting spot.
-                    runCatching { listState.scrollToItem(idx, 0) }
-                    preciseRefine()
-                }
+                // Already in the loaded window → animation is PERMITTED; whether
+                // it actually glides is decided inside (only for a target already
+                // on screen — a short, smooth hop). Freshly paginated in → never
+                // animate, just teleport precisely.
+                preciseRefine(animate = wasAlreadyLoaded)
                 flashMessageId = targetId
                 // Clear the flash a beat later so the highlight fades out
                 // and the bubble settles back to its normal colour.
@@ -1624,6 +1619,12 @@ fun ChatScreen(
     // Set true by the menu item; the dialog itself clears it.
     var ttlDialogOpen by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
+    // Remembers which info tab the user was on, so that reopening the info
+    // dialog after closing a photo/video viewer (see MediaViewerHolder
+    // .onClosed) lands back on the same tab (e.g. "Foto") rather than
+    // snapping to "Info". Kept here in ChatScreen because the dialog itself
+    // is torn down between opens.
+    var infoInitialPage by remember(chatId) { mutableStateOf(0) }
     // Deferred media-viewer open requested from the chat-info dialog.
     // Navigating to the viewer route AND dismissing the info Dialog in the
     // same frame races the Dialog-window teardown against the NavHost push,
@@ -2126,6 +2127,10 @@ fun ChatScreen(
                                     ?.userId?.let { adminLabels[it] },
                                 onLongPress = { deleteTarget = it },
                                 onMediaTap = { path ->
+                                    // Opened straight from a chat bubble → on
+                                    // close just return to the chat; there's no
+                                    // info/profile surface to restore.
+                                    com.secondream.novagram.ui.screens.MediaViewerHolder.onClosed = null
                                     com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
                                     onOpenMediaViewer()
                                 },
@@ -2990,7 +2995,14 @@ fun ChatScreen(
                 profileSheetUserId = null
                 onOpenChat(newChatId, null)
             },
-            onOpenMediaViewer = { pendingViewerOpen = true }
+            onOpenMediaViewer = {
+                // Reopen this profile sheet when the photo viewer closes,
+                // instead of dropping the user back to the bare chat.
+                com.secondream.novagram.ui.screens.MediaViewerHolder.onClosed = {
+                    profileSheetUserId = uid
+                }
+                pendingViewerOpen = true
+            }
         )
     }
 
@@ -3538,12 +3550,21 @@ fun ChatScreen(
     if (infoOpen) {
         ChatInfoDialog(
             chatId = chatId,
+            initialPage = infoInitialPage,
+            onPageChanged = { infoInitialPage = it },
             onDismiss = { infoOpen = false },
             onJumpToMessage = { mid ->
                 infoOpen = false
                 jumpToMessage(mid)
             },
-            onOpenMediaViewer = { pendingViewerOpen = true }
+            onOpenMediaViewer = {
+                // Reopen the info dialog (on its last tab) when the media
+                // viewer closes, instead of dropping back to the bare chat.
+                com.secondream.novagram.ui.screens.MediaViewerHolder.onClosed = {
+                    infoOpen = true
+                }
+                pendingViewerOpen = true
+            }
         )
     }
 
@@ -3659,6 +3680,8 @@ fun ChatScreen(
 @Composable
 internal fun ChatInfoDialog(
     chatId: Long,
+    initialPage: Int = 0,
+    onPageChanged: (Int) -> Unit = {},
     onDismiss: () -> Unit,
     onJumpToMessage: (Long) -> Unit,
     onOpenMediaViewer: () -> Unit = {}
@@ -3733,7 +3756,7 @@ internal fun ChatInfoDialog(
     val membersIndex = if (showMembers) tabs.lastIndex else -1
 
     val pagerState = androidx.compose.foundation.pager.rememberPagerState(
-        initialPage = 0,
+        initialPage = initialPage.coerceIn(0, (tabs.size - 1).coerceAtLeast(0)),
         pageCount = { tabs.size }
     )
     val scope = rememberCoroutineScope()
@@ -3749,6 +3772,7 @@ internal fun ChatInfoDialog(
     var mediaQuery by remember(chatId) { mutableStateOf("") }
     LaunchedEffect(pagerState.currentPage) {
         mediaQuery = ""
+        onPageChanged(pagerState.currentPage)
         runCatching { tabsListState.animateScrollToItem(pagerState.currentPage) }
     }
     var selectedMediaMessage by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }

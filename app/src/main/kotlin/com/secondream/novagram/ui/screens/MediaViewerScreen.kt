@@ -50,6 +50,11 @@ import com.secondream.novagram.R
  */
 @Composable
 fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
+    // Route the system back gesture through onClose too (not just the X
+    // button), otherwise NavHost's default pop bypasses our reopen logic
+    // and the chat-info / profile surface wouldn't come back. Placed before
+    // the video branch so it covers both image and video viewers.
+    androidx.activity.compose.BackHandler { onClose() }
     // Branch: ExoPlayer for video, the existing AsyncImage zoomer for
     // photos. We read the flag from the holder rather than from
     // path-extension sniffing because some TDLib downloads land without
@@ -153,6 +158,13 @@ fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
 object MediaViewerHolder {
     var currentPath: String? = null
     var isVideo: Boolean = false
+    // Set by the opener when the viewer should NOT return to the bare chat
+    // on close but reopen the surface it was launched from (the chat-info
+    // dialog or the profile sheet — both are Compose Dialog/sheet windows
+    // that are NOT on the nav back stack, so a plain popBackStack lands on
+    // the chat). The MEDIA_VIEWER route invokes this once on close and
+    // clears it. The chat-bubble path leaves it null → normal pop to chat.
+    var onClosed: (() -> Unit)? = null
 }
 
 /**
