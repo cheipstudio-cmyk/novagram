@@ -58,6 +58,12 @@ object TdClient {
     private val _chatActions = MutableStateFlow<Map<Long, Map<Long, TdApi.ChatAction>>>(emptyMap())
     val chatActions: StateFlow<Map<Long, Map<Long, TdApi.ChatAction>>> = _chatActions.asStateFlow()
 
+    // Set of user ids currently online (UserStatusOnline). Fed by
+    // UpdateUserStatus and seeded from UpdateUser, so the chat-list rows can
+    // show the green online dot reactively, without each row polling.
+    private val _onlineUsers = MutableStateFlow<Set<Long>>(emptySet())
+    val onlineUsers: StateFlow<Set<Long>> = _onlineUsers.asStateFlow()
+
     /**
      * Per (chatId, senderId) auto-expiry deadline in epoch-millis. TDLib
      * re-sends UpdateChatAction every ~5s while the peer is still
@@ -526,6 +532,9 @@ object TdClient {
             }
             is TdApi.UpdateUser -> {
                 userCache[obj.user.id] = obj.user
+                _onlineUsers.value =
+                    if (obj.user.status is TdApi.UserStatusOnline) _onlineUsers.value + obj.user.id
+                    else _onlineUsers.value - obj.user.id
                 // Same avatar pre-warm as chats: lets group-message
                 // notifications render the SENDER's photo from disk instead
                 // of blocking on a download at notify time.
@@ -534,6 +543,14 @@ object TdClient {
                         scope.launch { runCatching { downloadFile(f.id) } }
                     }
                 }
+            }
+            is TdApi.UpdateUserStatus -> {
+                // Keep the cached user's status fresh AND maintain the online
+                // id set the chat list observes for its green dot.
+                userCache[obj.userId]?.status = obj.status
+                _onlineUsers.value =
+                    if (obj.status is TdApi.UserStatusOnline) _onlineUsers.value + obj.userId
+                    else _onlineUsers.value - obj.userId
             }
             is TdApi.UpdateSupergroup -> {
                 // Cache the supergroup record so we can synchronously read
@@ -728,21 +745,100 @@ object TdClient {
     }
 
     /**
+     * Human-readable description of a "service"/system message — someone
+     * joining or leaving, a pinned message, a renamed group, a video chat,
+     * a screenshot, and so on. These carry no MessageText, so without this
+     * they surface as a bare "Nuovo messaggio" in notifications and
+     * "Messaggio" in the chat list. Returns null for ordinary content
+     * messages (the caller then uses its own media/text preview). Names are
+     * resolved from the user/chat caches.
+     */
+    fun serviceMessageText(msg: TdApi.Message): String? {
+        val actor = resolveSenderName(msg).ifBlank { "Qualcuno" }
+        val senderUid = (msg.senderId as? TdApi.MessageSenderUser)?.userId
+        fun nameOf(uid: Long): String =
+            userCache[uid]?.let { "${it.firstName} ${it.lastName}".trim() }?.ifBlank { null }
+                ?: "utente"
+        fun namesOf(ids: LongArray): String =
+            if (ids.isEmpty()) "qualcuno" else ids.joinToString(", ") { nameOf(it) }
+        return when (val c = msg.content) {
+            is TdApi.MessageChatJoinByLink -> "$actor si è unito al gruppo"
+            is TdApi.MessageChatAddMembers -> {
+                val ids = c.memberUserIds
+                if (ids.size == 1 && senderUid != null && ids[0] == senderUid)
+                    "$actor si è unito al gruppo"
+                else "$actor ha aggiunto ${namesOf(ids)}"
+            }
+            is TdApi.MessageChatDeleteMember ->
+                if (senderUid != null && c.userId == senderUid) "$actor ha lasciato il gruppo"
+                else "$actor ha rimosso ${nameOf(c.userId)}"
+            is TdApi.MessagePinMessage -> "$actor ha fissato un messaggio"
+            is TdApi.MessageChatChangeTitle -> "$actor ha cambiato il nome in «${c.title}»"
+            is TdApi.MessageChatChangePhoto -> "$actor ha cambiato la foto del gruppo"
+            is TdApi.MessageChatDeletePhoto -> "$actor ha rimosso la foto del gruppo"
+            is TdApi.MessageBasicGroupChatCreate -> "$actor ha creato il gruppo «${c.title}»"
+            is TdApi.MessageSupergroupChatCreate -> "$actor ha creato «${c.title}»"
+            is TdApi.MessageChatUpgradeTo -> "Il gruppo è diventato un supergruppo"
+            is TdApi.MessageChatUpgradeFrom -> "Il gruppo è diventato un supergruppo"
+            is TdApi.MessageContactRegistered -> "$actor si è iscritto a Telegram"
+            is TdApi.MessageScreenshotTaken -> "$actor ha fatto uno screenshot"
+            is TdApi.MessageChatSetMessageAutoDeleteTime ->
+                if (c.messageAutoDeleteTime == 0) "$actor ha disattivato l'autodistruzione dei messaggi"
+                else "$actor ha impostato l'autodistruzione dei messaggi"
+            is TdApi.MessageChatSetTheme -> "$actor ha cambiato il tema della chat"
+            is TdApi.MessageChatBoost -> "Il gruppo ha ricevuto un boost"
+            is TdApi.MessageVideoChatStarted -> "📞 Videochiamata iniziata"
+            is TdApi.MessageVideoChatEnded -> "📞 Videochiamata terminata"
+            is TdApi.MessageVideoChatScheduled -> "📞 Videochiamata programmata"
+            is TdApi.MessageInviteVideoChatParticipants ->
+                "$actor ha invitato dei partecipanti alla videochiamata"
+            is TdApi.MessageForumTopicCreated -> "Topic creato: «${c.name}»"
+            is TdApi.MessageForumTopicEdited -> "Topic modificato"
+            is TdApi.MessageForumTopicIsClosedToggled -> if (c.isClosed) "Topic chiuso" else "Topic riaperto"
+            is TdApi.MessageForumTopicIsHiddenToggled -> if (c.isHidden) "Topic nascosto" else "Topic mostrato"
+            is TdApi.MessageCustomServiceAction -> c.text
+            is TdApi.MessageGameScore -> "$actor ha totalizzato ${c.score} punti"
+            is TdApi.MessagePaymentSuccessful -> "Pagamento effettuato"
+            is TdApi.MessageGiftedPremium -> "Regalo Telegram Premium"
+            is TdApi.MessageGiftedStars -> "Regalo di stelle"
+            is TdApi.MessageGiveawayCreated -> "Giveaway avviato"
+            is TdApi.MessageGiveaway -> "Giveaway"
+            is TdApi.MessagePremiumGiftCode -> "Codice regalo Premium"
+            is TdApi.MessageProximityAlertTriggered -> "Avviso di prossimità"
+            is TdApi.MessageExpiredPhoto -> "📷 Foto scaduta"
+            is TdApi.MessageExpiredVideo -> "🎬 Video scaduto"
+            is TdApi.MessageUnsupported -> "Messaggio non supportato"
+            else -> null
+        }
+    }
+
+    /**
      * Compose a short single-line preview of a message's content. Used
      * by the chat-list row (last message) and by ChatScreen's pinned-
      * message banner. Returns empty string for null.
      */
     fun buildPreview(msg: TdApi.Message?): String {
         if (msg == null) return ""
+        serviceMessageText(msg)?.let { return it }
         return when (val c = msg.content) {
             is TdApi.MessageText -> c.text.text
             is TdApi.MessagePhoto -> "📷 " + (c.caption.text.ifBlank { "Foto" })
             is TdApi.MessageVoiceNote -> "🎙 Nota vocale"
             is TdApi.MessageAudio -> "🎵 " + (c.audio.title.ifBlank { "Audio" })
             is TdApi.MessageDocument -> "📎 " + c.document.fileName
-            is TdApi.MessageVideo -> "🎬 Video"
-            is TdApi.MessageSticker -> "Sticker"
-            is TdApi.MessageAnimation -> "GIF"
+            is TdApi.MessageVideo -> "🎬 " + (c.caption.text.ifBlank { "Video" })
+            is TdApi.MessageVideoNote -> "📹 Video messaggio"
+            is TdApi.MessageSticker -> c.sticker.emoji.ifBlank { "Sticker" } + " Sticker"
+            is TdApi.MessageAnimation -> "GIF" + (c.caption.text.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+            is TdApi.MessageLocation -> "📍 Posizione"
+            is TdApi.MessageVenue -> "📍 " + c.venue.title.ifBlank { "Luogo" }
+            is TdApi.MessageContact -> "👤 " + "${c.contact.firstName} ${c.contact.lastName}".trim().ifBlank { "Contatto" }
+            is TdApi.MessagePoll -> "📊 " + c.poll.question.text.ifBlank { "Sondaggio" }
+            is TdApi.MessageGame -> "🎮 " + c.game.title.ifBlank { "Gioco" }
+            is TdApi.MessageDice -> c.emoji.ifBlank { "🎲" }
+            is TdApi.MessageStory -> "📖 Storia"
+            is TdApi.MessageInvoice -> "🧾 Fattura"
+            is TdApi.MessageCall -> "📞 Chiamata"
             else -> "Messaggio"
         }
     }
@@ -757,10 +853,23 @@ object TdClient {
                 _authState.value = AuthState.WaitPhoneNumber
             }
             is TdApi.AuthorizationStateWaitCode -> {
-                _authState.value = AuthState.WaitCode(codeHint = state.codeInfo.phoneNumber)
+                // codeInfo.type tells us HOW the code was delivered. Telegram's
+                // server sends it inside the Telegram app when another active
+                // session exists; with NO active session (e.g. the user has
+                // Telegram nowhere) it falls back to SMS / a call. Surface that
+                // so the login screen can say where to look.
+                _authState.value = AuthState.WaitCode(
+                    codeHint = state.codeInfo.phoneNumber,
+                    viaTelegram = state.codeInfo.type is TdApi.AuthenticationCodeTypeTelegramMessage
+                )
             }
             is TdApi.AuthorizationStateWaitPassword -> {
                 _authState.value = AuthState.WaitPassword(hint = state.passwordHint)
+            }
+            is TdApi.AuthorizationStateWaitRegistration -> {
+                // Brand-new number with no Telegram account — TDLib needs a
+                // name to create one. The login screen shows the name step.
+                _authState.value = AuthState.WaitRegistration
             }
             is TdApi.AuthorizationStateReady -> {
                 _authState.value = AuthState.Ready
@@ -874,6 +983,13 @@ object TdClient {
 
     suspend fun setPassword(password: String) {
         send(TdApi.CheckAuthenticationPassword(password))
+    }
+
+    /** Create a new Telegram account for a number that has none. Only valid
+     *  while TDLib is in AuthorizationStateWaitRegistration (after the code
+     *  step for a brand-new user). */
+    suspend fun registerUser(firstName: String, lastName: String) {
+        send(TdApi.RegisterUser(firstName.trim(), lastName.trim(), false))
     }
 
     suspend fun logOut() {
@@ -1658,28 +1774,81 @@ object TdClient {
      * commands the bot is actually offering in *that* group (which can
      * differ from its private-chat command set).
      */
-    suspend fun getBotCommandsForChat(chatId: Long): List<TdApi.BotCommand> {
-        // GetCommands is a *bot-only* TDLib method: called from a regular
-        // user account (which is what this client always is) it returns
-        // nothing, which is exactly why the slash-command picker stayed
-        // empty in groups — the user typed "/" and saw no suggestions.
+    suspend fun getBotCommandsForChat(chatId: Long): List<BotCommandItem> {
+        // Two sources, merged (deduped by command name, group-scope first):
         //
-        // The commands that bots have REGISTERED for a group live on the
-        // group's full info instead: SupergroupFullInfo.botCommands /
-        // BasicGroupFullInfo.botCommands, each entry being one bot's
-        // command set (botUserId + its BotCommand[]). We fetch the full
-        // info (TDLib caches it after the first call, so this is cheap on
-        // repeat opens) and flatten every bot's commands into one list the
-        // picker filters live as the user types.
+        // 1) GROUP-SCOPE: commands a bot registered specifically for THIS
+        //    group live on the group's full info — SupergroupFullInfo.
+        //    botCommands / BasicGroupFullInfo.botCommands. (GetCommands is a
+        //    bot-only method and returns nothing for a normal user account,
+        //    which is why a chat-scoped query was useless here.)
+        //
+        // 2) DEFAULT-SCOPE: but MOST bots only register their commands in the
+        //    default scope, which does NOT appear in the group's full info —
+        //    so the picker came up empty in groups (e.g. an admin bot's
+        //    /mute). Official Telegram, when you type "/" in a group, also
+        //    shows each bot member's default command set. We replicate that:
+        //    enumerate the group's bot members and pull each one's
+        //    UserFullInfo.botInfo.commands. Each command is tagged with its
+        //    bot's @username so the caller can send "/cmd@bot" in groups.
         val chat = getCachedChat(chatId)
-        val arrays: Array<TdApi.BotCommands>? = when (val t = chat?.type) {
+        val merged = LinkedHashMap<String, BotCommandItem>()
+
+        suspend fun usernameOf(botId: Long): String? {
+            val u = getCachedUser(botId) ?: runCatching { getUser(botId) }.getOrNull()
+            return u?.usernames?.activeUsernames?.firstOrNull()?.takeIf { it.isNotBlank() }
+                ?: u?.usernames?.editableUsername?.takeIf { it.isNotBlank() }
+        }
+
+        val groupScoped: Array<TdApi.BotCommands>? = when (val t = chat?.type) {
             is TdApi.ChatTypeSupergroup ->
                 runCatching { getSupergroupFullInfo(t.supergroupId) }.getOrNull()?.botCommands
             is TdApi.ChatTypeBasicGroup ->
                 runCatching { getBasicGroupFullInfo(t.basicGroupId) }.getOrNull()?.botCommands
             else -> null
         }
-        return arrays?.flatMap { it.commands.toList() } ?: emptyList()
+        groupScoped?.forEach { bc ->
+            val uname = usernameOf(bc.botUserId)
+            bc.commands.forEach { c ->
+                merged.putIfAbsent(c.command, BotCommandItem(c.command, c.description, bc.botUserId, uname))
+            }
+        }
+
+        val botIds = LinkedHashSet<Long>()
+        when (val t = chat?.type) {
+            is TdApi.ChatTypeSupergroup -> {
+                val members = runCatching {
+                    send(
+                        TdApi.GetSupergroupMembers(
+                            t.supergroupId,
+                            TdApi.SupergroupMembersFilterBots(),
+                            0, 50
+                        )
+                    )
+                }.getOrNull()
+                members?.members?.forEach { m ->
+                    (m.memberId as? TdApi.MessageSenderUser)?.let { botIds.add(it.userId) }
+                }
+            }
+            is TdApi.ChatTypeBasicGroup -> {
+                val full = runCatching { getBasicGroupFullInfo(t.basicGroupId) }.getOrNull()
+                full?.members?.forEach { m ->
+                    val uid = (m.memberId as? TdApi.MessageSenderUser)?.userId ?: return@forEach
+                    val u = getCachedUser(uid) ?: runCatching { getUser(uid) }.getOrNull()
+                    if (u?.type is TdApi.UserTypeBot) botIds.add(uid)
+                }
+            }
+            else -> {}
+        }
+        for (botId in botIds) {
+            val cmds = runCatching { getUserFullInfo(botId) }.getOrNull()
+                ?.botInfo?.commands ?: continue
+            val uname = usernameOf(botId)
+            cmds.forEach { c ->
+                merged.putIfAbsent(c.command, BotCommandItem(c.command, c.description, botId, uname))
+            }
+        }
+        return merged.values.toList()
     }
 
     /**
@@ -2224,6 +2393,20 @@ object TdClient {
 class TdException(val code: Int, message: String) : RuntimeException(message)
 
 enum class ChatKind { Private, Group, Channel, Secret }
+
+/**
+ * One bot /command, plus the identity of the bot that owns it. The owning
+ * bot matters because in a group with more than one bot a bare "/command"
+ * isn't routed anywhere (bots with privacy mode ignore it) — it has to be
+ * sent as "/command@botusername". We also surface [botUsername] in the
+ * picker so the user can tell which bot a command belongs to.
+ */
+data class BotCommandItem(
+    val command: String,
+    val description: String,
+    val botUserId: Long,
+    val botUsername: String?
+)
 
 data class ChatSummary(
     val id: Long,

@@ -30,6 +30,12 @@
     <!-- Login -->
     <string name="login_phone_label">Numero di telefono (con prefisso)</string>
     <string name="login_code_label">Codice ricevuto</string>
+    <string name="login_code_via_telegram">Codice inviato nell\'app Telegram</string>
+    <string name="login_code_via_sms">Codice inviato via SMS</string>
+    <string name="login_register_desc">Questo numero non ha un account Telegram. Creane uno inserendo il tuo nome.</string>
+    <string name="login_first_name">Nome</string>
+    <string name="login_last_name">Cognome (opzionale)</string>
+    <string name="action_create_account">Crea account</string>
     <string name="login_password_label">Password 2FA</string>
     <string name="login_step_phone">Inserisci il tuo numero per ricevere il codice.</string>
     <string name="login_step_code">Controlla l\'app Telegram o gli SMS.</string>
@@ -346,8 +352,10 @@
     <string name="tab_all">Tutto</string>
     <string name="action_pin_chat">Fissa chat</string>
     <string name="action_unpin_chat">Sblocca chat</string>
-    <string name="settings_show_all_tab">Mostra tab &quot;Tutto&quot;</string>
+    <string name="settings_show_all_tab">Tab Tutto</string>
     <string name="settings_show_all_tab_desc">Mostra una scheda unica con tutte le chat in alto</string>
+    <string name="settings_lock_saved_top">Blocca messaggi salvati in alto nella lista chat</string>
+    <string name="settings_lock_saved_top_desc">Tieni la chat dei messaggi salvati sempre in cima alla lista</string>
     <string name="settings_swap_swipe_reply">Inverti swipe per rispondere</string>
     <string name="settings_swap_swipe_reply_desc">Scorri a sinistra invece che a destra per rispondere a un messaggio</string>
     <string name="action_join_channel">Unisciti al canale</string>
@@ -383,4 +391,24 @@
     <string name="chat_info_media_open_link">Apri link</string>
     <string name="chat_info_media_view_in_chat">Visualizza in chat</string>
     <string name="chat_info_copied">Copiato negli appunti</string>
+    <string name="info_media_search_hint">Cerca in questa categoria</string>
+    <string name="member_search_hint">Cerca per nome o username</string>
+    <string name="members_none_found">Nessun membro trovato</string>
+    <string name="user_fallback">Utente</string>
+    <string name="member_unban">Sbanna</string>
+    <string name="member_ban">Banna</string>
+    <string name="member_unmute">Smuta</string>
+    <string name="member_mute">Muta</string>
+    <string name="member_remove_admin">Rimuovi amministratore</string>
+    <string name="member_make_admin">Rendi amministratore</string>
+    <string name="member_manage_title">Gestisci membro</string>
+    <string name="media_saved_ok">Salvato in Download/Nova</string>
+    <string name="media_save_failed">Salvataggio non riuscito</string>
+    <string name="member_role_owner">Proprietario</string>
+    <string name="member_role_admin">Amministratore</string>
+    <string name="member_role_restricted">Limitato</string>
+    <string name="member_role_banned">Bannato</string>
+    <string name="receipt_seen">Visualizzato</string>
+    <string name="receipt_sent">Inviato</string>
+    <string name="gallery_empty_category">Niente da mostrare in questa categoria</string>
 </resources>

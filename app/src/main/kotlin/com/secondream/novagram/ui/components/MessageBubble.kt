@@ -141,7 +141,16 @@ fun MessageBubble(
      * a spinner in place of its label. Cleared by the parent once the
      * response (or error) arrives.
      */
-    pendingInlineButtonKey: String? = null
+    pendingInlineButtonKey: String? = null,
+    /**
+     * Reactive outbox-read marker (chat.lastReadOutboxMessageId) handed
+     * down by the parent so the ✓✓ "read" tick on the user's own messages
+     * in a 1-to-1 chat flips the INSTANT the peer reads — the parent
+     * re-resolves this on every TdClient.chatUpdates emission (which fires
+     * on UpdateChatReadOutbox). -1 = not supplied: callers that don't pass
+     * it fall back to the one-shot cached value (old, non-reactive path).
+     */
+    readOutboxMaxId: Long = -1L
 ) {
     // Read the param so the composable observes it; the value itself isn't
     // used directly anywhere — it's purely a recompose trigger.
@@ -608,7 +617,10 @@ fun MessageBubble(
                 if (mine && isPrivateChat) {
                     Spacer(Modifier.width(4.dp))
                     val sendingState = message.sendingState
-                    val isRead = (cachedChat?.lastReadOutboxMessageId ?: 0L) >= message.id
+                    val effectiveReadMax =
+                        if (readOutboxMaxId >= 0L) readOutboxMaxId
+                        else (cachedChat?.lastReadOutboxMessageId ?: 0L)
+                    val isRead = effectiveReadMax >= message.id
                     val ticks = when {
                         sendingState is TdApi.MessageSendingStatePending -> "⏱"
                         sendingState is TdApi.MessageSendingStateFailed -> "!"
@@ -912,37 +924,28 @@ private fun MessageContent(
                 )
             }
         }
-        is TdApi.MessageContactRegistered -> Text(
-            stringResource(R.string.service_contact_joined),
-            style = MaterialTheme.typography.bodyLarge,
-            color = onBackground.copy(alpha = 0.7f)
-        )
-        is TdApi.MessageChatJoinByLink, is TdApi.MessageChatAddMembers -> Text(
-            stringResource(R.string.service_chat_join),
-            style = MaterialTheme.typography.bodyLarge,
-            color = onBackground.copy(alpha = 0.7f)
-        )
-        is TdApi.MessageChatDeleteMember -> Text(
-            stringResource(R.string.service_chat_leave),
-            style = MaterialTheme.typography.bodyLarge,
-            color = onBackground.copy(alpha = 0.7f)
-        )
-        is TdApi.MessageChatChangePhoto -> Text(
-            stringResource(R.string.service_chat_photo_changed),
-            style = MaterialTheme.typography.bodyLarge,
-            color = onBackground.copy(alpha = 0.7f)
-        )
-        is TdApi.MessageChatChangeTitle -> Text(
-            stringResource(R.string.service_chat_title_changed),
-            style = MaterialTheme.typography.bodyLarge,
-            color = onBackground.copy(alpha = 0.7f)
-        )
-        is TdApi.MessagePinMessage -> Text(
-            stringResource(R.string.service_pinned_message),
-            style = MaterialTheme.typography.bodyLarge,
-            color = onBackground.copy(alpha = 0.7f)
-        )
-        else -> Text(stringResource(R.string.media_unsupported), style = MaterialTheme.typography.bodyLarge, color = onBackground.copy(alpha = 0.6f))
+        else -> {
+            // Service / system messages (joined, left, pinned, renamed, video
+            // chat, …) carry no text body. Render the name-aware description
+            // ("X si è unito al gruppo"), centered + faded. Any content type we
+            // don't draw inline yet (poll, location, contact, video note, call,
+            // …) falls back to its labelled shorthand rather than a bare
+            // "non supportato".
+            val service = com.secondream.novagram.td.TdClient.serviceMessageText(message)
+            if (service != null) {
+                Text(
+                    service,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = onBackground.copy(alpha = 0.7f)
+                )
+            } else {
+                Text(
+                    com.secondream.novagram.td.TdClient.buildPreview(message),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = onBackground.copy(alpha = 0.85f)
+                )
+            }
+        }
     }
 }
 

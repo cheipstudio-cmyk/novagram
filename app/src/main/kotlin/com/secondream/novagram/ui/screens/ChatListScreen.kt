@@ -514,7 +514,7 @@ fun ChatListScreen(
             modifier = Modifier.fillMaxSize().padding(padding)
         ) { page ->
             val spec = tabs[page.coerceIn(0, tabs.lastIndex)]
-            val pageChats = remember(allChats, page, searchQuery, myUserId, spec) {
+            val pageChats = remember(allChats, page, searchQuery, myUserId, spec, appearance.lockSavedToTop) {
                 val q = searchQuery.trim()
                 val base = when {
                     spec.isAll -> {
@@ -525,10 +525,17 @@ fun ChatListScreen(
                         // Chat-tab behaviour, so it's the very first
                         // entry the user sees regardless of recency.
                         val all = allChats.filter { !it.isArchived }
-                        if (myUserId != 0L) {
+                        if (myUserId != 0L && appearance.lockSavedToTop) {
                             val saved = all.filter { it.id == myUserId }
                             val rest = all.filter { it.id != myUserId }
                             saved + rest
+                        } else if (myUserId != 0L) {
+                            // Toggle off: Saved Messages sorts by recency like
+                            // any other chat (drop any pin weight on it).
+                            all.sortedWith(
+                                compareByDescending<com.secondream.novagram.td.ChatSummary> { it.id != myUserId && it.isPinned }
+                                    .thenByDescending { it.order }
+                            )
                         } else all
                     }
                     spec.isArchive -> {
@@ -543,10 +550,17 @@ fun ChatListScreen(
                             // we DON'T filter it out here for Private; we lift
                             // it to the front below.
                             .let { list ->
-                                if (spec.kind == ChatKind.Private && myUserId != 0L) {
+                                if (spec.kind == ChatKind.Private && myUserId != 0L && appearance.lockSavedToTop) {
                                     val saved = list.filter { it.id == myUserId }
                                     val rest = list.filter { it.id != myUserId }
                                     saved + rest
+                                } else if (spec.kind == ChatKind.Private && myUserId != 0L) {
+                                    // Toggle off: don't force Saved Messages up;
+                                    // let it sort by recency like the rest.
+                                    list.sortedWith(
+                                        compareByDescending<com.secondream.novagram.td.ChatSummary> { it.id != myUserId && it.isPinned }
+                                            .thenByDescending { it.order }
+                                    )
                                 } else list
                             }
                     }
@@ -678,6 +692,7 @@ fun ChatListScreen(
             isMuted = isMuted,
             isArchived = target.isArchived,
             isPinned = target.isPinned,
+            isSavedMessages = (myUserId != 0L && target.id == myUserId),
             onDismiss = { chatActionTarget = null },
             onToggleMute = {
                 val cid = target.id
@@ -819,6 +834,7 @@ private fun ChatActionSheet(
     isMuted: Boolean,
     isArchived: Boolean,
     isPinned: Boolean,
+    isSavedMessages: Boolean = false,
     onDismiss: () -> Unit,
     onToggleMute: () -> Unit,
     onTogglePin: () -> Unit,
@@ -834,15 +850,20 @@ private fun ChatActionSheet(
     // for groups/channels, delete for privates/secrets) gets the
     // destructive treatment.
     val tiles = buildList {
-        add(
-            com.secondream.novagram.ui.components.ActionTile(
-                label = stringResource(
-                    if (isPinned) R.string.action_unpin_chat else R.string.action_pin_chat
-                ),
-                icon = com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
-                onClick = onTogglePin
+        // Saved Messages isn't a user-pinnable chat in Novagram — its slot
+        // is governed by the "Lock Saved Messages to top" setting, so we
+        // don't offer pin/unpin here.
+        if (!isSavedMessages) {
+            add(
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(
+                        if (isPinned) R.string.action_unpin_chat else R.string.action_pin_chat
+                    ),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
+                    onClick = onTogglePin
+                )
             )
-        )
+        }
         add(
             com.secondream.novagram.ui.components.ActionTile(
                 label = stringResource(
@@ -1209,6 +1230,21 @@ private fun ChatRow(
     onAvatarClick: () -> Unit = onClick
 ) {
     val isSavedMessages = myUserId != 0L && c.id == myUserId
+    // Green online dot for 1-to-1 chats whose peer is currently online —
+    // mirrors the dot shown in the open chat's title bar. Reactive via the
+    // shared online-id set (no per-row polling).
+    val peerId = (c.chat.type as? org.drinkless.tdlib.TdApi.ChatTypePrivate)?.userId
+    // Derive the dot from the shared online set, but only let THIS row
+    // recompose when its OWN peer's status flips — not on every status
+    // update for anyone (which during a scroll made all visible rows
+    // recompose, the sporadic jank). derivedStateOf gates the invalidation
+    // to a real change of this row's boolean.
+    val onlineUsersState = com.secondream.novagram.td.TdClient.onlineUsers.collectAsState()
+    val isPeerOnline by remember(peerId, myUserId) {
+        androidx.compose.runtime.derivedStateOf {
+            peerId != null && peerId != myUserId && peerId in onlineUsersState.value
+        }
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -1237,13 +1273,31 @@ private fun ChatRow(
             }
         } else {
             val bg = avatarBackgroundFor(c.id)
-            Avatar(
-                file = c.chat.photo?.small,
-                fallbackText = c.title,
-                bgColor = bg,
-                size = 48.dp,
-                modifier = Modifier.clickable(onClick = onAvatarClick)
-            )
+            Box {
+                Avatar(
+                    file = c.chat.photo?.small,
+                    fallbackText = c.title,
+                    bgColor = bg,
+                    size = 48.dp,
+                    modifier = Modifier.clickable(onClick = onAvatarClick)
+                )
+                if (isPeerOnline) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(14.dp)
+                            .background(
+                                MaterialTheme.colorScheme.background,
+                                shape = androidx.compose.foundation.shape.CircleShape
+                            )
+                            .padding(2.dp)
+                            .background(
+                                MaterialTheme.colorScheme.primary,
+                                shape = androidx.compose.foundation.shape.CircleShape
+                            )
+                    )
+                }
+            }
         }
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {

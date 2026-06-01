@@ -494,20 +494,28 @@ object NotificationHelper {
         }
     }
 
-    private fun previewOf(msg: TdApi.Message): String = when (val c = msg.content) {
-        is TdApi.MessageText -> c.text.text
-        is TdApi.MessagePhoto -> "📷 " + c.caption.text.ifBlank { "Foto" }
-        is TdApi.MessageVoiceNote -> "🎙 Nota vocale"
-        is TdApi.MessageDocument -> "📎 " + c.document.fileName
-        is TdApi.MessageAudio -> "🎵 " + (c.audio.title.ifBlank { "Audio" })
-        is TdApi.MessageVideo -> "🎬 Video"
-        is TdApi.MessageVideoNote -> "🎬 Video circle"
-        is TdApi.MessageSticker -> c.sticker.emoji.ifBlank { "Sticker" } + " Sticker"
-        is TdApi.MessageAnimation -> "GIF"
-        is TdApi.MessageLocation -> "📍 Posizione"
-        is TdApi.MessageContact -> "👤 Contatto"
-        is TdApi.MessagePoll -> "📊 Sondaggio"
-        is TdApi.MessageCall -> "📞 Chiamata"
-        else -> "Nuovo messaggio"
+    private fun previewOf(msg: TdApi.Message): String {
+        com.secondream.novagram.td.TdClient.serviceMessageText(msg)?.let { return it }
+        return when (val c = msg.content) {
+            is TdApi.MessageText -> c.text.text
+            is TdApi.MessagePhoto -> "📷 " + c.caption.text.ifBlank { "Foto" }
+            is TdApi.MessageVoiceNote -> "🎙 Nota vocale"
+            is TdApi.MessageDocument -> "📎 " + c.document.fileName
+            is TdApi.MessageAudio -> "🎵 " + (c.audio.title.ifBlank { "Audio" })
+            is TdApi.MessageVideo -> "🎬 " + c.caption.text.ifBlank { "Video" }
+            is TdApi.MessageVideoNote -> "📹 Video messaggio"
+            is TdApi.MessageSticker -> c.sticker.emoji.ifBlank { "Sticker" } + " Sticker"
+            is TdApi.MessageAnimation -> "GIF"
+            is TdApi.MessageLocation -> "📍 Posizione"
+            is TdApi.MessageVenue -> "📍 " + c.venue.title.ifBlank { "Luogo" }
+            is TdApi.MessageContact -> "👤 " + "${c.contact.firstName} ${c.contact.lastName}".trim().ifBlank { "Contatto" }
+            is TdApi.MessagePoll -> "📊 " + c.poll.question.text.ifBlank { "Sondaggio" }
+            is TdApi.MessageGame -> "🎮 " + c.game.title.ifBlank { "Gioco" }
+            is TdApi.MessageDice -> c.emoji.ifBlank { "🎲" }
+            is TdApi.MessageStory -> "📖 Storia"
+            is TdApi.MessageInvoice -> "🧾 Fattura"
+            is TdApi.MessageCall -> "📞 Chiamata"
+            else -> "Nuovo messaggio"
+        }
     }
 }

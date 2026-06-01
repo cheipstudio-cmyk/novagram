@@ -20,6 +20,12 @@
 
     <string name="login_phone_label">Phone number (with country code)</string>
     <string name="login_code_label">Code received</string>
+    <string name="login_code_via_telegram">Code sent in the Telegram app</string>
+    <string name="login_code_via_sms">Code sent via SMS</string>
+    <string name="login_register_desc">This number has no Telegram account. Create one by entering your name.</string>
+    <string name="login_first_name">First name</string>
+    <string name="login_last_name">Last name (optional)</string>
+    <string name="action_create_account">Create account</string>
     <string name="login_password_label">2FA password</string>
     <string name="login_step_phone">Enter your phone number to receive the code.</string>
     <string name="login_step_code">Check the Telegram app or your SMS.</string>
@@ -332,8 +338,10 @@
     <string name="tab_all">All</string>
     <string name="action_pin_chat">Pin chat</string>
     <string name="action_unpin_chat">Unpin chat</string>
-    <string name="settings_show_all_tab">Show &quot;All&quot; tab</string>
+    <string name="settings_show_all_tab">All tab</string>
     <string name="settings_show_all_tab_desc">Show a single tab with all chats at the top</string>
+    <string name="settings_lock_saved_top">Lock Saved Messages to top</string>
+    <string name="settings_lock_saved_top_desc">Keep the Saved Messages chat pinned at the top of the list</string>
     <string name="settings_swap_swipe_reply">Invert reply swipe</string>
     <string name="settings_swap_swipe_reply_desc">Swipe left instead of right to reply to a message</string>
     <string name="action_join_channel">Join channel</string>
@@ -367,4 +375,26 @@
     <string name="chat_info_media_open_link">Open link</string>
     <string name="chat_info_media_view_in_chat">View in chat</string>
     <string name="chat_info_copied">Copied to clipboard</string>
+    <string name="info_media_search_hint">Search in this category</string>
+    <string name="member_search_hint">Search by name or username</string>
+    <string name="members_none_found">No members found</string>
+    <string name="user_fallback">User</string>
+    <string name="member_unban">Unban</string>
+    <string name="member_ban">Ban</string>
+    <string name="member_unmute">Unmute</string>
+    <string name="member_mute">Mute</string>
+    <string name="member_remove_admin">Dismiss admin</string>
+    <string name="member_make_admin">Make admin</string>
+    <string name="member_manage_title">Manage member</string>
+    <string name="media_saved_ok">Saved to Download/Nova</string>
+    <string name="media_save_failed">Save failed</string>
+    <string name="settings_sounds">Message sounds</string>
+    <string name="settings_sounds_desc">Play a sound when sending (tap) and receiving (ding) a message</string>
+    <string name="member_role_owner">Owner</string>
+    <string name="member_role_admin">Administrator</string>
+    <string name="member_role_restricted">Restricted</string>
+    <string name="member_role_banned">Banned</string>
+    <string name="receipt_seen">Seen</string>
+    <string name="receipt_sent">Sent</string>
+    <string name="gallery_empty_category">Nothing to show in this category</string>
 </resources>

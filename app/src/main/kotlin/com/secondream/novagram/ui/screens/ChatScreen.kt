@@ -338,8 +338,8 @@ fun ChatScreen(
         for (m in members) {
             val uid = (m.memberId as? TdApi.MessageSenderUser)?.userId ?: continue
             when (m.status) {
-                is TdApi.ChatMemberStatusCreator -> out[uid] = "Proprietario"
-                is TdApi.ChatMemberStatusAdministrator -> out[uid] = "Amministratore"
+                is TdApi.ChatMemberStatusCreator -> out[uid] = context.getString(R.string.member_role_owner)
+                is TdApi.ChatMemberStatusAdministrator -> out[uid] = context.getString(R.string.member_role_admin)
                 else -> {}
             }
         }
@@ -393,8 +393,8 @@ fun ChatScreen(
                 for (m in mem) {
                     val uid = (m.memberId as? TdApi.MessageSenderUser)?.userId ?: continue
                     when (m.status) {
-                        is TdApi.ChatMemberStatusCreator -> refreshed[uid] = "Proprietario"
-                        is TdApi.ChatMemberStatusAdministrator -> refreshed[uid] = "Amministratore"
+                        is TdApi.ChatMemberStatusCreator -> refreshed[uid] = context.getString(R.string.member_role_owner)
+                        is TdApi.ChatMemberStatusAdministrator -> refreshed[uid] = context.getString(R.string.member_role_admin)
                         else -> {}
                     }
                 }
@@ -406,26 +406,42 @@ fun ChatScreen(
     // Bot command suggestions for the slash menu. Loaded once per chat
     // entry; in private chats with a bot we pull from UserFullInfo.botInfo
     // because that's the authoritative source for that bot's command list.
-    var botCommands by remember(chatId) { mutableStateOf<List<TdApi.BotCommand>>(emptyList()) }
+    var botCommands by remember(chatId) { mutableStateOf<List<com.secondream.novagram.td.BotCommandItem>>(emptyList()) }
     LaunchedEffect(chatId) {
         val cmds = runCatching {
-            val cached = TdClient.getCachedChat(chatId)
-            val privateType = cached?.type as? TdApi.ChatTypePrivate
-            val botUserId = privateType?.userId
-            val privateBot = botUserId?.let { runCatching { TdClient.getUser(it) }.getOrNull() }
-            if (privateBot?.type is TdApi.UserTypeBot) {
-                runCatching { TdClient.getUserFullInfo(privateBot.id) }
-                    .getOrNull()
-                    ?.botInfo
-                    ?.commands
-                    ?.toList()
-                    ?: emptyList()
-            } else if (isGroupChat) {
-                TdClient.getBotCommandsForChat(chatId)
-            } else emptyList()
+            // Resolve the chat with a real fetch — don't trust the cache being
+            // warm. Opening a bot from search or a t.me link lands here before
+            // the chat is cached; a null cache would misclassify the private
+            // bot as a group (getCachedChat?.type !is Private == true) and load
+            // nothing, which is exactly the "comandi non vanno" case.
+            val chat = runCatching { TdClient.getChat(chatId) }.getOrNull()
+                ?: TdClient.getCachedChat(chatId)
+            when (val type = chat?.type) {
+                is TdApi.ChatTypePrivate -> {
+                    val bot = runCatching { TdClient.getUser(type.userId) }.getOrNull()
+                    if (bot?.type is TdApi.UserTypeBot) {
+                        val uname = bot.usernames?.activeUsernames?.firstOrNull()?.takeIf { it.isNotBlank() }
+                            ?: bot.usernames?.editableUsername?.takeIf { it.isNotBlank() }
+                        runCatching { TdClient.getUserFullInfo(bot.id) }.getOrNull()
+                            ?.botInfo?.commands
+                            ?.map {
+                                com.secondream.novagram.td.BotCommandItem(
+                                    it.command, it.description, bot.id, uname
+                                )
+                            }
+                            ?: emptyList()
+                    } else emptyList()
+                }
+                is TdApi.ChatTypeBasicGroup, is TdApi.ChatTypeSupergroup ->
+                    TdClient.getBotCommandsForChat(chatId)
+                else -> emptyList()
+            }
         }.getOrDefault(emptyList())
         botCommands = cmds
     }
+    // Toggled by the "/" list button in the input bar to show the full command
+    // list (vs the live-filtered picker that appears while typing a /command).
+    var showAllCommands by remember(chatId) { mutableStateOf(false) }
 
     val micLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -1369,6 +1385,15 @@ fun ChatScreen(
                     // already know its real height. Otherwise teleport instantly.
                     val visNow = info0.visibleItemsInfo
                     val onScreen = visNow.any { it.index == idx }
+                    // If the target is ALREADY fully visible — the usual case when
+                    // you tap a reply whose quoted message sits a few bubbles up —
+                    // do NOT drag it to the FRAC mark. Forcing that scroll is what
+                    // turned a "poco più in su" message into "molto in su". Leave
+                    // it exactly where it is; the flash highlight (set by the
+                    // caller right after this returns) is enough to point it out.
+                    visNow.find { it.index == idx }?.let { vi ->
+                        if (vi.offset >= 0 && vi.offset + vi.size <= vp0) return
+                    }
                     val doAnimate = animate && onScreen
 
                     if (!doAnimate) {
@@ -1395,8 +1420,9 @@ fun ChatScreen(
                     var settledH = -1
                     var frame = 0
                     while (frame < 40 && settledH <= 0) {
+                        val li = messages.indexOfFirst { it.id == targetId }
                         val h = listState.layoutInfo.visibleItemsInfo
-                            .find { it.index == idx }?.size ?: -1
+                            .find { it.index == li }?.size ?: -1
                         if (h > 0 && h == lastH) {
                             stableFrames++
                             if (stableFrames >= 3) {
@@ -1415,46 +1441,49 @@ fun ChatScreen(
                     val vp = listState.layoutInfo.viewportSize.height
                         .let { if (it > 0) it else vp0 }
                     val exact = (vp * FRAC / 100 - settledH).coerceAtLeast(0)
+                    // Re-resolve by ID: between capturing idx and here the list
+                    // may have re-sorted (context splice) or paginated, shifting
+                    // the target's index. Scrolling to a stale index is the
+                    // wrong bubble entirely — a big source of "inconsistente".
+                    val lockIdx = messages.indexOfFirst { it.id == targetId }
+                        .takeIf { it >= 0 } ?: idx
 
                     // Short on-screen hop → glide. Because the heights are already
                     // settled and the distance is short, animateScrollToItem can't
                     // drift, so the lock below is a sub-pixel no-op.
                     if (doAnimate) {
-                        runCatching { listState.animateScrollToItem(idx, exact) }
+                        runCatching { listState.animateScrollToItem(lockIdx, exact) }
                     }
                     // Pixel-exact resting position on every path.
-                    runCatching { listState.scrollToItem(idx, exact) }
+                    runCatching { listState.scrollToItem(lockIdx, exact) }
 
-                    // RE-PIN safety net. The settle above waits up to ~640ms, but
-                    // a photo/video can finish decoding AFTER the lock and grow the
-                    // bubble — which slides the target downward and leaves "troppi
-                    // messaggi sopra il target". Watch the target's height for a
-                    // short window and, EACH time it changes, re-pin to the 23%
-                    // mark using the NEW height. Re-pins fire ONLY on a height
-                    // change (never on plain scrolling), so they don't fight the
-                    // user; if the target leaves the viewport (user scrolled away)
-                    // we stop. These corrections are instant and tiny.
-                    var pinnedH = settledH
-                    var stable2 = 0
+                    // SUSTAINED ANCHOR — the real consistency fix. After the
+                    // lock the target can STILL drift off the FRAC mark for two
+                    // async reasons that finish at unpredictable times (hence
+                    // "inconsistente"): a photo/video finishes decoding and the
+                    // bubble grows, or more history paginates in and reflows the
+                    // list. So for a short window we simply re-assert the FRAC
+                    // position every frame, the target re-resolved BY ID so a
+                    // reindex can never scroll us to the wrong bubble. Re-pinning
+                    // to the spot it already occupies is a no-op, so a stable
+                    // (text) target shows zero motion; a growing image is pulled
+                    // back each frame until it stops. We BAIL the instant the
+                    // user starts scrolling (isScrollInProgress) or the target
+                    // leaves the viewport, so we never fight them.
                     var f2 = 0
-                    while (f2 < 28 && stable2 < 5) {
+                    while (f2 < 72) {
                         kotlinx.coroutines.delay(16)
-                        val h2 = listState.layoutInfo.visibleItemsInfo
-                            .find { it.index == idx }?.size ?: -1
-                        if (h2 < 0) break // target no longer visible → user moved on
-                        if (h2 != pinnedH) {
-                            pinnedH = h2
-                            stable2 = 0
-                            val vpNow = listState.layoutInfo.viewportSize.height
-                                .let { if (it > 0) it else vp }
-                            runCatching {
-                                listState.scrollToItem(
-                                    idx,
-                                    (vpNow * FRAC / 100 - h2).coerceAtLeast(0)
-                                )
-                            }
-                        } else {
-                            stable2++
+                        if (listState.isScrollInProgress) break
+                        val li = messages.indexOfFirst { it.id == targetId }
+                        if (li < 0) break
+                        val info = listState.layoutInfo
+                        val item = info.visibleItemsInfo.find { it.index == li } ?: break
+                        val vpNow = info.viewportSize.height.let { if (it > 0) it else vp }
+                        runCatching {
+                            listState.scrollToItem(
+                                li,
+                                (vpNow * FRAC / 100 - item.size).coerceAtLeast(0)
+                            )
                         }
                         f2++
                     }
@@ -1661,6 +1690,12 @@ fun ChatScreen(
     // Set true by the menu item; the dialog itself clears it.
     var ttlDialogOpen by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
+    // Drives the in-app photo/video viewer that opens from the info dialog and
+    // the profile sheet. It's rendered as its own full-screen Dialog window
+    // (below, near the info dialog) that STACKS ON TOP of those surfaces — so
+    // opening media no longer tears the info dialog down and rebuilds it on
+    // return (the source of the bare-chat flash + the "torna in chat" race).
+    var viewerOpen by remember { mutableStateOf(false) }
     // Remembers which info tab the user was on, so that reopening the info
     // dialog after closing a photo/video viewer (see the reopen flags on
     // MediaViewerHolder) lands back on the same tab (e.g. "Foto") rather
@@ -1884,7 +1919,7 @@ fun ChatScreen(
                                             )
                                             .padding(2.dp)
                                             .background(
-                                                Color(0xFF22C55E),
+                                                MaterialTheme.colorScheme.primary,
                                                 shape = androidx.compose.foundation.shape.CircleShape
                                             )
                                     )
@@ -2197,6 +2232,11 @@ fun ChatScreen(
                             MessageBubble(
                                 message = msg,
                                 showSender = isGroupChat,
+                                // Reactive read marker — flips the ✓✓ on my
+                                // private-chat messages the moment the peer
+                                // reads (cachedChatLive re-resolves on every
+                                // UpdateChatReadOutbox via chatUpdates).
+                                readOutboxMaxId = cachedChatLive?.lastReadOutboxMessageId ?: 0L,
                                 adminLabel = (msg.senderId as? TdApi.MessageSenderUser)
                                     ?.userId?.let { adminLabels[it] },
                                 onLongPress = { deleteTarget = it },
@@ -2207,7 +2247,15 @@ fun ChatScreen(
                                     com.secondream.novagram.ui.screens.MediaViewerHolder.reopenInfo = false
                                     com.secondream.novagram.ui.screens.MediaViewerHolder.reopenProfileUid = null
                                     com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
-                                    onOpenMediaViewer()
+                                    // Open the viewer as a hoisted dialog OVER this
+                                    // chat instead of navigating to a separate route.
+                                    // A nav push disposed ChatScreen; on return it
+                                    // reloaded only the recent page, so the restored
+                                    // scroll index couldn't reach a spot deep in old
+                                    // history and dumped the user near the bottom.
+                                    // Keeping ChatScreen composed preserves both the
+                                    // loaded history and the exact scroll offset.
+                                    viewerOpen = true
                                 },
                                 onSwipeReply = { replyTarget = it },
                                 onAvatarClick = { uid -> profileSheetUserId = uid },
@@ -2548,6 +2596,32 @@ fun ChatScreen(
                 )
             }
 
+            // Full command list, opened by the "/" list button in the input
+            // bar. Shown only on an empty field — the moment the user types a
+            // "/" the live-filtered picker below takes over instead.
+            if (showAllCommands && input.text.isBlank() && botCommands.isNotEmpty()) {
+                BotCommandPicker(
+                    commands = botCommands,
+                    onPick = { cmd ->
+                        // In a group a bare "/cmd" isn't routed to any bot —
+                        // address it as "/cmd@botusername" so the owning bot
+                        // actually runs it. In a 1-to-1 bot chat the plain
+                        // form is fine (and looks cleaner).
+                        val cmdText =
+                            if (isGroupChat && !cmd.botUsername.isNullOrBlank())
+                                "/${cmd.command}@${cmd.botUsername}"
+                            else "/${cmd.command}"
+                        input = androidx.compose.ui.text.input.TextFieldValue("")
+                        val replyId = replyTarget?.id
+                        replyTarget = null
+                        showAllCommands = false
+                        scope.launch {
+                            runCatching { TdClient.sendText(chatId, cmdText, replyId) }
+                        }
+                    }
+                )
+            }
+
             // Slash-command picker. Surfaces /commands the bot in this
             // chat (private or group) exposes, filtered live by what the
             // user is typing. Hidden when the input doesn't start with /.
@@ -2563,12 +2637,15 @@ fun ChatScreen(
                             // Fire the command immediately on tap —
                             // matches official Telegram behaviour where
                             // picking from the suggestion list is the
-                            // act of sending it, not staging it. The
-                            // user can still type the command manually
-                            // and tap Send if they want to add args
-                            // first. Clear the input + reply target up
-                            // front so a double-tap doesn't double-send.
-                            val cmdText = "/" + cmd.command
+                            // act of sending it, not staging it. In a group
+                            // we address it as "/cmd@botusername" so the
+                            // owning bot actually receives + runs it (a bare
+                            // "/cmd" goes to no one when several bots are in
+                            // the chat).
+                            val cmdText =
+                                if (isGroupChat && !cmd.botUsername.isNullOrBlank())
+                                    "/${cmd.command}@${cmd.botUsername}"
+                                else "/${cmd.command}"
                             input = androidx.compose.ui.text.input.TextFieldValue("")
                             val replyId = replyTarget?.id
                             replyTarget = null
@@ -2986,6 +3063,8 @@ fun ChatScreen(
                         }
                     }
                 },
+                showCommandsButton = botCommands.isNotEmpty(),
+                onCommandsClick = { showAllCommands = !showAllCommands },
                 focusRequester = inputFocus
             )
             }
@@ -3071,11 +3150,9 @@ fun ChatScreen(
                 onOpenChat(newChatId, null)
             },
             onOpenMediaViewer = {
-                // Reopen this profile sheet when the photo viewer closes,
-                // instead of dropping the user back to the bare chat.
-                com.secondream.novagram.ui.screens.MediaViewerHolder.reopenInfo = false
-                com.secondream.novagram.ui.screens.MediaViewerHolder.reopenProfileUid = uid
-                pendingViewerOpen = true
+                // Open the hoisted viewer window stacked over the sheet; the
+                // sheet stays underneath and is revealed again on close.
+                viewerOpen = true
             }
         )
     }
@@ -3632,13 +3709,35 @@ fun ChatScreen(
                 jumpToMessage(mid)
             },
             onOpenMediaViewer = {
-                // Reopen the info dialog (on its last tab) when the media
-                // viewer closes, instead of dropping back to the bare chat.
-                com.secondream.novagram.ui.screens.MediaViewerHolder.reopenProfileUid = null
-                com.secondream.novagram.ui.screens.MediaViewerHolder.reopenInfo = true
-                pendingViewerOpen = true
+                // Open the hoisted viewer window stacked OVER this dialog — the
+                // dialog stays composed underneath, so closing the viewer just
+                // reveals it again. No nav round-trip, no reopen race.
+                viewerOpen = true
             }
         )
+    }
+
+    // In-app photo/video viewer for media opened from the info dialog and the
+    // profile sheet. Hosted as its OWN full-screen Dialog window so it stacks
+    // on top of those surfaces (themselves Dialog / ModalBottomSheet windows)
+    // rather than replacing the chat via the nav route. The originating
+    // surface stays composed underneath, so dismissing this window reveals it
+    // again instantly and reliably — no popBackStack, no lifecycle-timed
+    // reopen, none of the "torna in chat" flakiness. Chat-bubble media keeps
+    // the slide-up nav route (MEDIA_VIEWER) which works as is.
+    if (viewerOpen) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { viewerOpen = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnClickOutside = false
+            )
+        ) {
+            com.secondream.novagram.ui.screens.MediaViewerScreen(
+                filePath = com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath ?: "",
+                onClose = { viewerOpen = false }
+            )
+        }
     }
 
     if (deleteOpen) {
@@ -3863,6 +3962,16 @@ internal fun ChatInfoDialog(
             color = MaterialTheme.colorScheme.surface
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                // Download/transfer badge rendered INSIDE the info window so
+                // it shows on top here. The root-level panel (MainActivity)
+                // lives in the main window, behind this dialog's scrim, so
+                // from in here it looked dimmed/under the screen. This one
+                // self-hides to zero height when no transfer is active, so it
+                // only ever appears (at the top, like the root one) while
+                // something is actually downloading/uploading.
+                com.secondream.novagram.transfer.TransferPanel(
+                    modifier = Modifier.fillMaxWidth()
+                )
                 androidx.compose.material3.TopAppBar(
                     title = {
                         Text(
@@ -3914,7 +4023,6 @@ internal fun ChatInfoDialog(
                                         com.secondream.novagram.ui.screens.MediaViewerHolder.isVideo = false
                                         com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
                                         onOpenMediaViewer()
-                                        onDismiss()
                                     }
                                 }
                             }
@@ -4004,7 +4112,7 @@ internal fun ChatInfoDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 8.dp),
-                        placeholder = { Text("Cerca in questa categoria") },
+                        placeholder = { Text(stringResource(R.string.info_media_search_hint)) },
                         singleLine = true,
                         shape = RoundedCornerShape(18.dp),
                         leadingIcon = {
@@ -4061,15 +4169,13 @@ internal fun ChatInfoDialog(
                 },
                 onOpenInViewer = { path ->
                     selectedMediaMessage = null
-                    // Actually OPEN the in-app viewer: set the path then
-                    // navigate to the MediaViewer route (the only thing that
-                    // shows it). The old code just dismissed the info dialog,
-                    // which simply revealed the chat — hence "it takes me to
-                    // the chat instead of opening". isVideo is set by the
-                    // action sheet before this fires.
+                    // Set the path, then open the hoisted viewer window stacked
+                    // over this dialog. We DON'T dismiss the dialog any more —
+                    // it stays underneath, so closing the viewer returns here,
+                    // not to the bare chat. isVideo is set by the action sheet
+                    // before this fires.
                     com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
                     onOpenMediaViewer()
-                    onDismiss()
                 },
                 onOpenViaIntent = { path, mime ->
                     selectedMediaMessage = null
@@ -4214,7 +4320,7 @@ private fun ChatMembersTab(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
-            placeholder = { Text("Cerca per nome o username") },
+            placeholder = { Text(stringResource(R.string.member_search_hint)) },
             leadingIcon = {
                 Icon(
                     com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass,
@@ -4235,7 +4341,7 @@ private fun ChatMembersTab(
             members.isEmpty() -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        "Nessun membro trovato",
+                        stringResource(R.string.members_none_found),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4264,12 +4370,12 @@ private fun ChatMemberRow(member: TdApi.ChatMember, onClick: () -> Unit) {
         }
     }
     val name = user?.let { "${it.firstName} ${it.lastName}".trim() }
-        ?.takeIf { it.isNotBlank() } ?: "Utente"
+        ?.takeIf { it.isNotBlank() } ?: stringResource(R.string.user_fallback)
     val statusLabel = when (member.status) {
-        is TdApi.ChatMemberStatusCreator -> "Proprietario"
-        is TdApi.ChatMemberStatusAdministrator -> "Amministratore"
-        is TdApi.ChatMemberStatusRestricted -> "Limitato"
-        is TdApi.ChatMemberStatusBanned -> "Bannato"
+        is TdApi.ChatMemberStatusCreator -> stringResource(R.string.member_role_owner)
+        is TdApi.ChatMemberStatusAdministrator -> stringResource(R.string.member_role_admin)
+        is TdApi.ChatMemberStatusRestricted -> stringResource(R.string.member_role_restricted)
+        is TdApi.ChatMemberStatusBanned -> stringResource(R.string.member_role_banned)
         else -> null
     }
     Row(
@@ -4332,7 +4438,7 @@ private fun MemberActionSheet(
     val tiles = buildList {
         if (isBanned) {
             add(com.secondream.novagram.ui.components.ActionTile(
-                label = "Sbanna",
+                label = stringResource(R.string.member_unban),
                 icon = phos.User,
                 onClick = {
                     onDismiss()
@@ -4344,7 +4450,7 @@ private fun MemberActionSheet(
             ))
         } else if (!isCreator) {
             add(com.secondream.novagram.ui.components.ActionTile(
-                label = "Banna",
+                label = stringResource(R.string.member_ban),
                 icon = phos.UserMinus,
                 destructive = true,
                 onClick = {
@@ -4358,7 +4464,7 @@ private fun MemberActionSheet(
         }
         if (isMuted) {
             add(com.secondream.novagram.ui.components.ActionTile(
-                label = "Smuta",
+                label = stringResource(R.string.member_unmute),
                 icon = phos.Bell,
                 onClick = {
                     onDismiss()
@@ -4370,7 +4476,7 @@ private fun MemberActionSheet(
             ))
         } else if (!isCreator && !isBanned) {
             add(com.secondream.novagram.ui.components.ActionTile(
-                label = "Muta",
+                label = stringResource(R.string.member_mute),
                 icon = phos.SpeakerSlash,
                 onClick = {
                     onDismiss()
@@ -4384,7 +4490,7 @@ private fun MemberActionSheet(
         if (!isCreator) {
             if (isAdmin) {
                 add(com.secondream.novagram.ui.components.ActionTile(
-                    label = "Rimuovi amministratore",
+                    label = stringResource(R.string.member_remove_admin),
                     icon = phos.UserMinus,
                     onClick = {
                         onDismiss()
@@ -4396,7 +4502,7 @@ private fun MemberActionSheet(
                 ))
             } else if (!isBanned) {
                 add(com.secondream.novagram.ui.components.ActionTile(
-                    label = "Rendi amministratore",
+                    label = stringResource(R.string.member_make_admin),
                     icon = phos.Sparkle,
                     onClick = {
                         onDismiss()
@@ -4409,13 +4515,13 @@ private fun MemberActionSheet(
             }
         }
         add(com.secondream.novagram.ui.components.ActionTile(
-            label = "Annulla",
+            label = stringResource(R.string.action_cancel),
             icon = phos.X,
             onClick = { onDismiss() }
         ))
     }
     com.secondream.novagram.ui.components.ActionBottomSheet(
-        title = "Gestisci membro",
+        title = stringResource(R.string.member_manage_title),
         onDismiss = onDismiss,
         tiles = tiles,
         tilesPerRow = if (tiles.size >= 4) 2 else tiles.size.coerceAtLeast(1)
@@ -4602,7 +4708,7 @@ private fun ChatMediaItemActions(
             ),
             saveAction?.let {
                 com.secondream.novagram.ui.components.ActionTile(
-                    label = "Salva",
+                    label = stringResource(R.string.action_save),
                     icon = phos.DownloadSimple,
                     onClick = it
                 )
@@ -4662,7 +4768,7 @@ private fun saveMediaToDevice(
         }
         android.widget.Toast.makeText(
             context,
-            if (ok) "Salvato in Download/Nova" else "Salvataggio non riuscito",
+            if (ok) context.getString(R.string.media_saved_ok) else context.getString(R.string.media_save_failed),
             android.widget.Toast.LENGTH_SHORT
         ).show()
         onDone()
@@ -4843,6 +4949,12 @@ private fun InputBar(
     // — typically a GIF or sticker. We get a content:// URI from the
     // keyboard and forward it to the chat for upload.
     onContentReceived: (android.net.Uri) -> Unit = {},
+    // Shows a "/" command-list button at the head of the bar (only when the
+    // chat actually exposes bot commands) so the user can browse + tap them
+    // without having to know the "type /" trick. Tapping toggles the full
+    // command list above the bar.
+    showCommandsButton: Boolean = false,
+    onCommandsClick: () -> Unit = {},
     // Allows the chat screen to programmatically pop the IME — used when
     // the user replies via swipe or button so they can start typing
     // immediately instead of having to tap the field first.
@@ -4931,6 +5043,18 @@ private fun InputBar(
                     maxLines = 2
                 )
             } else {
+                if (showCommandsButton) {
+                    IconButton(
+                        onClick = onCommandsClick,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            com.secondream.novagram.ui.icons.PhosphorIcons.List,
+                            contentDescription = "Comandi bot",
+                            tint = iconTint
+                        )
+                    }
+                }
                 IconButton(
                     onClick = onAttach,
                     modifier = Modifier.size(48.dp)
@@ -5447,6 +5571,12 @@ private fun MessageActionsSheet(
                 val seenBy = remember(message.id) {
                     androidx.compose.runtime.mutableStateListOf<Long>()
                 }
+                // For 1-to-1 chats TDLib returns no viewer list, so we read
+                // the chat's outbox-read marker instead: the message is "seen"
+                // once lastReadOutboxMessageId catches up to it. null = group
+                // (handled by seenBy) or not yet resolved.
+                val isPrivateChat = cachedChat?.type is TdApi.ChatTypePrivate
+                var privateRead by remember(message.id) { mutableStateOf<Boolean?>(null) }
                 LaunchedEffect(message.id) {
                     val ids = TdClient.getMessageViewers(message.chatId, message.id)
                     // Warm the user cache so the avatars resolve to real
@@ -5458,6 +5588,10 @@ private fun MessageActionsSheet(
                     }
                     seenBy.clear()
                     seenBy.addAll(ids)
+                    if (isPrivateChat) {
+                        val c = TdClient.getCachedChat(message.chatId)
+                        privateRead = (c?.lastReadOutboxMessageId ?: 0L) >= message.id
+                    }
                 }
                 if (seenBy.isNotEmpty()) {
                     Row(
@@ -5501,6 +5635,29 @@ private fun MessageActionsSheet(
                             seenBy.size.toString(),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                } else if (isPrivateChat && privateRead != null) {
+                    // 1-to-1 read receipt: "Visualizzato" once the peer has
+                    // read it, "Inviato" while it's still unread.
+                    val read = privateRead == true
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(if (read) "👁" else "✓", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            stringResource(if (read) R.string.receipt_seen else R.string.receipt_sent),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (read) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
                         )
                     }
@@ -6062,8 +6219,8 @@ private fun detectSlashQuery(text: String): String? {
  */
 @Composable
 private fun BotCommandPicker(
-    commands: List<TdApi.BotCommand>,
-    onPick: (TdApi.BotCommand) -> Unit
+    commands: List<com.secondream.novagram.td.BotCommandItem>,
+    onPick: (com.secondream.novagram.td.BotCommandItem) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -6081,14 +6238,28 @@ private fun BotCommandPicker(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "/${cmd.command}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "/${cmd.command}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        // Which bot this command belongs to — so in a group
+                        // with several bots it's clear who'll answer.
+                        if (!cmd.botUsername.isNullOrBlank()) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "@${cmd.botUsername}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                     if (cmd.description.isNotBlank()) {
                         Text(
                             cmd.description,

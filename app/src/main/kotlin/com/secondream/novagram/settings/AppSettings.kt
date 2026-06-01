@@ -89,6 +89,13 @@ data class AppearancePrefs(
      */
     val showAllTab: Boolean = true,
     /**
+     * When true, Saved Messages (the chat with yourself) is force-pinned to
+     * the very top of the chat list regardless of its last-activity time.
+     * Default true — Novagram has always kept it on top. Turn it off to let
+     * Saved Messages sort by date like any other chat.
+     */
+    val lockSavedToTop: Boolean = true,
+    /**
      * When true, swiping LEFT on a message bubble opens the reply
      * composer (mirrors the right-handed convention some users prefer).
      * Default true because we found it more comfortable: it also frees
@@ -174,6 +181,7 @@ object AppSettings {
     private val SHOW_ARCHIVED_TAB = androidx.datastore.preferences.core.booleanPreferencesKey("show_archived_tab")
     private val SHOW_LAST_SEEN = androidx.datastore.preferences.core.booleanPreferencesKey("show_last_seen")
     private val SHOW_ALL_TAB = androidx.datastore.preferences.core.booleanPreferencesKey("show_all_tab")
+    private val LOCK_SAVED_TOP = androidx.datastore.preferences.core.booleanPreferencesKey("lock_saved_top")
     private val SWAP_SWIPE_REPLY = androidx.datastore.preferences.core.booleanPreferencesKey("swap_swipe_reply")
     private val SEND_TYPING_STATUS = androidx.datastore.preferences.core.booleanPreferencesKey("send_typing_status")
     private val MESSAGE_SOUNDS = androidx.datastore.preferences.core.booleanPreferencesKey("message_sounds")
@@ -220,6 +228,7 @@ object AppSettings {
                 anthropicApiKey = prefs[ANTHROPIC_API_KEY]?.takeIf { it.isNotBlank() },
                 showArchivedTab = prefs[SHOW_ARCHIVED_TAB] ?: false,
                 showAllTab = prefs[SHOW_ALL_TAB] ?: true,
+                lockSavedToTop = prefs[LOCK_SAVED_TOP] ?: true,
                 swapSwipeReply = prefs[SWAP_SWIPE_REPLY] ?: true,
                 showLastSeen = prefs[SHOW_LAST_SEEN] ?: true,
                 sendTypingStatus = prefs[SEND_TYPING_STATUS] ?: true,
@@ -233,6 +242,10 @@ object AppSettings {
 
     suspend fun setShowAllTab(enabled: Boolean) {
         appContext.dataStore.edit { it[SHOW_ALL_TAB] = enabled }
+    }
+
+    suspend fun setLockSavedToTop(enabled: Boolean) {
+        appContext.dataStore.edit { it[LOCK_SAVED_TOP] = enabled }
     }
 
     suspend fun setSwapSwipeReply(enabled: Boolean) {

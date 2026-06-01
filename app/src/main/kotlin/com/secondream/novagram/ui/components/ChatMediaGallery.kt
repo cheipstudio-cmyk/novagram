@@ -159,7 +159,7 @@ fun ChatMediaGallery(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            "Niente da mostrare in questa categoria",
+                            androidx.compose.ui.res.stringResource(com.secondream.novagram.R.string.gallery_empty_category),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -220,7 +220,7 @@ internal fun MediaTabContent(
             }
             messages.isEmpty() -> {
                 Text(
-                    "Niente da mostrare in questa categoria",
+                    androidx.compose.ui.res.stringResource(com.secondream.novagram.R.string.gallery_empty_category),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.align(Alignment.Center)

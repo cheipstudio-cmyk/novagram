@@ -401,6 +401,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                         scope.launch { AppSettings.setSwapSwipeReply(enabled) }
                     }
                 )
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_lock_saved_top),
+                    description = stringResource(R.string.settings_lock_saved_top_desc),
+                    checked = appearance.lockSavedToTop,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setLockSavedToTop(enabled) }
+                    }
+                )
             }
 
             Spacer(Modifier.height(20.dp))
@@ -833,7 +841,7 @@ private val LANGUAGE_OPTIONS = listOf(
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun LanguageRow(current: String, onPick: (String) -> Unit) {
+internal fun LanguageRow(current: String, onPick: (String) -> Unit) {
     var pickerOpen by remember { mutableStateOf(false) }
     val currentLabel = LANGUAGE_OPTIONS.firstOrNull { it.tag == current }?.labelRes
         ?: R.string.settings_language_system

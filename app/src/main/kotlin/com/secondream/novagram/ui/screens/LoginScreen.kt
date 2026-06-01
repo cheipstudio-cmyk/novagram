@@ -64,8 +64,18 @@ fun LoginScreen() {
     var phone by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var firstName by remember { mutableStateOf("") }
+    var lastName by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Current UI language, for the onboarding language selector shown above
+    // the phone field. Loaded once; a pick triggers an activity recreate so
+    // the whole login screen re-renders in the chosen language.
+    var languageTag by remember { mutableStateOf("system") }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        languageTag = com.secondream.novagram.settings.AppSettings.currentLanguageTag()
+    }
 
     Scaffold { padding ->
         Column(
@@ -118,6 +128,37 @@ fun LoginScreen() {
                         is AuthState.WaitPhoneNumber, AuthState.Initial, AuthState.WaitParameters -> {
                             var country by remember { mutableStateOf(com.secondream.novagram.util.Countries.DEFAULT) }
                             var showCountryPicker by remember { mutableStateOf(false) }
+                            // Onboarding language selector — pick your language
+                            // before entering the phone number. A pick recreates
+                            // the activity so this screen re-renders translated.
+                            Text(
+                                stringResource(R.string.settings_section_language),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                LanguageRow(
+                                    current = languageTag,
+                                    onPick = { tag ->
+                                        scope.launch {
+                                            com.secondream.novagram.settings.AppSettings.setLanguageTag(tag)
+                                            val locales = if (tag == "system")
+                                                androidx.core.os.LocaleListCompat.getEmptyLocaleList()
+                                            else
+                                                androidx.core.os.LocaleListCompat.forLanguageTags(tag)
+                                            androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(locales)
+                                            (context as? android.app.Activity)?.recreate()
+                                        }
+                                    }
+                                )
+                            }
+                            Spacer(Modifier.height(16.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(
                                     modifier = Modifier
@@ -172,6 +213,15 @@ fun LoginScreen() {
                             )
                         }
                         is AuthState.WaitCode -> {
+                            Text(
+                                stringResource(
+                                    if (s.viaTelegram) R.string.login_code_via_telegram
+                                    else R.string.login_code_via_sms
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
                             OutlinedTextField(
                                 value = code,
                                 onValueChange = { code = it.filter { c -> c.isDigit() } },
@@ -229,6 +279,48 @@ fun LoginScreen() {
                                     busy = true; error = null
                                     scope.launch {
                                         runCatching { TdClient.setPassword(password) }.onFailure { error = it.message }
+                                        busy = false
+                                    }
+                                }
+                            )
+                        }
+                        is AuthState.WaitRegistration -> {
+                            Text(
+                                stringResource(R.string.login_register_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = firstName,
+                                onValueChange = { firstName = it },
+                                label = { Text(stringResource(R.string.login_first_name)) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = lastName,
+                                onValueChange = { lastName = it },
+                                label = { Text(stringResource(R.string.login_last_name)) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(20.dp))
+                            PremiumButton(
+                                text = stringResource(
+                                    if (busy) R.string.login_step_verifying else R.string.action_create_account
+                                ),
+                                enabled = !busy && firstName.isNotBlank(),
+                                busy = busy,
+                                onClick = {
+                                    if (firstName.isBlank()) return@PremiumButton
+                                    busy = true; error = null
+                                    scope.launch {
+                                        runCatching { TdClient.registerUser(firstName, lastName) }
+                                            .onFailure { error = it.message }
                                         busy = false
                                     }
                                 }

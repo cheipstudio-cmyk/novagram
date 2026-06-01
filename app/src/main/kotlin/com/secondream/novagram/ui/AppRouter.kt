@@ -57,7 +57,8 @@ fun AppRouter(
             }
             is AuthState.WaitPhoneNumber,
             is AuthState.WaitCode,
-            is AuthState.WaitPassword -> {
+            is AuthState.WaitPassword,
+            is AuthState.WaitRegistration -> {
                 val current = nav.currentBackStackEntry?.destination?.route
                 if (current != Routes.LOGIN) {
                     nav.navigate(Routes.LOGIN) { popUpTo(0) { inclusive = true } }
@@ -230,17 +231,35 @@ fun AppRouter(
             // chat underneath holds still (see the CHAT route's conditional
             // exit/popEnter below) so it reads as a sheet rising over the
             // stationary conversation.
+            // Media opens by sliding UP from the bottom (and slides back down
+            // on close) — Eugenio: "deve salire dal basso". BUT when the viewer
+            // was opened from the chat-info dialog or the profile sheet (Compose
+            // windows that had to be torn down to show it), the slide-DOWN on
+            // close just exposes ~400ms of bare chat before the surface is
+            // restored — the "brutto e inconsistente" flash. For those sources
+            // we make the close INSTANT (the flags on MediaViewerHolder are
+            // still set at this point — ChatScreen clears them only after it
+            // reopens the surface), so the dialog/sheet underneath reappears
+            // with no perceptible gap. Chat-bubble media keeps the slide.
             enterTransition = {
-                androidx.compose.animation.slideInVertically(
-                    animationSpec = slideEnterSpring,
-                    initialOffsetY = { fullHeight -> fullHeight }
-                ) + androidx.compose.animation.fadeIn(fadeInSpec)
+                if (MediaViewerHolder.reopenInfo || MediaViewerHolder.reopenProfileUid != null) {
+                    androidx.compose.animation.fadeIn(fadeInSpec)
+                } else {
+                    androidx.compose.animation.slideInVertically(
+                        animationSpec = slideEnterSpring,
+                        initialOffsetY = { fullHeight -> fullHeight }
+                    ) + androidx.compose.animation.fadeIn(fadeInSpec)
+                }
             },
             popExitTransition = {
-                androidx.compose.animation.slideOutVertically(
-                    animationSpec = slideExitSpring,
-                    targetOffsetY = { fullHeight -> fullHeight }
-                ) + androidx.compose.animation.fadeOut(fadeOutSpec)
+                if (MediaViewerHolder.reopenInfo || MediaViewerHolder.reopenProfileUid != null) {
+                    androidx.compose.animation.ExitTransition.None
+                } else {
+                    androidx.compose.animation.slideOutVertically(
+                        animationSpec = slideExitSpring,
+                        targetOffsetY = { fullHeight -> fullHeight }
+                    ) + androidx.compose.animation.fadeOut(fadeOutSpec)
+                }
             }
         ) {
             // Capture the path ONCE. Previously onClose nulled

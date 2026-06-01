@@ -147,7 +147,6 @@ fun UserProfileSheet(
                                 com.secondream.novagram.ui.screens.MediaViewerHolder.isVideo = false
                                 com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = p
                                 onOpenMediaViewer()
-                                onDismiss()
                             }
                         }
                     }

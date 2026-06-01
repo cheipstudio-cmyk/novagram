@@ -20,6 +20,12 @@
 
     <string name="login_phone_label">Telefonnummer (mit Vorwahl)</string>
     <string name="login_code_label">Empfangener Code</string>
+    <string name="login_code_via_telegram">Code in der Telegram-App gesendet</string>
+    <string name="login_code_via_sms">Code per SMS gesendet</string>
+    <string name="login_register_desc">Diese Nummer hat kein Telegram-Konto. Erstelle eines, indem du deinen Namen eingibst.</string>
+    <string name="login_first_name">Vorname</string>
+    <string name="login_last_name">Nachname (optional)</string>
+    <string name="action_create_account">Konto erstellen</string>
     <string name="login_password_label">2FA-Passwort</string>
     <string name="login_step_phone">Gib deine Nummer ein, um den Code zu erhalten.</string>
     <string name="login_step_code">Sieh in der Telegram-App oder den SMS nach.</string>
@@ -332,8 +338,10 @@
     <string name="tab_all">Alle</string>
     <string name="action_pin_chat">Chat anheften</string>
     <string name="action_unpin_chat">Chat lösen</string>
-    <string name="settings_show_all_tab">&quot;Alle&quot;-Tab anzeigen</string>
+    <string name="settings_show_all_tab">Alle-Tab</string>
     <string name="settings_show_all_tab_desc">Einen einzelnen Tab mit allen Chats oben anzeigen</string>
+    <string name="settings_lock_saved_top">Gespeicherte Nachrichten oben halten</string>
+    <string name="settings_lock_saved_top_desc">Hält den Chat mit gespeicherten Nachrichten immer oben in der Liste</string>
     <string name="settings_swap_swipe_reply">Wischen zum Antworten umkehren</string>
     <string name="settings_swap_swipe_reply_desc">Nach links statt rechts wischen, um zu antworten</string>
     <string name="action_join_channel">Kanal beitreten</string>
@@ -367,4 +375,26 @@
     <string name="chat_info_media_open_link">Link öffnen</string>
     <string name="chat_info_media_view_in_chat">Im Chat anzeigen</string>
     <string name="chat_info_copied">In Zwischenablage kopiert</string>
+    <string name="info_media_search_hint">In dieser Kategorie suchen</string>
+    <string name="member_search_hint">Nach Name oder Benutzername suchen</string>
+    <string name="members_none_found">Keine Mitglieder gefunden</string>
+    <string name="user_fallback">Benutzer</string>
+    <string name="member_unban">Entsperren</string>
+    <string name="member_ban">Sperren</string>
+    <string name="member_unmute">Stummschaltung aufheben</string>
+    <string name="member_mute">Stummschalten</string>
+    <string name="member_remove_admin">Admin entfernen</string>
+    <string name="member_make_admin">Zum Admin machen</string>
+    <string name="member_manage_title">Mitglied verwalten</string>
+    <string name="media_saved_ok">In Download/Nova gespeichert</string>
+    <string name="media_save_failed">Speichern fehlgeschlagen</string>
+    <string name="settings_sounds">Nachrichtentöne</string>
+    <string name="settings_sounds_desc">Einen Ton beim Senden (Tap) und Empfangen (Ding) einer Nachricht abspielen</string>
+    <string name="member_role_owner">Inhaber</string>
+    <string name="member_role_admin">Administrator</string>
+    <string name="member_role_restricted">Eingeschränkt</string>
+    <string name="member_role_banned">Gesperrt</string>
+    <string name="receipt_seen">Gesehen</string>
+    <string name="receipt_sent">Gesendet</string>
+    <string name="gallery_empty_category">Nichts in dieser Kategorie anzuzeigen</string>
 </resources>
