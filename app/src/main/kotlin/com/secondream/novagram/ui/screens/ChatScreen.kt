@@ -1350,6 +1350,14 @@ fun ChatScreen(
                 // ~23% (the spot Eugenio approved). coerceAtLeast(0) so a bubble
                 // taller than 0.77*vp simply anchors to the viewport bottom.
                 suspend fun preciseRefine(animate: Boolean) {
+                    // Where the target's TOP rests, as a fraction of the
+                    // viewport. exact = vp*FRAC/100 - size ⇒ top sits at
+                    // (100-FRAC)% from the top. 82 ⇒ ~18% above the target
+                    // (raised from 77/23%, which Eugenio found too low — too
+                    // many messages above). Single knob: bump up if still too
+                    // low, down if too high. Used by every placement below so
+                    // the instant, animated and re-pin paths always agree.
+                    val FRAC = 82
                     val info0 = listState.layoutInfo
                     val vp0 = info0.viewportSize.height
                     if (vp0 <= 0) {
@@ -1373,7 +1381,7 @@ fun ChatScreen(
                             measured.sumOf { it.size } / measured.size
                         else vp0 * 18 / 100
                         val estH = if (selfH > 0) selfH else avgH
-                        val approx = (vp0 * 77 / 100 - estH).coerceAtLeast(0)
+                        val approx = (vp0 * FRAC / 100 - estH).coerceAtLeast(0)
                         runCatching { listState.scrollToItem(idx, approx) }
                         kotlinx.coroutines.delay(16)
                     }
@@ -1406,7 +1414,7 @@ fun ChatScreen(
 
                     val vp = listState.layoutInfo.viewportSize.height
                         .let { if (it > 0) it else vp0 }
-                    val exact = (vp * 77 / 100 - settledH).coerceAtLeast(0)
+                    val exact = (vp * FRAC / 100 - settledH).coerceAtLeast(0)
 
                     // Short on-screen hop → glide. Because the heights are already
                     // settled and the distance is short, animateScrollToItem can't
@@ -1442,7 +1450,7 @@ fun ChatScreen(
                             runCatching {
                                 listState.scrollToItem(
                                     idx,
-                                    (vpNow * 77 / 100 - h2).coerceAtLeast(0)
+                                    (vpNow * FRAC / 100 - h2).coerceAtLeast(0)
                                 )
                             }
                         } else {
@@ -1674,16 +1682,25 @@ fun ChatScreen(
             pendingViewerOpen = false
         }
     }
-    // When the media viewer closes and this chat returns to the front,
+    // When the media viewer closes and this chat comes back to the front,
     // restore the surface it was launched from (the info dialog or the
     // profile sheet). Driven by flags on MediaViewerHolder + ChatScreen's
     // OWN lifecycle, so it's immune to the navigation timing that used to
-    // drop the user on the bare chat / pop too far ("torna in home"). On
-    // first open and app-foreground the flags are false → no-op.
+    // drop the user on the bare chat / pop too far ("torna in home"). We
+    // react on ON_START — which fires at the START of the back-pop, before
+    // the viewer has finished sliding away — so the surface reappears
+    // immediately and the user never sees a flash of bare chat first. On
+    // first open / app-foreground the flags are false → no-op.
     val viewerReturnOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(viewerReturnOwner) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+            // ON_START fires at the start of the back-pop (no bare-chat flash);
+            // ON_RESUME is the fallback in case the entry stayed STARTED while
+            // the viewer was up so ON_START didn't re-fire. The flags below are
+            // cleared on the first of the two ⇒ the reopen happens exactly once.
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START ||
+                event == androidx.lifecycle.Lifecycle.Event.ON_RESUME
+            ) {
                 if (com.secondream.novagram.ui.screens.MediaViewerHolder.reopenInfo) {
                     com.secondream.novagram.ui.screens.MediaViewerHolder.reopenInfo = false
                     infoOpen = true
