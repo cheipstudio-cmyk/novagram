@@ -156,8 +156,12 @@ fun AppRouter(
     // Outgoing parallax kept at 30% — the chat-list peeks from the
     // left during the swap so it's clearly "underneath" not "gone".
     val slideEnterSpring = androidx.compose.animation.core.spring<androidx.compose.ui.unit.IntOffset>(
+        // Snappier (was StiffnessMediumLow, which felt sluggish/"laggosa" on
+        // chat open now that there's no scale masking it). Medium gives a crisp
+        // push that's over quickly, shortening the window where the chat's
+        // first-frame composition can drop frames. Still critically damped.
         dampingRatio = 1.0f,
-        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
     )
     val slideExitSpring = androidx.compose.animation.core.spring<androidx.compose.ui.unit.IntOffset>(
         dampingRatio = 1.0f,

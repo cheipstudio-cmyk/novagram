@@ -55,6 +55,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
@@ -188,6 +189,11 @@ fun ChatListScreen(
     var chatActionTarget by remember { mutableStateOf<ChatSummary?>(null) }
     var deleteConfirmTarget by remember { mutableStateOf<ChatSummary?>(null) }
     var leaveConfirmTarget by remember { mutableStateOf<ChatSummary?>(null) }
+    // Optimistic removal: when the user leaves / blocks / deletes a chat we add
+    // its id here so it vanishes from the list THE SAME FRAME, without waiting
+    // for TDLib's list update to propagate (Eugenio: "devono sparire in tempo
+    // reale"). The actual server-side removal still runs in the handlers.
+    val hiddenChatIds = remember { mutableStateListOf<Long>() }
 
     // Current-user avatar shown in the TopBar's profile button. We fetch
     // once when the screen lands and let TdClient.fileUpdates refresh it.
@@ -348,16 +354,15 @@ fun ChatListScreen(
                             val safeTab = selectedTab.coerceIn(0, tabs.lastIndex)
                             val spec = tabs[safeTab]
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                val isLightTheme = MaterialTheme.colorScheme.background.luminance() > 0.5f
-                                androidx.compose.foundation.Image(
-                                    painter = androidx.compose.ui.res.painterResource(
-                                        if (isLightTheme) com.secondream.novagram.R.drawable.ic_novagram_light
-                                        else com.secondream.novagram.R.drawable.ic_novagram_dark
-                                    ),
-                                    contentDescription = null,
+                                Avatar(
+                                    file = myAvatarFile,
+                                    fallbackText = myInitial,
+                                    bgColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    size = 34.dp,
                                     modifier = Modifier
-                                        .size(34.dp)
-                                        .padding(end = 8.dp)
+                                        .padding(end = 10.dp)
+                                        .clip(CircleShape)
+                                        .clickable { onOpenProfile() }
                                 )
                                 Text(
                                     stringResource(spec.labelRes),
@@ -387,14 +392,6 @@ fun ChatListScreen(
                                 Icon(
                                     com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass,
                                     contentDescription = stringResource(R.string.search_action)
-                                )
-                            }
-                            IconButton(onClick = onOpenProfile) {
-                                Avatar(
-                                    file = myAvatarFile,
-                                    fallbackText = myInitial,
-                                    bgColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    size = 32.dp
                                 )
                             }
                             // Settings gear — gets an accent dot at top-
@@ -514,7 +511,7 @@ fun ChatListScreen(
             modifier = Modifier.fillMaxSize().padding(padding)
         ) { page ->
             val spec = tabs[page.coerceIn(0, tabs.lastIndex)]
-            val pageChats = remember(allChats, page, searchQuery, myUserId, spec, appearance.lockSavedToTop) {
+            val pageChatsRaw = remember(allChats, page, searchQuery, myUserId, spec, appearance.lockSavedToTop) {
                 val q = searchQuery.trim()
                 val base = when {
                     spec.isAll -> {
@@ -568,6 +565,10 @@ fun ChatListScreen(
                 if (q.isBlank()) base
                 else base.filter { it.title.contains(q, ignoreCase = true) }
             }
+            // Apply optimistic removals OUTSIDE the remember so a just-left /
+            // blocked / deleted chat disappears immediately (the snapshot list
+            // change recomposes this; the remember key wouldn't).
+            val pageChats = pageChatsRaw.filter { it.id !in hiddenChatIds }
             val hasActiveSearch = searchOpen && searchQuery.trim().isNotBlank()
             val showingNoResults = pageChats.isEmpty() &&
                 !hasActiveSearch &&
@@ -608,7 +609,12 @@ fun ChatListScreen(
                             c,
                             onClick = { onChatClick(c.id, null) },
                             onLongClick = { chatActionTarget = c },
-                            modifier = Modifier.animateItem(),
+                            // No animateItem(): it animated the BULK reflow on
+                            // app open and on returning from a chat (the just-read
+                            // chat re-sorts to the top), which read as rows sliding
+                            // upward for no reason — Eugenio. Reordering is now
+                            // instant; no stray slide.
+                            modifier = Modifier,
                             myUserId = myUserId,
                             onAvatarClick = { chatInfoTargetId = c.id }
                         )
@@ -706,9 +712,20 @@ fun ChatListScreen(
                 val uid = target.id
                 val wasBlocked = isBlocked
                 chatActionTarget = null
+                // Blocking from the chat list also makes the chat vanish: hide
+                // it now (real-time) and remove it from the list server-side so
+                // it stays gone. Unblocking leaves the list alone.
+                if (!wasBlocked && uid !in hiddenChatIds) hiddenChatIds.add(uid)
                 scope.launch {
                     runCatching {
-                        if (wasBlocked) TdClient.unblockUser(uid) else TdClient.blockUser(uid)
+                        if (wasBlocked) {
+                            TdClient.unblockUser(uid)
+                        } else {
+                            TdClient.blockUser(uid)
+                            runCatching {
+                                TdClient.deleteChatHistory(uid, removeFromChatList = true, revoke = false)
+                            }
+                        }
                     }.onSuccess {
                         com.secondream.novagram.ui.components.NovaSnackbar.show(
                             if (wasBlocked) R.string.snack_user_unblocked
@@ -781,7 +798,15 @@ fun ChatListScreen(
                     onClick = {
                         val cid = target.id
                         leaveConfirmTarget = null
-                        scope.launch { runCatching { TdClient.leaveChat(cid) } }
+                        if (cid !in hiddenChatIds) hiddenChatIds.add(cid)
+                        scope.launch {
+                            runCatching { TdClient.leaveChat(cid) }
+                            // Leaving alone keeps the group in the list as a
+                            // "left group"; remove it so it actually disappears.
+                            runCatching {
+                                TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = false)
+                            }
+                        }
                     }
                 ),
                 com.secondream.novagram.ui.components.ActionTile(
@@ -804,6 +829,7 @@ fun ChatListScreen(
                     onClick = {
                         val cid = target.id
                         deleteConfirmTarget = null
+                        if (cid !in hiddenChatIds) hiddenChatIds.add(cid)
                         scope.launch {
                             runCatching {
                                 TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = false)
@@ -826,6 +852,7 @@ fun ChatListScreen(
                         onClick = {
                             val cid = target.id
                             deleteConfirmTarget = null
+                            if (cid !in hiddenChatIds) hiddenChatIds.add(cid)
                             scope.launch {
                                 runCatching {
                                     TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = true)

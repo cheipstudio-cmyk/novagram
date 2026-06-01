@@ -1799,6 +1799,142 @@ object TdClient {
         ))
     }
 
+    /** Set the group's DEFAULT permissions (apply to every regular member). */
+    suspend fun setChatPermissions(chatId: Long, permissions: TdApi.ChatPermissions) {
+        send(TdApi.SetChatPermissions(chatId, permissions))
+    }
+
+    /**
+     * Restrict a single member to the given permissions (granular per-user,
+     * the "Permessi utente" screen). isMember stays true so they remain in the
+     * group; untilDate 0 means forever.
+     */
+    suspend fun restrictMember(
+        chatId: Long,
+        userId: Long,
+        permissions: TdApi.ChatPermissions
+    ) {
+        send(TdApi.SetChatMemberStatus(
+            chatId, TdApi.MessageSenderUser(userId),
+            TdApi.ChatMemberStatusRestricted(true, 0, permissions)
+        ))
+    }
+
+    /**
+     * Promote (or re-edit) an admin with EXPLICIT rights — drives the admin
+     * rights picker. canBeEdited is always true so the creator can later
+     * adjust or revoke. Replaces the fixed-rights [promoteToAdmin] when the
+     * user chooses powers from the dialog.
+     */
+    suspend fun setAdminRights(
+        chatId: Long,
+        userId: Long,
+        rights: TdApi.ChatAdministratorRights
+    ) {
+        send(TdApi.SetChatMemberStatus(
+            chatId, TdApi.MessageSenderUser(userId),
+            TdApi.ChatMemberStatusAdministrator(true, rights)
+        ))
+    }
+
+    /** Add members to an existing chat (used when populating a fresh public supergroup). */
+    suspend fun addChatMembers(chatId: Long, userIds: List<Long>) {
+        if (userIds.isEmpty()) return
+        runCatching { send(TdApi.AddChatMembers(chatId, userIds.toLongArray())) }
+    }
+
+    /** Set (non-blank) or clear (blank → private) a supergroup's public username. */
+    suspend fun setSupergroupUsername(supergroupId: Long, username: String) {
+        send(TdApi.SetSupergroupUsername(supergroupId, username))
+    }
+
+    /**
+     * Upgrade a basic group to a supergroup. IRREVERSIBLE and the chat id
+     * CHANGES — the returned id points at the new supergroup chat, the old
+     * basic-group chat becomes a read-only "upgraded" stub. Needed before a
+     * basic group can be made public (only supergroups carry usernames).
+     */
+    suspend fun upgradeToSupergroup(chatId: Long): Long? {
+        val chat = runCatching {
+            send(TdApi.UpgradeBasicGroupChatToSupergroupChat(chatId))
+        }.getOrNull()
+        return (chat as? TdApi.Chat)?.id
+    }
+
+    /**
+     * Validate a desired public username. Pass chatId = 0 to check for a
+     * brand-new chat (creation flow), or an existing chat id when editing.
+     */
+    suspend fun checkChatUsername(chatId: Long, username: String): TdApi.CheckChatUsernameResult? =
+        runCatching { send(TdApi.CheckChatUsername(chatId, username)) }.getOrNull()
+            as? TdApi.CheckChatUsernameResult
+
+    /**
+     * Create a PUBLIC group: a supergroup (createNewSupergroupChat takes no
+     * members, unlike a basic group) that we then populate via addChatMembers
+     * and make public via setSupergroupUsername. Returns the new chat id.
+     */
+    suspend fun createPublicGroup(
+        title: String,
+        username: String,
+        userIds: List<Long>
+    ): Long? {
+        val chat = runCatching {
+            send(TdApi.CreateNewSupergroupChat(title, false, false, "", null, 0, false))
+        }.getOrNull() as? TdApi.Chat ?: return null
+        val sgId = (chat.type as? TdApi.ChatTypeSupergroup)?.supergroupId
+        addChatMembers(chat.id, userIds)
+        if (sgId != null && username.isNotBlank()) {
+            runCatching { send(TdApi.SetSupergroupUsername(sgId, username)) }
+        }
+        return chat.id
+    }
+
+    /** Cached supergroup object (carries usernames → public/private state). */
+    suspend fun getSupergroup(supergroupId: Long): TdApi.Supergroup? =
+        runCatching { send(TdApi.GetSupergroup(supergroupId)) }.getOrNull() as? TdApi.Supergroup
+
+    /**
+     * Current public username of a group, or null if it's private (no username
+     * or a basic group). Used by the edit sheet to seed the Public/Private UI.
+     */
+    suspend fun groupPublicUsername(chatId: Long): String? {
+        val chat = runCatching { getChat(chatId) }.getOrNull() ?: return null
+        val sgId = (chat.type as? TdApi.ChatTypeSupergroup)?.supergroupId ?: return null
+        val sg = getSupergroup(sgId) ?: return null
+        return sg.usernames?.editableUsername?.takeIf { it.isNotBlank() }
+            ?: sg.usernames?.activeUsernames?.firstOrNull()
+    }
+
+    /**
+     * Make a group public by giving it [username]. A basic group is first
+     * upgraded to a supergroup (irreversible, the chat id changes). Returns
+     * true on success.
+     */
+    suspend fun makeGroupPublic(chatId: Long, username: String): Boolean {
+        val chat = runCatching { getChat(chatId) }.getOrNull() ?: return false
+        val sgId = when (val t = chat.type) {
+            is TdApi.ChatTypeSupergroup -> t.supergroupId
+            is TdApi.ChatTypeBasicGroup -> {
+                val up = runCatching {
+                    send(TdApi.UpgradeBasicGroupChatToSupergroupChat(chatId))
+                }.getOrNull() as? TdApi.Chat ?: return false
+                (up.type as? TdApi.ChatTypeSupergroup)?.supergroupId ?: return false
+            }
+            else -> return false
+        }
+        return runCatching { send(TdApi.SetSupergroupUsername(sgId, username)); true }
+            .getOrDefault(false)
+    }
+
+    /** Make a group private by clearing its username. Basic groups are already private. */
+    suspend fun makeGroupPrivate(chatId: Long): Boolean {
+        val sgId = (runCatching { getChat(chatId) }.getOrNull()?.type
+            as? TdApi.ChatTypeSupergroup)?.supergroupId ?: return true
+        return runCatching { send(TdApi.SetSupergroupUsername(sgId, "")); true }
+            .getOrDefault(false)
+    }
+
     /** Reverse of [promoteToAdmin]: drop the user back to a plain member. */
     suspend fun demoteFromAdmin(chatId: Long, userId: Long) {
         send(TdApi.SetChatMemberStatus(

@@ -1429,14 +1429,19 @@ fun ChatScreen(
                 // ~23% (the spot Eugenio approved). coerceAtLeast(0) so a bubble
                 // taller than 0.77*vp simply anchors to the viewport bottom.
                 suspend fun preciseRefine(animate: Boolean) {
-                    // Where the target's TOP rests, as a fraction of the
-                    // viewport. exact = vp*FRAC/100 - size ⇒ top sits at
-                    // (100-FRAC)% from the top. 82 ⇒ ~18% above the target
-                    // (raised from 77/23%, which Eugenio found too low — too
-                    // many messages above). Single knob: bump up if still too
-                    // low, down if too high. Used by every placement below so
-                    // the instant, animated and re-pin paths always agree.
-                    val FRAC = 88
+                    // The target lands with its CENTRE at this fraction of the
+                    // viewport, measured from the top. 0.45 = a touch above dead
+                    // centre. Earlier we placed the target's TOP near the top
+                    // (12–18%); jumping FAR UP that left it "troppo in alto"
+                    // (Eugenio) — recent messages already on screen sit lower and
+                    // he's happy with those, so we centre on that spot. Offset
+                    // math (reverseLayout, convention confirmed from the unread
+                    // code: scrollOffset = vp - itemHeight - K ⇒ top at K px):
+                    // centre at C ⇒ top at C - h/2 ⇒ offset = vp*(1-C) - h/2.
+                    // Single knob: raise CENTER to push the target DOWN, lower it
+                    // to push UP. Used by every placement below so the instant,
+                    // animated and re-pin paths always agree.
+                    val CENTER = 0.45f
                     val info0 = listState.layoutInfo
                     val vp0 = info0.viewportSize.height
                     if (vp0 <= 0) {
@@ -1478,7 +1483,7 @@ fun ChatScreen(
                             measured.sumOf { it.size } / measured.size
                         else vp0 * 18 / 100
                         val estH = if (selfH > 0) selfH else avgH
-                        val approx = (vp0 * FRAC / 100 - estH).coerceAtLeast(0)
+                        val approx = (vp0 * (1f - CENTER) - estH / 2f).toInt().coerceAtLeast(0)
                         runCatching { listState.scrollToItem(idx, approx) }
                         kotlinx.coroutines.delay(16)
                     }
@@ -1512,7 +1517,7 @@ fun ChatScreen(
 
                     val vp = listState.layoutInfo.viewportSize.height
                         .let { if (it > 0) it else vp0 }
-                    val exact = (vp * FRAC / 100 - settledH).coerceAtLeast(0)
+                    val exact = (vp * (1f - CENTER) - settledH / 2f).toInt().coerceAtLeast(0)
                     // Re-resolve by ID: between capturing idx and here the list
                     // may have re-sorted (context splice) or paginated, shifting
                     // the target's index. Scrolling to a stale index is the
@@ -1561,7 +1566,7 @@ fun ChatScreen(
                         runCatching {
                             listState.scrollToItem(
                                 li,
-                                (vpNow * FRAC / 100 - item.size).coerceAtLeast(0)
+                                (vpNow * (1f - CENTER) - item.size / 2f).toInt().coerceAtLeast(0)
                             )
                         }
                         f2++
@@ -4445,6 +4450,144 @@ internal fun ChatInfoDialog(
 }
 
 /**
+ * Public/Private switcher for an existing group. Private = no username; Public
+ * = a t.me/<username> handle (a basic group is upgraded to a supergroup first,
+ * which changes the chat id — so on any successful apply we close the sheet via
+ * [onAfterChange] and let the user reopen the now-updated chat). The username
+ * field validates live against checkChatUsername.
+ */
+@Composable
+private fun GroupTypeEditor(
+    chatId: Long,
+    onAfterChange: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var loaded by remember { mutableStateOf(false) }
+    var currentlyPublic by remember { mutableStateOf(false) }
+    var currentUsername by remember { mutableStateOf("") }
+    var isPublic by remember { mutableStateOf(false) }
+    var username by remember { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
+    var available by remember { mutableStateOf<Boolean?>(null) }
+    var statusRes by remember { mutableStateOf(0) }
+    var applying by remember { mutableStateOf(false) }
+
+    LaunchedEffect(chatId) {
+        val cur = runCatching { TdClient.groupPublicUsername(chatId) }.getOrNull()
+        if (!cur.isNullOrBlank()) {
+            currentlyPublic = true; currentUsername = cur
+            isPublic = true; username = cur; available = true
+        }
+        loaded = true
+    }
+    LaunchedEffect(username, isPublic) {
+        if (!isPublic) { available = null; statusRes = 0; checking = false; return@LaunchedEffect }
+        val u = username.trim()
+        if (u == currentUsername && u.isNotEmpty()) { available = true; statusRes = 0; checking = false; return@LaunchedEffect }
+        if (u.isEmpty()) { available = null; statusRes = 0; checking = false; return@LaunchedEffect }
+        if (u.length < 5) { available = false; statusRes = R.string.group_username_short; checking = false; return@LaunchedEffect }
+        checking = true; statusRes = 0
+        kotlinx.coroutines.delay(450)
+        val res = runCatching { TdClient.checkChatUsername(chatId, u) }.getOrNull()
+        checking = false
+        when (res) {
+            is TdApi.CheckChatUsernameResultOk -> { available = true; statusRes = R.string.group_username_ok }
+            is TdApi.CheckChatUsernameResultUsernameOccupied -> { available = false; statusRes = R.string.group_username_taken }
+            is TdApi.CheckChatUsernameResultUsernameInvalid -> { available = false; statusRes = R.string.group_username_invalid }
+            null -> { available = null; statusRes = 0 }
+            else -> { available = false; statusRes = R.string.group_username_unavailable }
+        }
+    }
+
+    val targetChanged = (isPublic != currentlyPublic) ||
+        (isPublic && username.trim() != currentUsername)
+    val canApply = loaded && !applying && targetChanged &&
+        (!isPublic || available == true)
+
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            stringResource(R.string.group_type_title),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+            androidx.compose.material3.FilterChip(
+                selected = !isPublic,
+                onClick = { isPublic = false },
+                label = { Text(stringResource(R.string.group_type_private)) }
+            )
+            androidx.compose.material3.FilterChip(
+                selected = isPublic,
+                onClick = { isPublic = true },
+                label = { Text(stringResource(R.string.group_type_public)) }
+            )
+        }
+        androidx.compose.animation.AnimatedVisibility(visible = isPublic) {
+            Column(Modifier.padding(top = 10.dp)) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = username,
+                    onValueChange = { v -> username = v.filter { it.isLetterOrDigit() || it == '_' } },
+                    label = { Text(stringResource(R.string.group_username_label)) },
+                    prefix = { Text("t.me/") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    isError = available == false,
+                    trailingIcon = {
+                        when {
+                            checking -> androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp), strokeWidth = 2.dp
+                            )
+                            available == true -> Icon(
+                                com.secondream.novagram.ui.icons.PhosphorIcons.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            else -> {}
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (statusRes != 0) {
+                    Text(
+                        stringResource(statusRes),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (available == true) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        androidx.compose.material3.Button(
+            onClick = {
+                applying = true
+                scope.launch {
+                    val ok = if (isPublic) {
+                        TdClient.makeGroupPublic(chatId, username.trim())
+                    } else {
+                        TdClient.makeGroupPrivate(chatId)
+                    }
+                    applying = false
+                    if (ok) {
+                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                            R.string.group_type_saved,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                        )
+                        onAfterChange()
+                    }
+                }
+            },
+            enabled = canApply,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(stringResource(R.string.group_type_apply))
+        }
+    }
+}
+
+/**
  * Admin "Modifica gruppo": rename, edit description (bio) and share the
  * invite link (which is how you invite members). Gated on isSelfAdmin at the
  * call site. Photo editing is intentionally not here yet — it needs the
@@ -4464,6 +4607,26 @@ private fun EditGroupSheet(
     var bio by remember { mutableStateOf(currentBio) }
     var inviteLink by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    var permsOpen by remember { mutableStateOf(false) }
+    // Group-photo picker (admins/creators). Pulls an image, copies it off the
+    // content:// URI into cache (the picker grant can expire) and pushes it via
+    // setChatPhoto, which TDLib already supports.
+    val photoPicker = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val file = com.secondream.novagram.util.FileUtils.copyUriToCache(ctx, uri)
+                if (file != null) {
+                    runCatching { TdClient.setChatPhoto(chatId, file.absolutePath) }
+                    com.secondream.novagram.ui.components.NovaSnackbar.show(
+                        R.string.admin_group_photo_updated,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                    )
+                }
+            }
+        }
+    }
     LaunchedEffect(chatId) {
         inviteLink = runCatching { TdClient.getOrCreatePrimaryInviteLink(chatId) }.getOrNull()
     }
@@ -4484,6 +4647,31 @@ private fun EditGroupSheet(
                     stringResource(R.string.admin_edit_group),
                     style = MaterialTheme.typography.titleMedium
                 )
+                androidx.compose.material3.OutlinedButton(
+                    onClick = { photoPicker.launch("image/*") },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Image,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.admin_group_photo))
+                }
+                androidx.compose.material3.OutlinedButton(
+                    onClick = { permsOpen = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.perm_group_title))
+                }
+                GroupTypeEditor(chatId = chatId, onAfterChange = onDismiss)
                 androidx.compose.material3.OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
@@ -4585,6 +4773,25 @@ private fun EditGroupSheet(
                 }
             }
         }
+    }
+    if (permsOpen) {
+        val curPerms = TdClient.getCachedChat(chatId)?.permissions
+            ?: buildGroupPermissions(true, true, true, true, true)
+        GroupPermissionsDialog(
+            title = stringResource(R.string.perm_group_title),
+            initial = curPerms,
+            onSave = { p ->
+                scope.launch {
+                    runCatching { TdClient.setChatPermissions(chatId, p) }.onSuccess {
+                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                            R.string.perm_saved,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                        )
+                    }
+                }
+            },
+            onDismiss = { permsOpen = false }
+        )
     }
 }
 
@@ -4837,7 +5044,218 @@ private fun ChatMemberRow(member: TdApi.ChatMember, onClick: () -> Unit) {
     }
 }
 
-/** Ban / mute / promote action sheet for a tapped group member. */
+/** Map the 5 user-facing permission toggles to a full TdApi.ChatPermissions. */
+internal fun buildGroupPermissions(
+    sendMessages: Boolean,
+    sendMedia: Boolean,
+    addUsers: Boolean,
+    pinMessages: Boolean,
+    changeInfo: Boolean
+): TdApi.ChatPermissions = TdApi.ChatPermissions(
+    sendMessages,   // canSendBasicMessages
+    sendMedia,      // canSendAudios
+    sendMedia,      // canSendDocuments
+    sendMedia,      // canSendPhotos
+    sendMedia,      // canSendVideos
+    sendMedia,      // canSendVideoNotes
+    sendMedia,      // canSendVoiceNotes
+    sendMessages,   // canSendPolls
+    sendMedia,      // canSendOtherMessages
+    sendMessages,   // canAddLinkPreviews
+    sendMessages,   // canReactToMessages
+    sendMessages,   // canEditTag
+    changeInfo,     // canChangeInfo
+    addUsers,       // canInviteUsers
+    pinMessages,    // canPinMessages
+    false           // canCreateTopics
+)
+
+/**
+ * Map the 8 group-relevant admin toggles to the full 17-field
+ * ChatAdministratorRights. Channel-only powers (post/edit messages, stories,
+ * direct messages, tags) and topic management stay false; canManageChat is
+ * always on so the admin is listed and can reach basic management.
+ */
+private fun buildAdminRights(
+    changeInfo: Boolean,
+    deleteMessages: Boolean,
+    banUsers: Boolean,
+    inviteUsers: Boolean,
+    pinMessages: Boolean,
+    addAdmins: Boolean,
+    manageVideoChats: Boolean,
+    anonymous: Boolean
+): TdApi.ChatAdministratorRights = TdApi.ChatAdministratorRights(
+    true,             // canManageChat
+    changeInfo,       // canChangeInfo
+    false,            // canPostMessages (channels)
+    false,            // canEditMessages (channels)
+    deleteMessages,   // canDeleteMessages
+    inviteUsers,      // canInviteUsers
+    banUsers,         // canRestrictMembers
+    pinMessages,      // canPinMessages
+    false,            // canManageTopics
+    addAdmins,        // canPromoteMembers
+    manageVideoChats, // canManageVideoChats
+    false,            // canPostStories
+    false,            // canEditStories
+    false,            // canDeleteStories
+    false,            // canManageDirectMessages
+    false,            // canManageTags
+    anonymous         // isAnonymous
+)
+
+@Composable
+private fun PermissionRow(
+    labelRes: Int,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onChange(!checked) }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            stringResource(labelRes),
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge
+        )
+        androidx.compose.material3.Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+/**
+ * Shared permissions editor for BOTH the group default permissions (global,
+ * setChatPermissions) and a single member's restrictions (per-user,
+ * restrictMember). The 5 toggles map to the full ChatPermissions.
+ */
+@Composable
+internal fun GroupPermissionsDialog(
+    title: String,
+    initial: TdApi.ChatPermissions,
+    onSave: (TdApi.ChatPermissions) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var sendMessages by remember { mutableStateOf(initial.canSendBasicMessages) }
+    var sendMedia by remember { mutableStateOf(initial.canSendPhotos) }
+    var addUsers by remember { mutableStateOf(initial.canInviteUsers) }
+    var pinMessages by remember { mutableStateOf(initial.canPinMessages) }
+    var changeInfo by remember { mutableStateOf(initial.canChangeInfo) }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                PermissionRow(R.string.perm_send_messages, sendMessages) { sendMessages = it }
+                PermissionRow(R.string.perm_send_media, sendMedia) { sendMedia = it }
+                PermissionRow(R.string.perm_add_users, addUsers) { addUsers = it }
+                PermissionRow(R.string.perm_pin_messages, pinMessages) { pinMessages = it }
+                PermissionRow(R.string.perm_change_info, changeInfo) { changeInfo = it }
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End
+                ) {
+                    androidx.compose.material3.TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.delete_chat_cancel))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    androidx.compose.material3.Button(onClick = {
+                        onSave(
+                            buildGroupPermissions(
+                                sendMessages, sendMedia, addUsers, pinMessages, changeInfo
+                            )
+                        )
+                        onDismiss()
+                    }) {
+                        Text(stringResource(R.string.admin_save))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Admin rights picker — shown when promoting a member or re-editing an
+ * existing admin. 8 group-relevant toggles map to ChatAdministratorRights via
+ * buildAdminRights. Mirrors GroupPermissionsDialog's layout for consistency.
+ */
+@Composable
+private fun AdminRightsDialog(
+    title: String,
+    initial: TdApi.ChatAdministratorRights,
+    onSave: (TdApi.ChatAdministratorRights) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var changeInfo by remember { mutableStateOf(initial.canChangeInfo) }
+    var deleteMessages by remember { mutableStateOf(initial.canDeleteMessages) }
+    var banUsers by remember { mutableStateOf(initial.canRestrictMembers) }
+    var inviteUsers by remember { mutableStateOf(initial.canInviteUsers) }
+    var pinMessages by remember { mutableStateOf(initial.canPinMessages) }
+    var addAdmins by remember { mutableStateOf(initial.canPromoteMembers) }
+    var manageVideoChats by remember { mutableStateOf(initial.canManageVideoChats) }
+    var anonymous by remember { mutableStateOf(initial.isAnonymous) }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                PermissionRow(R.string.admin_right_change_info, changeInfo) { changeInfo = it }
+                PermissionRow(R.string.admin_right_delete_messages, deleteMessages) { deleteMessages = it }
+                PermissionRow(R.string.admin_right_ban_users, banUsers) { banUsers = it }
+                PermissionRow(R.string.admin_right_invite_users, inviteUsers) { inviteUsers = it }
+                PermissionRow(R.string.admin_right_pin_messages, pinMessages) { pinMessages = it }
+                PermissionRow(R.string.admin_right_add_admins, addAdmins) { addAdmins = it }
+                PermissionRow(R.string.admin_right_video_chats, manageVideoChats) { manageVideoChats = it }
+                PermissionRow(R.string.admin_right_anonymous, anonymous) { anonymous = it }
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End
+                ) {
+                    androidx.compose.material3.TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.delete_chat_cancel))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    androidx.compose.material3.Button(onClick = {
+                        onSave(
+                            buildAdminRights(
+                                changeInfo, deleteMessages, banUsers, inviteUsers,
+                                pinMessages, addAdmins, manageVideoChats, anonymous
+                            )
+                        )
+                        onDismiss()
+                    }) {
+                        Text(stringResource(R.string.admin_save))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Ban / mute / promote / permissions action sheet for a tapped group member. */
 @Composable
 private fun MemberActionSheet(
     chatId: Long,
@@ -4849,11 +5267,62 @@ private fun MemberActionSheet(
     val uid = (member.memberId as? TdApi.MessageSenderUser)?.userId ?: return
     val status = member.status
     val phos = com.secondream.novagram.ui.icons.PhosphorIcons
+    var showPerms by remember { mutableStateOf(false) }
+    if (showPerms) {
+        val initial = (status as? TdApi.ChatMemberStatusRestricted)?.permissions
+            ?: buildGroupPermissions(true, true, true, true, true)
+        GroupPermissionsDialog(
+            title = stringResource(R.string.perm_member_title),
+            initial = initial,
+            onSave = { p ->
+                scope.launch {
+                    runCatching { TdClient.restrictMember(chatId, uid, p) }.onSuccess {
+                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                            R.string.perm_saved,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                        )
+                    }
+                    onChanged()
+                }
+            },
+            onDismiss = onDismiss
+        )
+        return
+    }
+    var showAdminRights by remember { mutableStateOf(false) }
+    if (showAdminRights) {
+        val initialRights = (status as? TdApi.ChatMemberStatusAdministrator)?.rights
+            ?: buildAdminRights(true, true, true, true, true, false, true, false)
+        AdminRightsDialog(
+            title = stringResource(R.string.admin_rights_title),
+            initial = initialRights,
+            onSave = { r ->
+                scope.launch {
+                    runCatching { TdClient.setAdminRights(chatId, uid, r) }.onSuccess {
+                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                            R.string.snack_admin_granted,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                        )
+                    }
+                    onChanged()
+                }
+            },
+            onDismiss = onDismiss
+        )
+        return
+    }
     val isBanned = status is TdApi.ChatMemberStatusBanned
     val isMuted = status is TdApi.ChatMemberStatusRestricted
     val isAdmin = status is TdApi.ChatMemberStatusAdministrator
     val isCreator = status is TdApi.ChatMemberStatusCreator
     val tiles = buildList {
+        if (!isCreator && !isBanned) {
+            add(com.secondream.novagram.ui.components.ActionTile(
+                label = stringResource(R.string.perm_member_title),
+                icon = phos.Lock,
+                onClick = { showPerms = true }
+            ))
+        }
         if (isBanned) {
             add(com.secondream.novagram.ui.components.ActionTile(
                 label = stringResource(R.string.member_unban),
@@ -4938,21 +5407,16 @@ private fun MemberActionSheet(
                         }
                     }
                 ))
+                add(com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.admin_rights_title),
+                    icon = phos.Lock,
+                    onClick = { showAdminRights = true }
+                ))
             } else if (!isBanned) {
                 add(com.secondream.novagram.ui.components.ActionTile(
                     label = stringResource(R.string.member_make_admin),
                     icon = phos.Sparkle,
-                    onClick = {
-                        onDismiss()
-                        scope.launch {
-                            runCatching { TdClient.promoteToAdmin(chatId, uid) }.onSuccess {
-                                com.secondream.novagram.ui.components.NovaSnackbar.show(
-                                    R.string.snack_admin_granted, phos.Check
-                                )
-                            }
-                            onChanged()
-                        }
-                    }
+                    onClick = { showAdminRights = true }
                 ))
             }
         }

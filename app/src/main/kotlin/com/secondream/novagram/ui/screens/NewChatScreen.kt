@@ -142,9 +142,11 @@ fun NewChatScreen(
         loadingTelegram = false
     }
 
-    // Phone tab: read + sync on demand (first time the user switches to it).
+    // Contacts tab (tab 0): read + sync the phonebook in the background so the
+    // non-Telegram entries can be appended (invite). Only runs once permission
+    // is granted; Telegram contacts show immediately regardless.
     LaunchedEffect(selectedTab, hasContactsPermission) {
-        if (selectedTab != 1 || !hasContactsPermission || phoneContacts.isNotEmpty()) return@LaunchedEffect
+        if (selectedTab != 0 || !hasContactsPermission || phoneContacts.isNotEmpty()) return@LaunchedEffect
         loadingPhone = true
         val raw = withContext(Dispatchers.IO) { PhoneBook.read(context) }
         // Show the local list immediately with telegramUserId=0 (unknown), then
@@ -264,11 +266,11 @@ fun NewChatScreen(
                     PillTabs(
                         icons = listOf(
                             com.secondream.novagram.ui.icons.PhosphorIcons.User,
-                            com.secondream.novagram.ui.icons.PhosphorIcons.Phone
+                            com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree
                         ),
                         contentDescriptions = listOf(
-                            stringResource(R.string.new_chat_tab_telegram),
-                            stringResource(R.string.new_chat_tab_phone)
+                            stringResource(R.string.new_chat_tab_contacts),
+                            stringResource(R.string.new_group_title)
                         ),
                         selected = selectedTab,
                         onSelect = { selectedTab = it }
@@ -291,59 +293,23 @@ fun NewChatScreen(
                 if (selectedTab != target) selectedTab = target
             }
         }
-        Column(
+        androidx.compose.foundation.pager.HorizontalPager(
+            state = pagerState,
             modifier = Modifier.fillMaxSize().padding(padding)
-        ) {
-            // "Nuovo gruppo" entry — opens the create-group multi-select flow.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onNewGroup() }
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary
-                    )
-                }
-                Spacer(Modifier.width(16.dp))
-                Text(
-                    stringResource(R.string.new_group_entry),
-                    style = MaterialTheme.typography.bodyLarge
-                )
-            }
-            androidx.compose.foundation.pager.HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxWidth().weight(1f)
-            ) { page ->
+        ) { page ->
             when (page) {
-                0 -> TelegramList(
-                    contacts = filteredTelegram,
-                    loading = loadingTelegram,
-                    onOpen = { user ->
-                        // Defer the actual chat open: the user picks
-                        // Normal vs Segreta in the dialog below.
-                        pendingChatUserId = user.id
-                    }
-                )
-                1 -> PhoneList(
-                    contacts = filteredPhone,
-                    loading = loadingPhone,
-                    syncing = syncingPhone,
+                0 -> UnifiedContactsList(
+                    telegramContacts = filteredTelegram,
+                    phoneContacts = filteredPhone,
+                    loadingTelegram = loadingTelegram,
                     hasPermission = hasContactsPermission,
+                    syncing = syncingPhone,
                     onGrantPermission = {
                         permissionLauncher.launch(Manifest.permission.READ_CONTACTS)
                     },
                     onOpenTelegram = { userId ->
+                        // Defer the actual chat open: the user picks
+                        // Normal vs Segreta in the dialog below.
                         pendingChatUserId = userId
                     },
                     onInviteSms = { phone ->
@@ -357,8 +323,8 @@ fun NewChatScreen(
                         }
                     }
                 )
+                1 -> NewGroupContent(query = query, onOpenChat = onOpenChat)
             }
-        }
         }
     }
 
@@ -530,6 +496,137 @@ private fun SearchInline(value: String, onValueChange: (String) -> Unit) {
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnifiedContactsList(
+    telegramContacts: List<TgContact>,
+    phoneContacts: List<MatchedPhoneContact>,
+    loadingTelegram: Boolean,
+    hasPermission: Boolean,
+    syncing: Boolean,
+    onGrantPermission: () -> Unit,
+    onOpenTelegram: (Long) -> Unit,
+    onInviteSms: (String) -> Unit
+) {
+    // Phonebook people NOT on Telegram, shown after the Telegram contacts as
+    // "invite" rows (Eugenio: tab 1 = telegram + in fondo quelli della rubrica
+    // che NON hanno telegram).
+    val invitable = phoneContacts.filter { it.telegramUserId == 0L }
+    if (loadingTelegram && telegramContacts.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+        }
+        return
+    }
+    if (telegramContacts.isEmpty() && invitable.isEmpty() && hasPermission) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                stringResource(R.string.new_chat_empty_telegram),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        return
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(vertical = 4.dp)
+    ) {
+        items(telegramContacts, key = { "tg_" + it.user.id }) { c ->
+            ContactRow(
+                title = "${c.user.firstName} ${c.user.lastName}".trim()
+                    .ifEmpty { c.user.usernames?.editableUsername ?: "?" },
+                subtitle = c.user.usernames?.editableUsername?.let { "@$it" } ?: "",
+                onClick = { onOpenTelegram(c.user.id) },
+                trailing = null,
+                photoFile = c.user.profilePhoto?.small,
+                chatIdForBg = c.user.id
+            )
+            HorizontalDivider(
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(start = 80.dp)
+            )
+        }
+        if (syncing) {
+            item(key = "sync") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        stringResource(R.string.new_chat_syncing),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        if (!hasPermission) {
+            item(key = "grant") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        stringResource(R.string.new_chat_invite_header),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(onClick = onGrantPermission) {
+                        Text(stringResource(R.string.action_grant_permission))
+                    }
+                }
+            }
+        } else if (invitable.isNotEmpty()) {
+            item(key = "invite_header") {
+                Text(
+                    stringResource(R.string.new_chat_invite_header),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                )
+            }
+            items(
+                invitable,
+                key = { "ph_" + it.contact.deviceContactId.toString() + it.contact.phoneNumber }
+            ) { p ->
+                val title = "${p.contact.firstName} ${p.contact.lastName}".trim()
+                    .ifEmpty { p.contact.phoneNumber }
+                ContactRow(
+                    title = title,
+                    subtitle = p.contact.phoneNumber,
+                    onClick = { onInviteSms(p.contact.phoneNumber) },
+                    trailing = {
+                        Text(
+                            stringResource(R.string.new_chat_phone_invite),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    photoFile = p.photoFile,
+                    chatIdForBg = 0L
+                )
+                HorizontalDivider(
+                    thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(start = 80.dp)
                 )
             }
         }
