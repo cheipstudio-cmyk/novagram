@@ -205,33 +205,6 @@ fun NewChatScreen(
                 headerOffsetPx.intValue = newOffset
                 return Offset(0f, consumed.toFloat())
             }
-
-            // Spring the pill row to the nearest edge on release/fling-end so
-            // it never rests half-tucked; carries the leftover fling velocity
-            // in, slightly under-damped for the rebound, clamped to [-natural,0]
-            // so it can't overshoot past the bar. Mirrors ChatListScreen.
-            override suspend fun onPostFling(
-                consumed: androidx.compose.ui.unit.Velocity,
-                available: androidx.compose.ui.unit.Velocity
-            ): androidx.compose.ui.unit.Velocity {
-                val natural = headerNaturalHeightPx
-                if (natural > 0) {
-                    val current = headerOffsetPx.intValue
-                    val target = if (current <= -natural / 2) -natural else 0
-                    androidx.compose.animation.core.animate(
-                        initialValue = current.toFloat(),
-                        targetValue = target.toFloat(),
-                        initialVelocity = available.y,
-                        animationSpec = androidx.compose.animation.core.spring(
-                            dampingRatio = 0.78f,
-                            stiffness = androidx.compose.animation.core.Spring.StiffnessLow
-                        )
-                    ) { value, _ ->
-                        headerOffsetPx.intValue = value.toInt().coerceIn(-natural, 0)
-                    }
-                }
-                return androidx.compose.ui.unit.Velocity.Zero
-            }
         }
     }
 
@@ -271,13 +244,8 @@ fun NewChatScreen(
                                 (-headerOffsetPx.intValue.toFloat() / natural.toFloat())
                                     .coerceIn(0f, 1f)
                             else 0f
-                            val eased = p * p * (3f - 2f * p)
-                            alpha = 1f - eased
-                            val s = 1f - 0.06f * eased
-                            scaleX = s
-                            scaleY = s
-                            transformOrigin =
-                                androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
+                            // alpha-only fade (pure draw-phase, no scroll cost)
+                            alpha = 1f - p * p * (3f - 2f * p)
                         }
                         .layout { measurable, constraints ->
                             val placeable = measurable.measure(constraints)

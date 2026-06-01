@@ -1416,6 +1416,40 @@ fun ChatScreen(
                     }
                     // Pixel-exact resting position on every path.
                     runCatching { listState.scrollToItem(idx, exact) }
+
+                    // RE-PIN safety net. The settle above waits up to ~640ms, but
+                    // a photo/video can finish decoding AFTER the lock and grow the
+                    // bubble — which slides the target downward and leaves "troppi
+                    // messaggi sopra il target". Watch the target's height for a
+                    // short window and, EACH time it changes, re-pin to the 23%
+                    // mark using the NEW height. Re-pins fire ONLY on a height
+                    // change (never on plain scrolling), so they don't fight the
+                    // user; if the target leaves the viewport (user scrolled away)
+                    // we stop. These corrections are instant and tiny.
+                    var pinnedH = settledH
+                    var stable2 = 0
+                    var f2 = 0
+                    while (f2 < 28 && stable2 < 5) {
+                        kotlinx.coroutines.delay(16)
+                        val h2 = listState.layoutInfo.visibleItemsInfo
+                            .find { it.index == idx }?.size ?: -1
+                        if (h2 < 0) break // target no longer visible → user moved on
+                        if (h2 != pinnedH) {
+                            pinnedH = h2
+                            stable2 = 0
+                            val vpNow = listState.layoutInfo.viewportSize.height
+                                .let { if (it > 0) it else vp }
+                            runCatching {
+                                listState.scrollToItem(
+                                    idx,
+                                    (vpNow * 77 / 100 - h2).coerceAtLeast(0)
+                                )
+                            }
+                        } else {
+                            stable2++
+                        }
+                        f2++
+                    }
                 }
 
                 // Already in the loaded window → animation is PERMITTED; whether
@@ -1620,10 +1654,10 @@ fun ChatScreen(
     var ttlDialogOpen by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
     // Remembers which info tab the user was on, so that reopening the info
-    // dialog after closing a photo/video viewer (see MediaViewerHolder
-    // .onClosed) lands back on the same tab (e.g. "Foto") rather than
-    // snapping to "Info". Kept here in ChatScreen because the dialog itself
-    // is torn down between opens.
+    // dialog after closing a photo/video viewer (see the reopen flags on
+    // MediaViewerHolder) lands back on the same tab (e.g. "Foto") rather
+    // than snapping to "Info". Kept here in ChatScreen because the dialog
+    // itself is torn down between opens.
     var infoInitialPage by remember(chatId) { mutableStateOf(0) }
     // Deferred media-viewer open requested from the chat-info dialog.
     // Navigating to the viewer route AND dismissing the info Dialog in the
@@ -1639,6 +1673,29 @@ fun ChatScreen(
             onOpenMediaViewer()
             pendingViewerOpen = false
         }
+    }
+    // When the media viewer closes and this chat returns to the front,
+    // restore the surface it was launched from (the info dialog or the
+    // profile sheet). Driven by flags on MediaViewerHolder + ChatScreen's
+    // OWN lifecycle, so it's immune to the navigation timing that used to
+    // drop the user on the bare chat / pop too far ("torna in home"). On
+    // first open and app-foreground the flags are false → no-op.
+    val viewerReturnOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(viewerReturnOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                if (com.secondream.novagram.ui.screens.MediaViewerHolder.reopenInfo) {
+                    com.secondream.novagram.ui.screens.MediaViewerHolder.reopenInfo = false
+                    infoOpen = true
+                }
+                com.secondream.novagram.ui.screens.MediaViewerHolder.reopenProfileUid?.let { uid ->
+                    com.secondream.novagram.ui.screens.MediaViewerHolder.reopenProfileUid = null
+                    profileSheetUserId = uid
+                }
+            }
+        }
+        viewerReturnOwner.lifecycle.addObserver(obs)
+        onDispose { viewerReturnOwner.lifecycle.removeObserver(obs) }
     }
     var deleteOpen by remember { mutableStateOf(false) }
     var leaveOpen by remember { mutableStateOf(false) }
@@ -2130,7 +2187,8 @@ fun ChatScreen(
                                     // Opened straight from a chat bubble → on
                                     // close just return to the chat; there's no
                                     // info/profile surface to restore.
-                                    com.secondream.novagram.ui.screens.MediaViewerHolder.onClosed = null
+                                    com.secondream.novagram.ui.screens.MediaViewerHolder.reopenInfo = false
+                                    com.secondream.novagram.ui.screens.MediaViewerHolder.reopenProfileUid = null
                                     com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
                                     onOpenMediaViewer()
                                 },
@@ -2998,9 +3056,8 @@ fun ChatScreen(
             onOpenMediaViewer = {
                 // Reopen this profile sheet when the photo viewer closes,
                 // instead of dropping the user back to the bare chat.
-                com.secondream.novagram.ui.screens.MediaViewerHolder.onClosed = {
-                    profileSheetUserId = uid
-                }
+                com.secondream.novagram.ui.screens.MediaViewerHolder.reopenInfo = false
+                com.secondream.novagram.ui.screens.MediaViewerHolder.reopenProfileUid = uid
                 pendingViewerOpen = true
             }
         )
@@ -3560,9 +3617,8 @@ fun ChatScreen(
             onOpenMediaViewer = {
                 // Reopen the info dialog (on its last tab) when the media
                 // viewer closes, instead of dropping back to the bare chat.
-                com.secondream.novagram.ui.screens.MediaViewerHolder.onClosed = {
-                    infoOpen = true
-                }
+                com.secondream.novagram.ui.screens.MediaViewerHolder.reopenProfileUid = null
+                com.secondream.novagram.ui.screens.MediaViewerHolder.reopenInfo = true
                 pendingViewerOpen = true
             }
         )

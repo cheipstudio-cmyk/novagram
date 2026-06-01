@@ -254,15 +254,13 @@ fun AppRouter(
                 MediaViewerScreen(
                     filePath = path,
                     onClose = {
-                        // If the viewer was launched from the chat-info dialog
-                        // or the profile sheet, reopen that surface rather than
-                        // landing on the bare chat. Pop FIRST, then invoke, so
-                        // the reopened Dialog draws over the restored chat and
-                        // not over the viewer that's sliding away.
-                        val reopen = MediaViewerHolder.onClosed
-                        MediaViewerHolder.onClosed = null
+                        // Just pop. If this viewer was opened from the chat-info
+                        // dialog or profile sheet, ChatScreen sees the reopen
+                        // flags on its ON_RESUME (when it comes back to front)
+                        // and restores that surface itself — robust against the
+                        // navigation timing that previously dropped us on the
+                        // bare chat or popped too far.
                         nav.popBackStack()
-                        reopen?.invoke()
                     }
                 )
             } else {

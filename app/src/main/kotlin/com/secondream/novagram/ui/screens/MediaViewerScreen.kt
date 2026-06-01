@@ -158,13 +158,17 @@ fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
 object MediaViewerHolder {
     var currentPath: String? = null
     var isVideo: Boolean = false
-    // Set by the opener when the viewer should NOT return to the bare chat
-    // on close but reopen the surface it was launched from (the chat-info
-    // dialog or the profile sheet — both are Compose Dialog/sheet windows
-    // that are NOT on the nav back stack, so a plain popBackStack lands on
-    // the chat). The MEDIA_VIEWER route invokes this once on close and
-    // clears it. The chat-bubble path leaves it null → normal pop to chat.
-    var onClosed: (() -> Unit)? = null
+    // Reopen-intent flags read by ChatScreen on its OWN lifecycle ON_RESUME
+    // (i.e. when the viewer is popped and the chat comes back to the front),
+    // rather than via a callback invoked mid-navigation from the router —
+    // that cross-composition mutation was timing-fragile and sometimes left
+    // the user on the bare chat / popped too far ("torna in home"). The
+    // chat-info dialog and the profile sheet are Compose windows NOT on the
+    // nav back stack, so a plain popBackStack lands on the chat; these flags
+    // tell ChatScreen to bring the originating surface back. The chat-bubble
+    // path sets neither → normal return to the chat.
+    var reopenInfo: Boolean = false
+    var reopenProfileUid: Long? = null
 }
 
 /**
