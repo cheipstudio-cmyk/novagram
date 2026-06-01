@@ -1903,6 +1903,51 @@ object TdClient {
     suspend fun getSupergroupFullInfo(supergroupId: Long): TdApi.SupergroupFullInfo =
         send(TdApi.GetSupergroupFullInfo(supergroupId))
 
+    // ---- Admin: edit group profile ----
+
+    /** Rename a group / channel (admin only; TDLib rejects otherwise). */
+    suspend fun setChatTitle(chatId: Long, title: String) {
+        send(TdApi.SetChatTitle(chatId, title))
+    }
+
+    /** Set a group / channel description (bio). Empty string clears it. */
+    suspend fun setChatDescription(chatId: Long, description: String) {
+        send(TdApi.SetChatDescription(chatId, description))
+    }
+
+    /** Replace the group / channel photo from a local image file path. */
+    suspend fun setChatPhoto(chatId: Long, localPath: String) {
+        send(
+            TdApi.SetChatPhoto(
+                chatId,
+                TdApi.InputChatPhotoStatic(TdApi.InputFileLocal(localPath))
+            )
+        )
+    }
+
+    /**
+     * The group's shareable invite link. Reads the primary link already on
+     * the full info when present; otherwise asks TDLib to mint one. Returns
+     * null if neither works (e.g. not enough rights).
+     */
+    suspend fun getOrCreatePrimaryInviteLink(chatId: Long): String? {
+        val chat = getCachedChat(chatId) ?: return null
+        val existing = when (val t = chat.type) {
+            is TdApi.ChatTypeSupergroup -> runCatching {
+                getSupergroupFullInfo(t.supergroupId).inviteLink?.inviteLink
+            }.getOrNull()
+            is TdApi.ChatTypeBasicGroup -> runCatching {
+                getBasicGroupFullInfo(t.basicGroupId).inviteLink?.inviteLink
+            }.getOrNull()
+            else -> null
+        }
+        if (!existing.isNullOrBlank()) return existing
+        return runCatching {
+            send(TdApi.CreateChatInviteLink(chatId, "", 0, 0, false)).inviteLink
+        }.getOrNull()
+    }
+
+
     /**
      * Who has *viewed* this message in the group (distinct from who
      * reacted). Returns the viewer user ids in TDLib's order. TDLib only

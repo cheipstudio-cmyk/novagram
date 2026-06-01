@@ -696,9 +696,16 @@ fun ChatListScreen(
             onDismiss = { chatActionTarget = null },
             onToggleMute = {
                 val cid = target.id
+                val muting = !isMuted
                 chatActionTarget = null
                 scope.launch {
-                    runCatching { TdClient.setChatMuted(cid, !isMuted) }
+                    runCatching { TdClient.setChatMuted(cid, muting) }.onSuccess {
+                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                            if (muting) R.string.snack_muted else R.string.snack_unmuted,
+                            if (muting) com.secondream.novagram.ui.icons.PhosphorIcons.BellSlash
+                            else com.secondream.novagram.ui.icons.PhosphorIcons.Bell
+                        )
+                    }
                 }
             },
             onTogglePin = {
@@ -714,7 +721,12 @@ fun ChatListScreen(
                 val wasArchived = target.isArchived
                 chatActionTarget = null
                 scope.launch {
-                    runCatching { TdClient.archiveChat(cid, !wasArchived) }
+                    runCatching { TdClient.archiveChat(cid, !wasArchived) }.onSuccess {
+                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                            if (!wasArchived) R.string.snack_archived else R.string.snack_unarchived,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Archive
+                        )
+                    }
                 }
             },
             onDeleteRequest = {
@@ -769,6 +781,11 @@ fun ChatListScreen(
                         scope.launch {
                             runCatching {
                                 TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = false)
+                            }.onSuccess {
+                                com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                    R.string.snack_chat_deleted,
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.Trash
+                                )
                             }
                         }
                     }
@@ -786,6 +803,11 @@ fun ChatListScreen(
                             scope.launch {
                                 runCatching {
                                     TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = true)
+                                }.onSuccess {
+                                    com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                        R.string.snack_chat_deleted,
+                                        com.secondream.novagram.ui.icons.PhosphorIcons.Trash
+                                    )
                                 }
                             }
                         }

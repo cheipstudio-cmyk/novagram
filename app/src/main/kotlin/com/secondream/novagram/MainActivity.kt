@@ -10,6 +10,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
@@ -152,6 +155,15 @@ class MainActivity : ComponentActivity() {
                         // button at the bottom of a chat.
                         com.secondream.novagram.transfer.TransferPanel(
                             modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter)
+                        )
+                        // Global animated snackbar ("chat eliminata", "membro
+                        // bannato", "messaggio fissato", …). Bottom-anchored,
+                        // above the system nav bar.
+                        com.secondream.novagram.ui.components.NovaSnackbarHost(
+                            modifier = Modifier
+                                .align(androidx.compose.ui.Alignment.BottomCenter)
+                                .navigationBarsPadding()
+                                .padding(bottom = 12.dp)
                         )
                     }
                 }

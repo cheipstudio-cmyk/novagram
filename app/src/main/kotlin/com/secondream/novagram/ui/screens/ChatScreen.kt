@@ -3470,6 +3470,12 @@ fun ChatScreen(
                         runCatching {
                             if (wasPinned) TdClient.unpinChatMessage(chatId, msg.id)
                             else TdClient.pinChatMessage(chatId, msg.id)
+                        }.onSuccess {
+                            com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                if (wasPinned) R.string.snack_message_unpinned
+                                else R.string.snack_message_pinned,
+                                com.secondream.novagram.ui.icons.PhosphorIcons.PushPin
+                            )
                         }
                     }
                     pinnedMessageId = if (wasPinned) 0L else msg.id
@@ -3960,6 +3966,8 @@ internal fun ChatInfoDialog(
     // Bumped after a member action so the Membri list reloads in place (the
     // action already lands server-side; this gives immediate visual feedback).
     var membersRefresh by remember(chatId) { mutableStateOf(0) }
+    // Admin "Modifica gruppo" sheet (title / bio / invite link).
+    var editGroupOpen by remember(chatId) { mutableStateOf(false) }
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -3969,17 +3977,8 @@ internal fun ChatInfoDialog(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.surface
         ) {
+          androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Download/transfer badge rendered INSIDE the info window so
-                // it shows on top here. The root-level panel (MainActivity)
-                // lives in the main window, behind this dialog's scrim, so
-                // from in here it looked dimmed/under the screen. This one
-                // self-hides to zero height when no transfer is active, so it
-                // only ever appears (at the top, like the root one) while
-                // something is actually downloading/uploading.
-                com.secondream.novagram.transfer.TransferPanel(
-                    modifier = Modifier.fillMaxWidth()
-                )
                 androidx.compose.material3.TopAppBar(
                     title = {
                         Text(
@@ -3991,6 +3990,16 @@ internal fun ChatInfoDialog(
                     navigationIcon = {
                         androidx.compose.material3.IconButton(onClick = onDismiss) {
                             Icon(phos.CaretLeft, contentDescription = "Indietro")
+                        }
+                    },
+                    actions = {
+                        if (isSelfAdmin && isGroup) {
+                            androidx.compose.material3.IconButton(onClick = { editGroupOpen = true }) {
+                                Icon(
+                                    phos.PencilSimple,
+                                    contentDescription = stringResource(R.string.admin_edit_group)
+                                )
+                            }
                         }
                     }
                 )
@@ -4163,6 +4172,16 @@ internal fun ChatInfoDialog(
                     }
                 }
             }
+            // Transfer/download badge as a TOP OVERLAY (not in the column
+            // flow) so it never pushes the tabs/pager — that vertical shift
+            // while swiping during an active download was the micro-jump.
+            // Still on top of the dialog content and self-hiding when idle.
+            com.secondream.novagram.transfer.TransferPanel(
+                modifier = Modifier
+                    .align(androidx.compose.ui.Alignment.TopCenter)
+                    .fillMaxWidth()
+            )
+          }
         }
 
         // Media item actions (open / jump-to-chat). Same behavior as before.
@@ -4211,6 +4230,158 @@ internal fun ChatInfoDialog(
                 onDismiss = { selectedMember = null },
                 onChanged = { membersRefresh++ }
             )
+        }
+        if (editGroupOpen && isGroup) {
+            EditGroupSheet(
+                chatId = chatId,
+                currentTitle = title,
+                currentBio = description ?: "",
+                onDismiss = { editGroupOpen = false }
+            )
+        }
+    }
+}
+
+/**
+ * Admin "Modifica gruppo": rename, edit description (bio) and share the
+ * invite link (which is how you invite members). Gated on isSelfAdmin at the
+ * call site. Photo editing is intentionally not here yet — it needs the
+ * system image picker and is handled separately.
+ */
+@Composable
+private fun EditGroupSheet(
+    chatId: Long,
+    currentTitle: String,
+    currentBio: String,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var title by remember { mutableStateOf(currentTitle) }
+    var bio by remember { mutableStateOf(currentBio) }
+    var inviteLink by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    LaunchedEffect(chatId) {
+        inviteLink = runCatching { TdClient.getOrCreatePrimaryInviteLink(chatId) }.getOrNull()
+    }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(14.dp)
+            ) {
+                Text(
+                    stringResource(R.string.admin_edit_group),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                androidx.compose.material3.OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text(stringResource(R.string.admin_group_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                androidx.compose.material3.OutlinedTextField(
+                    value = bio,
+                    onValueChange = { bio = it },
+                    label = { Text(stringResource(R.string.admin_group_bio)) },
+                    minLines = 2,
+                    maxLines = 5,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    stringResource(R.string.admin_invite_link),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val link = inviteLink
+                if (link.isNullOrBlank()) {
+                    Text(
+                        stringResource(R.string.admin_invite_link_none),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        link,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                    androidx.compose.foundation.layout.Row(
+                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                    ) {
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = {
+                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(link))
+                                com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                    R.string.admin_link_copied,
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.Copy
+                                )
+                            }
+                        ) {
+                            Icon(
+                                com.secondream.novagram.ui.icons.PhosphorIcons.Copy,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(stringResource(R.string.admin_copy))
+                        }
+                        androidx.compose.material3.Button(
+                            onClick = {
+                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(android.content.Intent.EXTRA_TEXT, link)
+                                }
+                                runCatching {
+                                    ctx.startActivity(android.content.Intent.createChooser(send, null))
+                                }
+                            }
+                        ) {
+                            Text(stringResource(R.string.admin_share))
+                        }
+                    }
+                }
+                androidx.compose.foundation.layout.Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End
+                ) {
+                    androidx.compose.material3.TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.delete_chat_cancel))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    androidx.compose.material3.Button(
+                        enabled = !saving && title.isNotBlank(),
+                        onClick = {
+                            saving = true
+                            scope.launch {
+                                if (title.trim() != currentTitle.trim() && title.isNotBlank()) {
+                                    runCatching { TdClient.setChatTitle(chatId, title.trim()) }
+                                }
+                                if (bio.trim() != currentBio.trim()) {
+                                    runCatching { TdClient.setChatDescription(chatId, bio.trim()) }
+                                }
+                                com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                    R.string.admin_group_updated,
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                                )
+                                onDismiss()
+                            }
+                        }
+                    ) {
+                        Text(stringResource(R.string.admin_save))
+                    }
+                }
+            }
         }
     }
 }
@@ -4290,15 +4461,18 @@ private fun ChatMembersTab(
     onMemberTap: (TdApi.ChatMember) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
+    var showBanned by remember(chatId) { mutableStateOf(false) }
     var members by remember(chatId) { mutableStateOf<List<TdApi.ChatMember>>(emptyList()) }
     var loading by remember(chatId) { mutableStateOf(true) }
-    LaunchedEffect(chatId, query, supergroupId, basicGroupId, refreshKey) {
+    LaunchedEffect(chatId, query, supergroupId, basicGroupId, refreshKey, showBanned) {
         loading = true
         members = when {
             supergroupId != null -> {
-                val filter = if (query.isBlank())
-                    TdApi.SupergroupMembersFilterRecent()
-                else TdApi.SupergroupMembersFilterSearch(query)
+                val filter = when {
+                    showBanned -> TdApi.SupergroupMembersFilterBanned(query)
+                    query.isBlank() -> TdApi.SupergroupMembersFilterRecent()
+                    else -> TdApi.SupergroupMembersFilterSearch(query)
+                }
                 runCatching {
                     TdClient.getSupergroupMembersFiltered(supergroupId, filter, 200)
                 }.getOrNull()?.members?.toList().orEmpty()
@@ -4322,6 +4496,37 @@ private fun ChatMembersTab(
         loading = false
     }
     Column(modifier = Modifier.fillMaxSize()) {
+        if (supergroupId != null) {
+            // Membri | Bannati segmented toggle. Banned list is supergroup-only
+            // (basic groups can't ban). Tapping a banned row opens the same
+            // member sheet, which already shows the "Sban" action for banned.
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(
+                    Triple(stringResource(R.string.members_tab_members), false, !showBanned),
+                    Triple(stringResource(R.string.members_tab_banned), true, showBanned)
+                ).forEach { (label, banned, selected) ->
+                    androidx.compose.material3.Surface(
+                        onClick = { showBanned = banned; query = "" },
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    ) {
+                        Text(
+                            label,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
+            }
+        }
         androidx.compose.material3.OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -4349,7 +4554,10 @@ private fun ChatMembersTab(
             members.isEmpty() -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        stringResource(R.string.members_none_found),
+                        stringResource(
+                            if (showBanned) R.string.members_none_banned
+                            else R.string.members_none_found
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4451,7 +4659,11 @@ private fun MemberActionSheet(
                 onClick = {
                     onDismiss()
                     scope.launch {
-                        runCatching { TdClient.unbanGroupUser(chatId, uid) }
+                        runCatching { TdClient.unbanGroupUser(chatId, uid) }.onSuccess {
+                            com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                R.string.snack_member_unbanned, phos.Check
+                            )
+                        }
                         onChanged()
                     }
                 }
@@ -4464,7 +4676,11 @@ private fun MemberActionSheet(
                 onClick = {
                     onDismiss()
                     scope.launch {
-                        runCatching { TdClient.kickGroupUser(chatId, uid) }
+                        runCatching { TdClient.kickGroupUser(chatId, uid) }.onSuccess {
+                            com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                R.string.snack_member_banned, phos.UserMinus
+                            )
+                        }
                         onChanged()
                     }
                 }
@@ -4477,7 +4693,11 @@ private fun MemberActionSheet(
                 onClick = {
                     onDismiss()
                     scope.launch {
-                        runCatching { TdClient.unmuteGroupUser(chatId, uid) }
+                        runCatching { TdClient.unmuteGroupUser(chatId, uid) }.onSuccess {
+                            com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                R.string.snack_member_unmuted, phos.Bell
+                            )
+                        }
                         onChanged()
                     }
                 }
@@ -4489,7 +4709,11 @@ private fun MemberActionSheet(
                 onClick = {
                     onDismiss()
                     scope.launch {
-                        runCatching { TdClient.muteGroupUser(chatId, uid) }
+                        runCatching { TdClient.muteGroupUser(chatId, uid) }.onSuccess {
+                            com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                R.string.snack_member_muted, phos.BellSlash
+                            )
+                        }
                         onChanged()
                     }
                 }
@@ -4503,7 +4727,11 @@ private fun MemberActionSheet(
                     onClick = {
                         onDismiss()
                         scope.launch {
-                            runCatching { TdClient.demoteFromAdmin(chatId, uid) }
+                            runCatching { TdClient.demoteFromAdmin(chatId, uid) }.onSuccess {
+                                com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                    R.string.snack_admin_revoked, phos.UserMinus
+                                )
+                            }
                             onChanged()
                         }
                     }
@@ -4515,7 +4743,11 @@ private fun MemberActionSheet(
                     onClick = {
                         onDismiss()
                         scope.launch {
-                            runCatching { TdClient.promoteToAdmin(chatId, uid) }
+                            runCatching { TdClient.promoteToAdmin(chatId, uid) }.onSuccess {
+                                com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                    R.string.snack_admin_granted, phos.Check
+                                )
+                            }
                             onChanged()
                         }
                     }
