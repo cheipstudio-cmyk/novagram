@@ -4596,10 +4596,12 @@ private fun GroupTypeEditor(
 }
 
 /**
- * Admin "Modifica gruppo": rename, edit description (bio) and share the
- * invite link (which is how you invite members). Gated on isSelfAdmin at the
- * call site. Photo editing is intentionally not here yet — it needs the
- * system image picker and is handled separately.
+ * Admin "Modifica gruppo": a full-screen editor (same visual language as the
+ * Profile screen) — centred group photo with accent ring + "Cambia foto",
+ * grouped fields in rounded cards (name, description), a permissions tile, the
+ * public/private type editor and the invite link with copy/share. Gated on
+ * isSelfAdmin at the call site. Rendered as a full-bleed Dialog so it fills
+ * the screen instead of the cramped centered card it used to be.
  */
 @Composable
 private fun EditGroupSheet(
@@ -4616,13 +4618,13 @@ private fun EditGroupSheet(
     var inviteLink by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var permsOpen by remember { mutableStateOf(false) }
-    // Group-photo picker (admins/creators). Pulls an image, copies it off the
-    // content:// URI into cache (the picker grant can expire) and pushes it via
-    // setChatPhoto, which TDLib already supports.
+    var photoUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var chatPhoto by remember { mutableStateOf<TdApi.File?>(null) }
     val photoPicker = rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) {
+            photoUri = uri
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 val file = com.secondream.novagram.util.FileUtils.copyUriToCache(ctx, uri)
                 if (file != null) {
@@ -4637,123 +4639,203 @@ private fun EditGroupSheet(
     }
     LaunchedEffect(chatId) {
         inviteLink = runCatching { TdClient.getOrCreatePrimaryInviteLink(chatId) }.getOrNull()
+        chatPhoto = runCatching { TdClient.getChat(chatId).photo?.small }.getOrNull()
     }
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         androidx.compose.material3.Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 2.dp
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(14.dp)
-            ) {
-                Text(
-                    stringResource(R.string.admin_edit_group),
-                    style = MaterialTheme.typography.titleMedium
-                )
+            Column(modifier = Modifier.fillMaxSize()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 4.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    com.secondream.novagram.ui.components.ActionTileButton(
-                        tile = com.secondream.novagram.ui.components.ActionTile(
-                            label = stringResource(R.string.admin_group_photo),
-                            icon = com.secondream.novagram.ui.icons.PhosphorIcons.Image,
-                            onClick = { photoPicker.launch("image/*") }
-                        ),
-                        modifier = Modifier.weight(1f)
+                    androidx.compose.material3.IconButton(onClick = onDismiss) {
+                        Icon(
+                            com.secondream.novagram.ui.icons.PhosphorIcons.CaretLeft,
+                            contentDescription = stringResource(R.string.action_back)
+                        )
+                    }
+                    Text(
+                        stringResource(R.string.admin_edit_group),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
                     )
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(132.dp)
+                            .clip(CircleShape)
+                            .background(
+                                androidx.compose.ui.graphics.Brush.linearGradient(
+                                    listOf(
+                                        MaterialTheme.colorScheme.primary,
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                                    )
+                                )
+                            )
+                            .padding(3.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { photoPicker.launch("image/*") },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (photoUri != null) {
+                            coil.compose.AsyncImage(
+                                model = photoUri,
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                            )
+                        } else {
+                            com.secondream.novagram.ui.components.Avatar(
+                                file = chatPhoto,
+                                fallbackText = title.ifBlank { currentTitle },
+                                size = 126.dp
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        stringResource(R.string.profile_change_photo),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { photoPicker.launch("image/*") }
+                    )
+                    Spacer(Modifier.height(24.dp))
+                    val fieldColors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                        focusedLabelColor = MaterialTheme.colorScheme.primary
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(16.dp)
+                    ) {
+                        androidx.compose.material3.OutlinedTextField(
+                            value = title,
+                            onValueChange = { title = it },
+                            label = { Text(stringResource(R.string.admin_group_name)) },
+                            leadingIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree, null) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = fieldColors,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        androidx.compose.material3.OutlinedTextField(
+                            value = bio,
+                            onValueChange = { bio = it },
+                            label = { Text(stringResource(R.string.admin_group_bio)) },
+                            leadingIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Info, null) },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = fieldColors,
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 2,
+                            maxLines = 4
+                        )
+                    }
+                    Spacer(Modifier.height(14.dp))
                     com.secondream.novagram.ui.components.ActionTileButton(
                         tile = com.secondream.novagram.ui.components.ActionTile(
                             label = stringResource(R.string.perm_group_title),
                             icon = com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
                             onClick = { permsOpen = true }
                         ),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.fillMaxWidth()
                     )
-                }
-                GroupTypeEditor(chatId = chatId, onAfterChange = onDismiss)
-                androidx.compose.material3.OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text(stringResource(R.string.admin_group_name)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                androidx.compose.material3.OutlinedTextField(
-                    value = bio,
-                    onValueChange = { bio = it },
-                    label = { Text(stringResource(R.string.admin_group_bio)) },
-                    minLines = 2,
-                    maxLines = 5,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    stringResource(R.string.admin_invite_link),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                val link = inviteLink
-                if (link.isNullOrBlank()) {
-                    Text(
-                        stringResource(R.string.admin_invite_link_none),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    Text(
-                        link,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 2,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                    androidx.compose.foundation.layout.Row(
-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                    Spacer(Modifier.height(14.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(16.dp)
                     ) {
-                        androidx.compose.material3.OutlinedButton(
-                            onClick = {
-                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(link))
-                                com.secondream.novagram.ui.components.NovaSnackbar.show(
-                                    R.string.admin_link_copied,
-                                    com.secondream.novagram.ui.icons.PhosphorIcons.Copy
+                        GroupTypeEditor(chatId = chatId, onAfterChange = onDismiss)
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            stringResource(R.string.admin_invite_link),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        val link = inviteLink
+                        if (link.isNullOrBlank()) {
+                            Text(
+                                stringResource(R.string.admin_invite_link_none),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Text(
+                                link,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+                                com.secondream.novagram.ui.components.ActionTileButton(
+                                    tile = com.secondream.novagram.ui.components.ActionTile(
+                                        label = stringResource(R.string.admin_copy),
+                                        icon = com.secondream.novagram.ui.icons.PhosphorIcons.Copy,
+                                        onClick = {
+                                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(link))
+                                            com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                                R.string.admin_link_copied,
+                                                com.secondream.novagram.ui.icons.PhosphorIcons.Copy
+                                            )
+                                        }
+                                    ),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                com.secondream.novagram.ui.components.ActionTileButton(
+                                    tile = com.secondream.novagram.ui.components.ActionTile(
+                                        label = stringResource(R.string.admin_share),
+                                        icon = com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight,
+                                        onClick = {
+                                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(android.content.Intent.EXTRA_TEXT, link)
+                                            }
+                                            runCatching {
+                                                ctx.startActivity(android.content.Intent.createChooser(send, null))
+                                            }
+                                        }
+                                    ),
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
-                        ) {
-                            Icon(
-                                com.secondream.novagram.ui.icons.PhosphorIcons.Copy,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(stringResource(R.string.admin_copy))
-                        }
-                        androidx.compose.material3.Button(
-                            onClick = {
-                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(android.content.Intent.EXTRA_TEXT, link)
-                                }
-                                runCatching {
-                                    ctx.startActivity(android.content.Intent.createChooser(send, null))
-                                }
-                            }
-                        ) {
-                            Text(stringResource(R.string.admin_share))
                         }
                     }
-                }
-                androidx.compose.foundation.layout.Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End
-                ) {
-                    androidx.compose.material3.TextButton(onClick = onDismiss) {
-                        Text(stringResource(R.string.delete_chat_cancel))
-                    }
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.height(24.dp))
                     androidx.compose.material3.Button(
                         enabled = !saving && title.isNotBlank(),
                         onClick = {
@@ -4771,10 +4853,12 @@ private fun EditGroupSheet(
                                 )
                                 onDismiss()
                             }
-                        }
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(stringResource(R.string.admin_save))
                     }
+                    Spacer(Modifier.height(40.dp))
                 }
             }
         }

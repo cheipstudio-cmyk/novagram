@@ -424,17 +424,30 @@ fun NewGroupContent(
                 }
             }
         }
-        com.secondream.novagram.ui.components.ActionTileButton(
-            tile = com.secondream.novagram.ui.components.ActionTile(
-                label = if (defaultPerms != null) stringResource(R.string.new_group_perms_custom)
-                        else stringResource(R.string.new_group_default_perms),
-                icon = PhosphorIcons.Lock,
-                onClick = { permsOpen = true }
-            ),
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp)
-        )
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable { permsOpen = true }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                PhosphorIcons.Lock,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                if (defaultPerms != null) stringResource(R.string.new_group_perms_custom)
+                else stringResource(R.string.new_group_default_perms),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
         if (selected.isNotEmpty()) {
             Text(
                 stringResource(R.string.new_group_selected, selected.size),

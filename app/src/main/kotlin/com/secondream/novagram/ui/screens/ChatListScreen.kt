@@ -352,7 +352,6 @@ fun ChatListScreen(
                             )
                         } else {
                             val safeTab = selectedTab.coerceIn(0, tabs.lastIndex)
-                            val spec = tabs[safeTab]
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Avatar(
                                     file = myAvatarFile,
@@ -364,14 +363,20 @@ fun ChatListScreen(
                                         .clip(CircleShape)
                                         .clickable { onOpenProfile() }
                                 )
-                                Text(
-                                    stringResource(spec.labelRes),
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    fontStyle = FontStyle.Italic,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                androidx.compose.animation.Crossfade(
+                                    targetState = safeTab,
+                                    animationSpec = androidx.compose.animation.core.tween(220),
+                                    label = "tab-title"
+                                ) { tabIdx ->
+                                    Text(
+                                        stringResource(tabs[tabIdx.coerceIn(0, tabs.lastIndex)].labelRes),
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        fontStyle = FontStyle.Italic,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     },
