@@ -218,7 +218,10 @@ fun NewChatScreen(
                 TopAppBar(
                     title = {
                         Text(
-                            stringResource(R.string.new_chat_title),
+                            stringResource(
+                                if (selectedTab == 1) R.string.new_group_title
+                                else R.string.new_chat_title
+                            ),
                             style = MaterialTheme.typography.headlineSmall,
                             fontStyle = FontStyle.Italic
                         )

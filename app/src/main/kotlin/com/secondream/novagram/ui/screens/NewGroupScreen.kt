@@ -1,6 +1,11 @@
 package com.secondream.novagram.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.activity.compose.rememberLauncherForActivityResult
+import coil.compose.AsyncImage
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -254,6 +259,20 @@ fun NewGroupContent(
     var statusRes by remember { mutableStateOf(0) }
     var permsOpen by remember { mutableStateOf(false) }
     var defaultPerms by remember { mutableStateOf<TdApi.ChatPermissions?>(null) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var photoUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var photoPath by remember { mutableStateOf<String?>(null) }
+    val photoPicker = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            photoUri = uri
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                photoPath = com.secondream.novagram.util.FileUtils
+                    .copyUriToCache(ctx, uri)?.absolutePath
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         runCatching {
@@ -303,17 +322,47 @@ fun NewGroupContent(
         (!isPublic || available == true)
 
     Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = groupName,
-            onValueChange = { groupName = it },
-            singleLine = true,
-            leadingIcon = { Icon(PhosphorIcons.UsersThree, contentDescription = null) },
-            label = { Text(stringResource(R.string.new_group_name)) },
-            shape = RoundedCornerShape(16.dp),
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-        )
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { photoPicker.launch("image/*") },
+                contentAlignment = Alignment.Center
+            ) {
+                if (photoUri != null) {
+                    AsyncImage(
+                        model = photoUri,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                    )
+                } else {
+                    Icon(
+                        PhosphorIcons.Camera,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = groupName,
+                onValueChange = { groupName = it },
+                singleLine = true,
+                label = { Text(stringResource(R.string.new_group_name)) },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.weight(1f)
+            )
+        }
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -321,12 +370,20 @@ fun NewGroupContent(
             FilterChip(
                 selected = !isPublic,
                 onClick = { isPublic = false },
-                label = { Text(stringResource(R.string.group_type_private)) }
+                label = { Text(stringResource(R.string.group_type_private)) },
+                colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                )
             )
             FilterChip(
                 selected = isPublic,
                 onClick = { isPublic = true },
-                label = { Text(stringResource(R.string.group_type_public)) }
+                label = { Text(stringResource(R.string.group_type_public)) },
+                colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                )
             )
         }
         AnimatedVisibility(visible = isPublic) {
@@ -367,19 +424,17 @@ fun NewGroupContent(
                 }
             }
         }
-        OutlinedButton(
-            onClick = { permsOpen = true },
+        com.secondream.novagram.ui.components.ActionTileButton(
+            tile = com.secondream.novagram.ui.components.ActionTile(
+                label = if (defaultPerms != null) stringResource(R.string.new_group_perms_custom)
+                        else stringResource(R.string.new_group_default_perms),
+                icon = PhosphorIcons.Lock,
+                onClick = { permsOpen = true }
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 4.dp)
-        ) {
-            Icon(PhosphorIcons.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                if (defaultPerms != null) stringResource(R.string.new_group_perms_custom)
-                else stringResource(R.string.new_group_default_perms)
-            )
-        }
+        )
         if (selected.isNotEmpty()) {
             Text(
                 stringResource(R.string.new_group_selected, selected.size),
@@ -449,6 +504,7 @@ fun NewGroupContent(
                         TdClient.createGroup(selected.toList(), groupName.trim())
                     if (chatId != null) {
                         defaultPerms?.let { runCatching { TdClient.setChatPermissions(chatId, it) } }
+                        photoPath?.let { p -> runCatching { TdClient.setChatPhoto(chatId, p) } }
                         creating = false
                         NovaSnackbar.show(R.string.snack_group_created, PhosphorIcons.Check)
                         onOpenChat(chatId)

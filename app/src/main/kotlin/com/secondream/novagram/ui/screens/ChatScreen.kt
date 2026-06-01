@@ -1441,7 +1441,7 @@ fun ChatScreen(
                     // Single knob: raise CENTER to push the target DOWN, lower it
                     // to push UP. Used by every placement below so the instant,
                     // animated and re-pin paths always agree.
-                    val CENTER = 0.45f
+                    val CENTER = 0.80f
                     val info0 = listState.layoutInfo
                     val vp0 = info0.viewportSize.height
                     if (vp0 <= 0) {
@@ -4515,12 +4515,20 @@ private fun GroupTypeEditor(
             androidx.compose.material3.FilterChip(
                 selected = !isPublic,
                 onClick = { isPublic = false },
-                label = { Text(stringResource(R.string.group_type_private)) }
+                label = { Text(stringResource(R.string.group_type_private)) },
+                colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                )
             )
             androidx.compose.material3.FilterChip(
                 selected = isPublic,
                 onClick = { isPublic = true },
-                label = { Text(stringResource(R.string.group_type_public)) }
+                label = { Text(stringResource(R.string.group_type_public)) },
+                colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                )
             )
         }
         androidx.compose.animation.AnimatedVisibility(visible = isPublic) {
@@ -4647,29 +4655,26 @@ private fun EditGroupSheet(
                     stringResource(R.string.admin_edit_group),
                     style = MaterialTheme.typography.titleMedium
                 )
-                androidx.compose.material3.OutlinedButton(
-                    onClick = { photoPicker.launch("image/*") },
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(
-                        com.secondream.novagram.ui.icons.PhosphorIcons.Image,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
+                    com.secondream.novagram.ui.components.ActionTileButton(
+                        tile = com.secondream.novagram.ui.components.ActionTile(
+                            label = stringResource(R.string.admin_group_photo),
+                            icon = com.secondream.novagram.ui.icons.PhosphorIcons.Image,
+                            onClick = { photoPicker.launch("image/*") }
+                        ),
+                        modifier = Modifier.weight(1f)
                     )
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.admin_group_photo))
-                }
-                androidx.compose.material3.OutlinedButton(
-                    onClick = { permsOpen = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
+                    com.secondream.novagram.ui.components.ActionTileButton(
+                        tile = com.secondream.novagram.ui.components.ActionTile(
+                            label = stringResource(R.string.perm_group_title),
+                            icon = com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
+                            onClick = { permsOpen = true }
+                        ),
+                        modifier = Modifier.weight(1f)
                     )
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.perm_group_title))
                 }
                 GroupTypeEditor(chatId = chatId, onAfterChange = onDismiss)
                 androidx.compose.material3.OutlinedTextField(
@@ -4949,7 +4954,8 @@ private fun ChatMembersTab(
                     contentDescription = null
                 )
             },
-            singleLine = true
+            singleLine = true,
+            shape = RoundedCornerShape(20.dp)
         )
         when {
             loading && members.isEmpty() -> {
@@ -5137,7 +5143,9 @@ internal fun GroupPermissionsDialog(
     title: String,
     initial: TdApi.ChatPermissions,
     onSave: (TdApi.ChatPermissions) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    avatarFile: TdApi.File? = null,
+    avatarName: String? = null
 ) {
     var sendMessages by remember { mutableStateOf(initial.canSendBasicMessages) }
     var sendMedia by remember { mutableStateOf(initial.canSendPhotos) }
@@ -5155,13 +5163,45 @@ internal fun GroupPermissionsDialog(
                     .fillMaxWidth()
                     .padding(20.dp)
             ) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
-                PermissionRow(R.string.perm_send_messages, sendMessages) { sendMessages = it }
-                PermissionRow(R.string.perm_send_media, sendMedia) { sendMedia = it }
-                PermissionRow(R.string.perm_add_users, addUsers) { addUsers = it }
-                PermissionRow(R.string.perm_pin_messages, pinMessages) { pinMessages = it }
-                PermissionRow(R.string.perm_change_info, changeInfo) { changeInfo = it }
+                if (avatarName != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        com.secondream.novagram.ui.components.Avatar(
+                            file = avatarFile,
+                            fallbackText = avatarName,
+                            size = 42.dp
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                avatarName,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                } else {
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                }
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 14.dp, vertical = 2.dp)
+                ) {
+                    PermissionRow(R.string.perm_send_messages, sendMessages) { sendMessages = it }
+                    PermissionRow(R.string.perm_send_media, sendMedia) { sendMedia = it }
+                    PermissionRow(R.string.perm_add_users, addUsers) { addUsers = it }
+                    PermissionRow(R.string.perm_pin_messages, pinMessages) { pinMessages = it }
+                    PermissionRow(R.string.perm_change_info, changeInfo) { changeInfo = it }
+                }
                 Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -5197,7 +5237,9 @@ private fun AdminRightsDialog(
     title: String,
     initial: TdApi.ChatAdministratorRights,
     onSave: (TdApi.ChatAdministratorRights) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    avatarFile: TdApi.File? = null,
+    avatarName: String? = null
 ) {
     var changeInfo by remember { mutableStateOf(initial.canChangeInfo) }
     var deleteMessages by remember { mutableStateOf(initial.canDeleteMessages) }
@@ -5219,16 +5261,48 @@ private fun AdminRightsDialog(
                     .padding(20.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
-                PermissionRow(R.string.admin_right_change_info, changeInfo) { changeInfo = it }
-                PermissionRow(R.string.admin_right_delete_messages, deleteMessages) { deleteMessages = it }
-                PermissionRow(R.string.admin_right_ban_users, banUsers) { banUsers = it }
-                PermissionRow(R.string.admin_right_invite_users, inviteUsers) { inviteUsers = it }
-                PermissionRow(R.string.admin_right_pin_messages, pinMessages) { pinMessages = it }
-                PermissionRow(R.string.admin_right_add_admins, addAdmins) { addAdmins = it }
-                PermissionRow(R.string.admin_right_video_chats, manageVideoChats) { manageVideoChats = it }
-                PermissionRow(R.string.admin_right_anonymous, anonymous) { anonymous = it }
+                if (avatarName != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        com.secondream.novagram.ui.components.Avatar(
+                            file = avatarFile,
+                            fallbackText = avatarName,
+                            size = 42.dp
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                avatarName,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                } else {
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                }
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 14.dp, vertical = 2.dp)
+                ) {
+                    PermissionRow(R.string.admin_right_change_info, changeInfo) { changeInfo = it }
+                    PermissionRow(R.string.admin_right_delete_messages, deleteMessages) { deleteMessages = it }
+                    PermissionRow(R.string.admin_right_ban_users, banUsers) { banUsers = it }
+                    PermissionRow(R.string.admin_right_invite_users, inviteUsers) { inviteUsers = it }
+                    PermissionRow(R.string.admin_right_pin_messages, pinMessages) { pinMessages = it }
+                    PermissionRow(R.string.admin_right_add_admins, addAdmins) { addAdmins = it }
+                    PermissionRow(R.string.admin_right_video_chats, manageVideoChats) { manageVideoChats = it }
+                    PermissionRow(R.string.admin_right_anonymous, anonymous) { anonymous = it }
+                }
                 Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -5267,13 +5341,27 @@ private fun MemberActionSheet(
     val uid = (member.memberId as? TdApi.MessageSenderUser)?.userId ?: return
     val status = member.status
     val phos = com.secondream.novagram.ui.icons.PhosphorIcons
+    var memberUser by remember(uid) { mutableStateOf<TdApi.User?>(null) }
+    var chatPerms by remember(chatId) { mutableStateOf<TdApi.ChatPermissions?>(null) }
+    LaunchedEffect(uid) { memberUser = runCatching { TdClient.getUser(uid) }.getOrNull() }
+    LaunchedEffect(chatId) {
+        chatPerms = runCatching { TdClient.getChat(chatId).permissions }.getOrNull()
+    }
+    val memberName = memberUser?.let {
+        val n = "${it.firstName} ${it.lastName}".trim()
+        if (n.isNotBlank()) n
+        else it.usernames?.activeUsernames?.firstOrNull()?.let { u -> "@$u" }
+    }
     var showPerms by remember { mutableStateOf(false) }
     if (showPerms) {
         val initial = (status as? TdApi.ChatMemberStatusRestricted)?.permissions
+            ?: chatPerms
             ?: buildGroupPermissions(true, true, true, true, true)
         GroupPermissionsDialog(
             title = stringResource(R.string.perm_member_title),
             initial = initial,
+            avatarFile = memberUser?.profilePhoto?.small,
+            avatarName = memberName,
             onSave = { p ->
                 scope.launch {
                     runCatching { TdClient.restrictMember(chatId, uid, p) }.onSuccess {
@@ -5296,6 +5384,8 @@ private fun MemberActionSheet(
         AdminRightsDialog(
             title = stringResource(R.string.admin_rights_title),
             initial = initialRights,
+            avatarFile = memberUser?.profilePhoto?.small,
+            avatarName = memberName,
             onSave = { r ->
                 scope.launch {
                     runCatching { TdClient.setAdminRights(chatId, uid, r) }.onSuccess {
@@ -5316,7 +5406,7 @@ private fun MemberActionSheet(
     val isAdmin = status is TdApi.ChatMemberStatusAdministrator
     val isCreator = status is TdApi.ChatMemberStatusCreator
     val tiles = buildList {
-        if (!isCreator && !isBanned) {
+        if (!isCreator && !isBanned && !isAdmin) {
             add(com.secondream.novagram.ui.components.ActionTile(
                 label = stringResource(R.string.perm_member_title),
                 icon = phos.Lock,

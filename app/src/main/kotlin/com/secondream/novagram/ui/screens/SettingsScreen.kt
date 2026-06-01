@@ -1284,62 +1284,31 @@ private fun CreditsBlock() {
         val updateAvailable by com.secondream.novagram.update
             .UpdateChecker.updateAvailable
             .collectAsState()
-        androidx.compose.foundation.layout.Box {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(MaterialTheme.colorScheme.primary)
-                    .clickable {
-                        runCatching {
-                            context.startActivity(
-                                android.content.Intent(
-                                    android.content.Intent.ACTION_VIEW,
-                                    android.net.Uri.parse(
-                                        com.secondream.novagram.update
-                                            .UpdateChecker.RELEASES_PAGE
-                                    )
+        val phos = com.secondream.novagram.ui.icons.PhosphorIcons
+        // Footer CTAs as a 2x2 grid of the shared sheet-style tiles
+        // (surfaceVariant card + accent icon) so they match the modal
+        // sheets. The update tile keeps the "update available" dot.
+        val creditTiles = listOf(
+            com.secondream.novagram.ui.components.ActionTile(
+                label = stringResource(R.string.action_check_updates),
+                icon = phos.DownloadSimple,
+                onClick = {
+                    runCatching {
+                        context.startActivity(
+                            android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse(
+                                    com.secondream.novagram.update.UpdateChecker.RELEASES_PAGE
                                 )
                             )
-                        }
+                        )
                     }
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    com.secondream.novagram.ui.icons.PhosphorIcons.DownloadSimple,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    stringResource(R.string.action_check_updates),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-            if (updateAvailable) {
-                androidx.compose.foundation.layout.Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 8.dp, end = 12.dp)
-                        .size(9.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(MaterialTheme.colorScheme.error)
-                )
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        // Source on GitHub (repo home).
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.primary)
-                .clickable {
+                }
+            ),
+            com.secondream.novagram.ui.components.ActionTile(
+                label = stringResource(R.string.credits_github),
+                icon = phos.FileText,
+                onClick = {
                     runCatching {
                         context.startActivity(
                             android.content.Intent(
@@ -1349,39 +1318,18 @@ private fun CreditsBlock() {
                         )
                     }
                 }
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                com.secondream.novagram.ui.icons.PhosphorIcons.FileText,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                stringResource(R.string.credits_github),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimary,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        Spacer(Modifier.height(14.dp))
-        // Join the Nova Telegram community. Opens the group link
-        // INSIDE this app (setPackage) so it doesn't bounce to a browser.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.primary)
-                .clickable {
+            ),
+            com.secondream.novagram.ui.components.ActionTile(
+                label = stringResource(R.string.credits_join_group),
+                icon = phos.UsersThree,
+                onClick = {
                     runCatching {
-                        val intent = android.content.Intent(
-                            android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse("https://t.me/novagram_messenger")
-                        ).setPackage(context.packageName)
-                        context.startActivity(intent)
+                        context.startActivity(
+                            android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://t.me/novagram_messenger")
+                            ).setPackage(context.packageName)
+                        )
                     }.recoverCatching {
                         context.startActivity(
                             android.content.Intent(
@@ -1391,51 +1339,54 @@ private fun CreditsBlock() {
                         )
                     }
                 }
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                stringResource(R.string.credits_join_group),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimary,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        Spacer(Modifier.height(14.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.primary)
-                .clickable {
+            ),
+            com.secondream.novagram.ui.components.ActionTile(
+                label = stringResource(R.string.credits_buy_coffee),
+                icon = phos.Sparkle,
+                onClick = {
                     runCatching {
-                        val intent = android.content.Intent(
-                            android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse("https://buymeacoffee.com/M12oPyJwty")
+                        context.startActivity(
+                            android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://buymeacoffee.com/M12oPyJwty")
+                            )
                         )
-                        context.startActivity(intent)
                     }
                 }
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Text("☕", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                stringResource(R.string.credits_buy_coffee),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimary,
-                fontWeight = FontWeight.SemiBold
             )
+        )
+        creditTiles.chunked(2).forEachIndexed { rowIdx, rowTiles ->
+            if (rowIdx > 0) Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                rowTiles.forEachIndexed { colIdx, t ->
+                    if (rowIdx == 0 && colIdx == 0) {
+                        androidx.compose.foundation.layout.Box(modifier = Modifier.weight(1f)) {
+                            com.secondream.novagram.ui.components.ActionTileButton(
+                                tile = t,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            if (updateAvailable) {
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(8.dp)
+                                        .size(9.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(MaterialTheme.colorScheme.error)
+                                )
+                            }
+                        }
+                    } else {
+                        com.secondream.novagram.ui.components.ActionTileButton(
+                            tile = t,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
         }
     }
 }
