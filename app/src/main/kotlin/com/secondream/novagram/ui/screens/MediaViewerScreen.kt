@@ -186,6 +186,36 @@ object MediaViewerHolder {
 @androidx.compose.runtime.Composable
 private fun VideoViewer(filePath: String, onClose: () -> Unit) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    // Guard: if the path is blank or the file isn't on disk yet, ExoPlayer
+    // would just render black ("video won't play"). Show a spinner + a close
+    // button instead until a real, existing file path arrives.
+    val ready = filePath.isNotBlank() &&
+        runCatching { java.io.File(filePath).exists() }.getOrDefault(false)
+    if (!ready) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.material3.CircularProgressIndicator(color = Color.White)
+            IconButton(
+                onClick = onClose,
+                colors = IconButtonDefaults.iconButtonColors(
+                    containerColor = Color.Black.copy(alpha = 0.45f)
+                ),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(start = 12.dp, top = 8.dp)
+            ) {
+                Icon(
+                    com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                    contentDescription = null,
+                    tint = Color.White
+                )
+            }
+        }
+        return
+    }
     val player = androidx.compose.runtime.remember(filePath) {
         androidx.media3.exoplayer.ExoPlayer.Builder(ctx).build().apply {
             setMediaItem(androidx.media3.common.MediaItem.fromUri(

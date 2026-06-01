@@ -57,7 +57,8 @@
 
     <string name="chat_default_title">Chat</string>
     <string name="input_placeholder">Message</string>
-    <string name="recording_hint">Recording… release to send, swipe to cancel</string>
+    <string name="recording_hint">Recording… release to send, slide up to lock</string>
+    <string name="recording_locked_hint">Recording locked · tap to send</string>
     <string name="mic_permission_title">Microphone</string>
     <string name="mic_permission_body">Microphone permission is required to record voice notes.</string>
     <string name="attach_title">Attach</string>
@@ -431,4 +432,13 @@
     <string name="settings_blocked_users_desc">Manage the users you\'ve blocked</string>
     <string name="blocked_users_none">No blocked users</string>
     <string name="blocked_user_fallback">User</string>
+    <string name="info_tab_info">Info</string>
+    <string name="info_tab_photos">Photos</string>
+    <string name="info_tab_videos">Videos</string>
+    <string name="info_tab_files">Files</string>
+    <string name="info_tab_links">Links</string>
+    <string name="info_tab_voice">Voice</string>
+    <string name="info_tab_music">Music</string>
+    <string name="info_tab_members">Members</string>
+    <string name="two_pane_select_chat">Select a chat</string>
 </resources>

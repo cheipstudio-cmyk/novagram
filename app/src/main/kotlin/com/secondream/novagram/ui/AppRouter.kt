@@ -7,6 +7,25 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -143,7 +162,11 @@ fun AppRouter(
         stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
     )
     val scaleEnterSpring = androidx.compose.animation.core.spring<Float>(
-        dampingRatio = 0.70f,
+        // Critically damped (was 0.70 under-damped): the incoming screen used
+        // to overshoot past 100% and bounce back, which read as the "glitch"
+        // on chat open/close. 1.0 gives a clean 0.90→1.0 settle — smooth like
+        // the info-tab swipe.
+        dampingRatio = 1.0f,
         stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
     )
     val scaleExitSpring = androidx.compose.animation.core.spring<Float>(
@@ -195,18 +218,28 @@ fun AppRouter(
         composable(Routes.CONFIG) { ApiConfigScreen() }
         composable(Routes.LOGIN) { LoginScreen() }
         composable(Routes.CHATS) {
-            ChatListScreen(
-                onChatClick = { id, msg ->
-                    // msg is non-null when the user came in via the
-                    // chat-info modal's "Visualizza in chat" — we
-                    // route through Routes.chat which handles both
-                    // anchored and anchorless opens.
-                    nav.navigate(Routes.chat(id, msg))
-                },
-                onOpenSettings = { nav.navigate(Routes.SETTINGS) },
-                onOpenProfile = { nav.navigate(Routes.PROFILE) },
-                onNewChat = { nav.navigate(Routes.NEW_CHAT) }
-            )
+            val wide = androidx.compose.ui.platform.LocalConfiguration
+                .current.screenWidthDp >= 600
+            if (wide) {
+                // Tablet / landscape: persistent chat list on the left, the
+                // selected chat (or an empty placeholder) on the right. Phones
+                // in portrait (< 600dp) fall through to the UNCHANGED single
+                // pane below, so their behaviour is untouched.
+                TwoPaneChats(nav)
+            } else {
+                ChatListScreen(
+                    onChatClick = { id, msg ->
+                        // msg is non-null when the user came in via the
+                        // chat-info modal's "Visualizza in chat" — we
+                        // route through Routes.chat which handles both
+                        // anchored and anchorless opens.
+                        nav.navigate(Routes.chat(id, msg))
+                    },
+                    onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                    onOpenProfile = { nav.navigate(Routes.PROFILE) },
+                    onNewChat = { nav.navigate(Routes.NEW_CHAT) }
+                )
+            }
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(onBack = { nav.popBackStack() })
@@ -345,5 +378,77 @@ fun AppRouter(
                 }
             )
         }
+    }
+}
+
+/**
+ * Tablet / landscape master-detail for the chat list. The list lives in a
+ * fixed-width left rail; tapping a chat fills the right pane with [ChatScreen]
+ * (or an empty placeholder). Reuses the same screens as the phone single-pane
+ * flow — only the *container* differs — so the two layouts never diverge in
+ * behaviour. Phones in portrait never reach this (gated at < 600dp upstream).
+ */
+@Composable
+private fun TwoPaneChats(nav: NavHostController) {
+    var selectedChatId by remember { mutableStateOf<Long?>(null) }
+    var selectedMsgId by remember { mutableStateOf<Long?>(null) }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // Narrower rail on medium widths (phone landscape, small tablets) so
+        // the conversation pane keeps usable room; full 360dp on expanded.
+        val listWidth = if (maxWidth >= 840.dp) 360.dp else 300.dp
+        Row(Modifier.fillMaxSize()) {
+            Box(Modifier.width(listWidth).fillMaxHeight()) {
+                ChatListScreen(
+                    onChatClick = { id, msg ->
+                        selectedChatId = id
+                        selectedMsgId = msg?.takeIf { it != 0L }
+                    },
+                    onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                    onOpenProfile = { nav.navigate(Routes.PROFILE) },
+                    onNewChat = { nav.navigate(Routes.NEW_CHAT) }
+                )
+            }
+            VerticalDivider()
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                val cid = selectedChatId
+                if (cid != null) {
+                    // key(cid): swapping the selected chat fully disposes the
+                    // previous ChatScreen (its openChat/closeChat + state reset
+                    // run exactly as in the NavHost flow) and builds a fresh one.
+                    key(cid) {
+                        ChatScreen(
+                            chatId = cid,
+                            targetMessageId = selectedMsgId,
+                            onBack = { selectedChatId = null },
+                            onOpenMediaViewer = { nav.navigate(Routes.MEDIA_VIEWER) },
+                            onOpenChat = { other, otherMsg ->
+                                selectedChatId = other
+                                selectedMsgId = otherMsg?.takeIf { it != 0L }
+                            }
+                        )
+                    }
+                } else {
+                    EmptyDetailPane()
+                }
+            }
+        }
+    }
+}
+
+/** Placeholder shown in the detail pane before a chat is selected. */
+@Composable
+private fun EmptyDetailPane() {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            androidx.compose.ui.res.stringResource(
+                com.secondream.novagram.R.string.two_pane_select_chat
+            ),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }

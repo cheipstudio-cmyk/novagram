@@ -1507,6 +1507,11 @@ object TdClient {
         runCatching { send(TdApi.DownloadFile(fileId, 32, 0, 0, false)) }
     }
 
+    /** Stop an in-flight download (used by the panel's cancel button). */
+    suspend fun cancelDownloadFile(fileId: Int) {
+        runCatching { send(TdApi.CancelDownloadFile(fileId, false)) }
+    }
+
     /**
      * Variant of [downloadFile] that lets the caller specify a priority
      * 1..32. Used by background warmers (e.g. chat-info media gallery

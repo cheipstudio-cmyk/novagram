@@ -80,6 +80,22 @@ object TransferTracker {
         _jumpRequest.value = null
     }
 
+    /**
+     * Cancel/clear a transfer: asks TDLib to stop the download and drops the
+     * row from the panel immediately. A stalled download stops emitting file
+     * updates, so [onFile] would never remove it on its own — this is the
+     * manual clear for a stuck badge.
+     */
+    fun cancel(fileId: Int) {
+        scope.launch { runCatching { TdClient.cancelDownloadFile(fileId) } }
+        synchronized(mutex) {
+            active.remove(fileId)
+            _transfers.value = active.values.sortedBy { it.fileId }
+        }
+        progressStamp.remove(fileId)
+        locations.remove(fileId)
+    }
+
     private val active = mutableMapOf<Int, Transfer>()
     private val mutex = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

@@ -144,7 +144,8 @@ fun TransferPanel(modifier: Modifier = Modifier) {
                                         TransferTracker.requestJump(cid, mid)
                                         expanded = false
                                     }
-                                } else null
+                                } else null,
+                                onCancel = { TransferTracker.cancel(t.fileId) }
                             )
                             HorizontalDivider(
                                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
@@ -167,7 +168,11 @@ private fun buildLabel(down: Int, up: Int): String {
 }
 
 @Composable
-private fun TransferRow(t: TransferTracker.Transfer, onJump: (() -> Unit)? = null) {
+private fun TransferRow(
+    t: TransferTracker.Transfer,
+    onJump: (() -> Unit)? = null,
+    onCancel: () -> Unit = {}
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -212,6 +217,20 @@ private fun TransferRow(t: TransferTracker.Transfer, onJump: (() -> Unit)? = nul
                 com.secondream.novagram.ui.icons.PhosphorIcons.Forward,
                 contentDescription = "Vai al messaggio",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        // Cancel/clear: kills the download server-side AND drops the row from
+        // the panel immediately — the manual escape hatch for a stuck badge.
+        Spacer(Modifier.width(2.dp))
+        androidx.compose.material3.IconButton(
+            onClick = onCancel,
+            modifier = Modifier.size(30.dp)
+        ) {
+            Icon(
+                com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                contentDescription = "Annulla",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(16.dp)
             )
         }

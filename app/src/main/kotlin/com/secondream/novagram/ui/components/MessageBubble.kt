@@ -5,6 +5,7 @@
 
 package com.secondream.novagram.ui.components
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -743,7 +744,9 @@ private fun MessageContent(
                 DownloadingImage(
                     initialFile = thumb,
                     placeholderIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Play, null, tint = Ink.Cream) },
-                    placeholderLabel = stringResource(R.string.media_video)
+                    placeholderLabel = stringResource(R.string.media_video),
+                    alwaysFetch = true,
+                    miniThumb = c.video.minithumbnail
                 )
                 // Overlay state-aware progress / play / download icon.
                 // We treat the video as ready-to-play when TDLib reports it
@@ -1071,10 +1074,24 @@ private fun InlineGifPlayer(
 private fun DownloadingImage(
     initialFile: TdApi.File?,
     placeholderIcon: @Composable () -> Unit,
-    placeholderLabel: String
+    placeholderLabel: String,
+    alwaysFetch: Boolean = false,
+    miniThumb: TdApi.Minithumbnail? = null
 ) {
+    // Instant blurry preview decoded from the embedded minithumbnail (a few
+    // hundred bytes shipped inline with the message). Shown until the real
+    // thumb arrives — this is what makes a video show its first frame right
+    // away even with auto-download off.
+    val mini = remember(miniThumb) {
+        miniThumb?.data?.takeIf { it.isNotEmpty() }?.let { d ->
+            runCatching {
+                android.graphics.BitmapFactory.decodeByteArray(d, 0, d.size)
+                    ?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
     if (initialFile == null) {
-        ImagePlaceholder(placeholderIcon, placeholderLabel)
+        if (mini != null) MiniThumb(mini) else ImagePlaceholder(placeholderIcon, placeholderLabel)
         return
     }
     var file by remember(initialFile.id) { mutableStateOf(initialFile) }
@@ -1111,7 +1128,7 @@ private fun DownloadingImage(
         val pathNow = current.local?.path
         val alreadyOnDisk = !pathNow.isNullOrBlank() &&
             runCatching { java.io.File(pathNow).exists() }.getOrDefault(false)
-        if ((autoDownload || userRequested) &&
+        if ((autoDownload || userRequested || alwaysFetch) &&
             !current.local.isDownloadingCompleted &&
             !current.local.isDownloadingActive &&
             !alreadyOnDisk) {
@@ -1141,6 +1158,10 @@ private fun DownloadingImage(
                     .clip(RoundedCornerShape(12.dp))
             )
         }
+        // Real thumb not ready yet but we have the inline minithumbnail →
+        // show the instant blurry preview (with any caller overlay on top)
+        // instead of a blank placeholder.
+        mini != null -> MiniThumb(mini)
         // Show a progress overlay while bytes flow in (covers both auto
         // and user-initiated downloads).
         downloading || (autoDownload && !completed) || userRequested -> {
@@ -1160,6 +1181,20 @@ private fun DownloadingImage(
             )
         }
     }
+}
+
+/** Renders a decoded minithumbnail bitmap at the standard media bubble size. */
+@Composable
+private fun MiniThumb(bmp: androidx.compose.ui.graphics.ImageBitmap) {
+    androidx.compose.foundation.Image(
+        bitmap = bmp,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .width(260.dp)
+            .heightIn(min = 120.dp, max = 320.dp)
+            .clip(RoundedCornerShape(12.dp))
+    )
 }
 
 /**

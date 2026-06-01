@@ -57,7 +57,8 @@
 
     <string name="chat_default_title">Discussion</string>
     <string name="input_placeholder">Message</string>
-    <string name="recording_hint">Enregistrement… relâche pour envoyer, glisse pour annuler</string>
+    <string name="recording_hint">Enregistrement… relâche pour envoyer, glisse vers le haut pour verrouiller</string>
+    <string name="recording_locked_hint">Enregistrement verrouillé · touche pour envoyer</string>
     <string name="mic_permission_title">Microphone</string>
     <string name="mic_permission_body">L\'accès au microphone est requis pour enregistrer des notes vocales.</string>
     <string name="attach_title">Joindre</string>
@@ -431,4 +432,13 @@
     <string name="settings_blocked_users_desc">Gérez les utilisateurs que vous avez bloqués</string>
     <string name="blocked_users_none">Aucun utilisateur bloqué</string>
     <string name="blocked_user_fallback">Utilisateur</string>
+    <string name="info_tab_info">Infos</string>
+    <string name="info_tab_photos">Photos</string>
+    <string name="info_tab_videos">Vidéos</string>
+    <string name="info_tab_files">Fichiers</string>
+    <string name="info_tab_links">Liens</string>
+    <string name="info_tab_voice">Voix</string>
+    <string name="info_tab_music">Musique</string>
+    <string name="info_tab_members">Membres</string>
+    <string name="two_pane_select_chat">Sélectionne une conversation</string>
 </resources>

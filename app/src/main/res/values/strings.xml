@@ -69,7 +69,8 @@
     <!-- Chat screen -->
     <string name="chat_default_title">Chat</string>
     <string name="input_placeholder">Messaggio</string>
-    <string name="recording_hint">Registrazione in corso… rilascia per inviare, scorri per annullare</string>
+    <string name="recording_hint">Registrazione… rilascia per inviare, scorri su per bloccare</string>
+    <string name="recording_locked_hint">Registrazione bloccata · tocca per inviare</string>
     <string name="mic_permission_title">Microfono</string>
     <string name="mic_permission_body">Servono i permessi del microfono per registrare note vocali.</string>
     <string name="attach_title">Allega</string>
@@ -445,4 +446,13 @@
     <string name="settings_blocked_users_desc">Gestisci gli utenti che hai bloccato</string>
     <string name="blocked_users_none">Nessun utente bloccato</string>
     <string name="blocked_user_fallback">Utente</string>
+    <string name="info_tab_info">Info</string>
+    <string name="info_tab_photos">Foto</string>
+    <string name="info_tab_videos">Video</string>
+    <string name="info_tab_files">File</string>
+    <string name="info_tab_links">Link</string>
+    <string name="info_tab_voice">Voce</string>
+    <string name="info_tab_music">Musica</string>
+    <string name="info_tab_members">Membri</string>
+    <string name="two_pane_select_chat">Seleziona una chat</string>
 </resources>

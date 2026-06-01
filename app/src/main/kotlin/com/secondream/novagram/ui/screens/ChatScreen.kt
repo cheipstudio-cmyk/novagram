@@ -14,7 +14,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -156,6 +157,9 @@ fun ChatScreen(
     var draftLoaded by remember(chatId) { mutableStateOf(false) }
     var showAttach by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
+    // Voice-note recording LOCKED (user slid the mic up): recording continues
+    // after the finger lifts; trash/send buttons replace the mic.
+    var recordingLocked by remember { mutableStateOf(false) }
     var needMicPermission by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<TdApi.Message?>(null) }
     // Message the user has swiped on (or null if not replying). Cleared on
@@ -213,6 +217,9 @@ fun ChatScreen(
     // fire for a pin, so a freshly pinned message appeared only after
     // leaving and re-entering the chat.
     var pinned by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
+    // Last non-null pinned message — kept so the banner's collapse animation
+    // renders its content through the exit instead of blanking instantly.
+    var lastPinnedBanner by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
     val appearance by com.secondream.novagram.settings.AppSettings.appearance
         .collectAsState(initial = com.secondream.novagram.settings.AppearancePrefs())
     // Cached list of chat members for the @-mention picker. Loaded lazily
@@ -234,8 +241,24 @@ fun ChatScreen(
     // avatar above each incoming bubble. Cached chat type is reliable once
     // TDLib has streamed UpdateNewChat for this id, which happens before the
     // chat list ever renders, so we read it synchronously.
-    val isGroupChat = remember(chatId) {
-        TdClient.getCachedChat(chatId)?.type !is TdApi.ChatTypePrivate
+    // The cached type is null when a chat is opened cold (from search or a
+    // t.me link). The old `type !is ChatTypePrivate` test then defaulted to
+    // TRUE — misclassifying a private bot chat as a group and sending
+    // "/cmd@bot" instead of bare "/cmd", which many bots IGNORE in a private
+    // chat (the long-standing "i comandi non fanno nulla" bug). Start from a
+    // precise cache read (only basic/supergroup count as a group; null →
+    // false → private/safe) and correct it with a real fetch.
+    var isGroupChat by remember(chatId) {
+        mutableStateOf(
+            TdClient.getCachedChat(chatId)?.type.let {
+                it is TdApi.ChatTypeBasicGroup || it is TdApi.ChatTypeSupergroup
+            }
+        )
+    }
+    LaunchedEffect(chatId) {
+        val t = runCatching { TdClient.getChat(chatId) }.getOrNull()?.type
+            ?: TdClient.getCachedChat(chatId)?.type
+        isGroupChat = t is TdApi.ChatTypeBasicGroup || t is TdApi.ChatTypeSupergroup
     }
 
     // Online status of the other participant in a private chat. Used to
@@ -795,18 +818,36 @@ fun ChatScreen(
                         // the full rationale; in short, we pin
                         // target's TOP edge ~80px from viewport top
                         // via scrollOffset = (vp - targetH - 80).
-                        val viewportH0 = listState.layoutInfo.viewportSize.height
-                        val roughOffset = if (viewportH0 > 0) (viewportH0 - 400).coerceAtLeast(200) else 200
-                        runCatching { listState.scrollToItem(firstUnreadIdx, roughOffset) }
-                        repeat(3) {
-                            kotlinx.coroutines.delay(16)
-                            val vp = listState.layoutInfo.viewportSize.height
-                            val item = listState.layoutInfo.visibleItemsInfo
-                                .find { it.index == firstUnreadIdx }
-                            if (vp > 0 && item != null) {
-                                val precise = (vp - item.size - 80).coerceAtLeast(0)
-                                runCatching { listState.scrollToItem(firstUnreadIdx, precise) }
-                                return@repeat
+                        // Go to the BOTTOM first. If the unread region fits on
+                        // screen (the usual case — a handful of new messages),
+                        // the first-unread is already visible there and we
+                        // leave the newest pinned to the bottom: NO scrolling
+                        // up into already-read messages (that upward jump into
+                        // read content was the bug). Only when there are MORE
+                        // unread than fit do we pull the first-unread up to the
+                        // top third so the user can read downward through them.
+                        runCatching { listState.scrollToItem(0) }
+                        kotlinx.coroutines.delay(16)
+                        val firstUnreadVisible = listState.layoutInfo
+                            .visibleItemsInfo.any { it.index == firstUnreadIdx }
+                        if (!firstUnreadVisible) {
+                            // Many unread: bring the first-unread's TOP to
+                            // ~80px from the viewport top (height-aware so tall
+                            // bubbles aren't clipped), unread flowing downward.
+                            val viewportH0 = listState.layoutInfo.viewportSize.height
+                            val roughOffset = if (viewportH0 > 0)
+                                (viewportH0 - 400).coerceAtLeast(200) else 200
+                            runCatching { listState.scrollToItem(firstUnreadIdx, roughOffset) }
+                            repeat(3) {
+                                kotlinx.coroutines.delay(16)
+                                val vp = listState.layoutInfo.viewportSize.height
+                                val item = listState.layoutInfo.visibleItemsInfo
+                                    .find { it.index == firstUnreadIdx }
+                                if (vp > 0 && item != null) {
+                                    val precise = (vp - item.size - 80).coerceAtLeast(0)
+                                    runCatching { listState.scrollToItem(firstUnreadIdx, precise) }
+                                    return@repeat
+                                }
                             }
                         }
                         chatUnreadOnOpen = freshUnread
@@ -1272,13 +1313,21 @@ fun ChatScreen(
     // MessageBubble so the matching bubble paints an animated accent
     // overlay that fades out — Telegram-style "this is the message".
     var flashMessageId by remember(chatId) { mutableStateOf<Long?>(null) }
+    // Cancels an in-flight jump so two quick taps can't run competing
+    // placement/anchor loops that fight over the scroll position.
+    var jumpJob by remember(chatId) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    // True only while a jump is pulling history for an off-window target —
+    // drives a brief centered spinner so the round-trip + teleport doesn't
+    // read as a frozen tap.
+    var jumpLoading by remember(chatId) { mutableStateOf(false) }
 
     // Jump to a message by id, loading older history in bounded batches
     // if it isn't in the in-memory window yet (used by same-chat link
     // taps AND the pinned-messages list). Without the load loop, tapping
     // a pinned message older than the loaded window did nothing.
     val jumpToMessage: (Long) -> Unit = { targetId ->
-        scope.launch {
+        jumpJob?.cancel()
+        jumpJob = scope.launch {
             // Remember whether the target had to be fetched: if it's
             // already in the loaded window we can ANIMATE the scroll
             // (which is what the user expects when cycling through
@@ -1305,6 +1354,7 @@ fun ChatScreen(
             // the returned batch. We splice the missing ones into
             // `messages`, then scroll.
             if (idx < 0) {
+                jumpLoading = true
                 runCatching {
                     val limit = 50
                     val ctx = TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
@@ -1334,7 +1384,19 @@ fun ChatScreen(
             // gracefully without flashing or scrolling. The caller
             // already returned true to short-circuit the Intent
             // fallback, so there's nothing more to do here.
-            if (idx < 0) return@launch
+            if (idx < 0) { jumpLoading = false; return@launch }
+            // Round-trip (if any) done and target located — drop the spinner.
+            jumpLoading = false
+            // Light the accent flash IMMEDIATELY so the highlight rides in
+            // together with the jump, instead of appearing only after the
+            // placement + anchor loop finishes (that delay was why it
+            // "didn't always light up"). A newer jump cancels this job, so
+            // it can never clear a later target's flash.
+            flashMessageId = targetId
+            launch {
+                kotlinx.coroutines.delay(1500)
+                if (flashMessageId == targetId) flashMessageId = null
+            }
             run {
                 // One repeatable, glitch-free placement. The two failure modes
                 // Eugenio kept hitting:
@@ -1392,7 +1454,16 @@ fun ChatScreen(
                     // it exactly where it is; the flash highlight (set by the
                     // caller right after this returns) is enough to point it out.
                     visNow.find { it.index == idx }?.let { vi ->
-                        if (vi.offset >= 0 && vi.offset + vi.size <= vp0) return
+                        // Use the REAL viewport bounds — contentPadding shifts
+                        // them, so comparing against 0..vp0 was wrong and made
+                        // it scroll on an already-visible target. Small
+                        // tolerance so a 1–2px clip doesn't force a scroll. If
+                        // it's already fully on screen, leave the list EXACTLY
+                        // where it is — the flash alone points it out.
+                        val startB = info0.viewportStartOffset
+                        val endB = info0.viewportEndOffset
+                        val tol = 12
+                        if (vi.offset >= startB - tol && vi.offset + vi.size <= endB + tol) return
                     }
                     val doAnimate = animate && onScreen
 
@@ -1470,14 +1541,15 @@ fun ChatScreen(
                     // back each frame until it stops. We BAIL the instant the
                     // user starts scrolling (isScrollInProgress) or the target
                     // leaves the viewport, so we never fight them.
-                    // Anchor for a longer window (~2s) because the bubble that
-                    // most often shifts the target is one BELOW it (a newer
-                    // photo/video) finishing its decode late and pushing the
-                    // target UP — the "a volte troppo in alto di qualche
-                    // messaggio" case. Re-pinning by ID each frame pulls it
-                    // back. Still bails the instant the user scrolls.
+                    // Brief anchor (~1s) to catch a bubble BELOW the target (a
+                    // newer photo/video) finishing its decode late and pushing
+                    // the target up. Re-pinning by ID each frame pulls it back;
+                    // for a stable (text) target it re-pins to the same spot, a
+                    // no-op. The flash no longer waits on this loop (it's lit
+                    // up front), and a newer jump cancels this whole job, so a
+                    // shorter window is enough — no churn, no fighting.
                     var f2 = 0
-                    while (f2 < 130) {
+                    while (f2 < 60) {
                         kotlinx.coroutines.delay(16)
                         if (listState.isScrollInProgress) break
                         val li = messages.indexOfFirst { it.id == targetId }
@@ -1498,15 +1570,8 @@ fun ChatScreen(
                 // Already in the loaded window → animation is PERMITTED; whether
                 // it actually glides is decided inside (only for a target already
                 // on screen — a short, smooth hop). Freshly paginated in → never
-                // animate, just teleport precisely.
+                // animate, just teleport precisely. (Flash already lit above.)
                 preciseRefine(animate = wasAlreadyLoaded)
-                flashMessageId = targetId
-                // Clear the flash a beat later so the highlight fades out
-                // and the bubble settles back to its normal colour.
-                scope.launch {
-                    kotlinx.coroutines.delay(1200)
-                    if (flashMessageId == targetId) flashMessageId = null
-                }
             }
         }
     }
@@ -2187,53 +2252,76 @@ fun ChatScreen(
             // list sheet. Renders only when `pinned` is non-null;
             // disappears cleanly when the chat has nothing pinned (or
             // the last pinned message gets unpinned mid-session).
-            pinned?.let { pinnedMsg ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surface)
-                        .clickable { pinnedSheetOpen = true }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Left accent stripe: 3dp wide, rounded, primary
-                    // colour — Telegram-convention "this is a pin" marker.
-                    Box(
-                        modifier = Modifier
-                            .width(3.dp)
-                            .height(34.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(MaterialTheme.colorScheme.primary)
+            if (pinned != null) lastPinnedBanner = pinned
+            androidx.compose.animation.AnimatedVisibility(
+                visible = pinned != null,
+                // Smooth expand/collapse so the banner doesn't POP in (and jolt
+                // the list down) the beat after the chat opens — the pinned
+                // message loads async, so we animate its arrival/removal.
+                enter = androidx.compose.animation.expandVertically(
+                    animationSpec = androidx.compose.animation.core.spring(
+                        dampingRatio = 1f,
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
                     )
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            stringResource(R.string.chat_pinned_label),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            TdClient.buildPreview(pinnedMsg).ifBlank { " " },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                ) + androidx.compose.animation.fadeIn(
+                    androidx.compose.animation.core.tween(200)
+                ),
+                exit = androidx.compose.animation.shrinkVertically(
+                    animationSpec = androidx.compose.animation.core.tween(180)
+                ) + androidx.compose.animation.fadeOut(
+                    androidx.compose.animation.core.tween(140)
+                )
+            ) {
+                lastPinnedBanner?.let { pinnedMsg ->
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surface)
+                                .clickable { pinnedSheetOpen = true }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Left accent stripe: 3dp wide, rounded, primary
+                            // colour — Telegram-convention "this is a pin" marker.
+                            Box(
+                                modifier = Modifier
+                                    .width(3.dp)
+                                    .height(34.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    stringResource(R.string.chat_pinned_label),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    TdClient.buildPreview(pinnedMsg).ifBlank { " " },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(
+                                com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        androidx.compose.material3.HorizontalDivider(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            thickness = 1.dp
                         )
                     }
-                    Icon(
-                        com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
-                androidx.compose.material3.HorizontalDivider(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    thickness = 1.dp
-                )
             }
             Box(
                 modifier = Modifier.weight(1f).fillMaxWidth()
@@ -2612,6 +2700,19 @@ fun ChatScreen(
                                 )
                             }
                         }
+                    }
+                }
+                // Brief centered spinner while a far jump pulls history, so
+                // the round-trip + teleport doesn't read as a frozen tap.
+                if (jumpLoading) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 3.dp
+                        )
                     }
                 }
             }
@@ -3100,6 +3201,30 @@ fun ChatScreen(
                     }
                 },
                 recording = recording,
+                recordingLocked = recordingLocked,
+                onMicLock = { recordingLocked = true },
+                onSendVoice = {
+                    recording = false
+                    recordingLocked = false
+                    val res = recorder.stop()
+                    if (res != null) {
+                        if (appearance.messageSounds) {
+                            com.secondream.novagram.util.SoundFx.playSend(context)
+                        }
+                        val rid = replyTarget?.id
+                        replyTarget = null
+                        scope.launch {
+                            runCatching {
+                                TdClient.sendVoiceNote(chatId, res.file.absolutePath, res.durationSeconds, rid)
+                            }
+                        }
+                    }
+                },
+                onCancelVoice = {
+                    recording = false
+                    recordingLocked = false
+                    recorder.cancel()
+                },
                 hasPendingMedia = pendingMedia.isNotEmpty() || editTarget != null,
                 onContentReceived = { uri ->
                     // Keyboard inserted a GIF or sticker. Mime-sniff via the
@@ -3978,16 +4103,28 @@ internal fun ChatInfoDialog(
 
     val showMembers = isGroup && isSelfAdmin
     val phos = com.secondream.novagram.ui.icons.PhosphorIcons
-    val tabs = remember(showMembers) {
+    // Tab labels were hardcoded Italian — resolve them from resources so they
+    // localise. stringResource isn't callable inside remember{}, so resolve
+    // up here and key the remember on one of them (they all change together
+    // on a locale switch).
+    val sInfo = stringResource(R.string.info_tab_info)
+    val sPhoto = stringResource(R.string.info_tab_photos)
+    val sVideo = stringResource(R.string.info_tab_videos)
+    val sFile = stringResource(R.string.info_tab_files)
+    val sLink = stringResource(R.string.info_tab_links)
+    val sVoice = stringResource(R.string.info_tab_voice)
+    val sMusic = stringResource(R.string.info_tab_music)
+    val sMembers = stringResource(R.string.info_tab_members)
+    val tabs = remember(showMembers, sInfo) {
         buildList {
-            add(ChatInfoTab("Info", phos.Info))
-            add(ChatInfoTab("Foto", phos.Image))
-            add(ChatInfoTab("Video", phos.Play))
-            add(ChatInfoTab("File", phos.FileText))
-            add(ChatInfoTab("Link", phos.Paperclip))
-            add(ChatInfoTab("Voce", phos.Microphone))
-            add(ChatInfoTab("Musica", phos.FileAudio))
-            if (showMembers) add(ChatInfoTab("Membri", phos.UsersThree))
+            add(ChatInfoTab(sInfo, phos.Info))
+            add(ChatInfoTab(sPhoto, phos.Image))
+            add(ChatInfoTab(sVideo, phos.Play))
+            add(ChatInfoTab(sFile, phos.FileText))
+            add(ChatInfoTab(sLink, phos.Paperclip))
+            add(ChatInfoTab(sVoice, phos.Microphone))
+            add(ChatInfoTab(sMusic, phos.FileAudio))
+            if (showMembers) add(ChatInfoTab(sMembers, phos.UsersThree))
         }
     }
     val membersIndex = if (showMembers) tabs.lastIndex else -1
@@ -5230,6 +5367,13 @@ private fun InputBar(
     onMicDown: () -> Unit,
     onMicUp: (sendIt: Boolean) -> Unit,
     recording: Boolean,
+    // Voice-note LOCK: when the user slides the mic up, recording locks and
+    // they can release their finger; the bar then shows trash + send instead
+    // of the mic so they can record long notes hands-free.
+    recordingLocked: Boolean = false,
+    onMicLock: () -> Unit = {},
+    onSendVoice: () -> Unit = {},
+    onCancelVoice: () -> Unit = {},
     // When there's pending media (photo/video/document staged for send via
     // the attach sheet) we want the SEND button to be active even with an
     // empty text field — captions are optional. Without this the user
@@ -5327,7 +5471,8 @@ private fun InputBar(
                 )
                 Spacer(Modifier.width(12.dp))
                 Text(
-                    stringResource(R.string.recording_hint),
+                    if (recordingLocked) stringResource(R.string.recording_locked_hint)
+                    else stringResource(R.string.recording_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = iconTint,
                     modifier = Modifier.weight(1f),
@@ -5422,6 +5567,44 @@ private fun InputBar(
             // backed flow.
             val online by com.secondream.novagram.connectivity
                 .ConnectivityState.isOnline.collectAsState()
+            if (recordingLocked) {
+                // Locked voice recording: trash discards, send fires it off.
+                // The red pulsing recording indicator + timer already shows in
+                // the leading slot (recording stays true while locked).
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onCancelVoice,
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Icon(
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(2.dp))
+                    IconButton(
+                        onClick = onSendVoice,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            } else {
             val showSend = !recording && (value.text.isNotBlank() || hasPendingMedia)
             androidx.compose.animation.AnimatedContent(
                 targetState = showSend,
@@ -5498,9 +5681,11 @@ private fun InputBar(
                         recording = recording,
                         enabled = online,
                         onDown = { if (online) onMicDown() },
-                        onUp = { released -> if (online) onMicUp(released) }
+                        onUp = { released -> if (online) onMicUp(released) },
+                        onLock = onMicLock
                     )
                 }
+            }
             }
         }
     }
@@ -5511,7 +5696,8 @@ private fun MicButton(
     recording: Boolean,
     enabled: Boolean = true,
     onDown: () -> Unit,
-    onUp: (Boolean) -> Unit
+    onUp: (Boolean) -> Unit,
+    onLock: () -> Unit = {}
 ) {
     val baseColor = when {
         recording -> MaterialTheme.colorScheme.error
@@ -5521,27 +5707,53 @@ private fun MicButton(
     Box(
         modifier = Modifier
             .size(48.dp)
-            .clip(CircleShape)
-            .background(baseColor)
             .then(
                 if (enabled) Modifier.pointerInput(Unit) {
-                    detectTapGestures(
-                        onPress = {
-                            onDown()
-                            val released = tryAwaitRelease()
-                            onUp(released)
+                    val lockPx = 120.dp.toPx()
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        onDown()
+                        var locked = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) {
+                                // Finger lifted. If the user never slid up to
+                                // lock, this is the normal hold-to-send release.
+                                if (!locked) onUp(true)
+                                break
+                            }
+                            // Slide UP past the threshold → LOCK so the user can
+                            // let go and keep recording (long notes), then send
+                            // with the explicit send button.
+                            if (!locked && (change.position.y - down.position.y) <= -lockPx) {
+                                locked = true
+                                onLock()
+                            }
                         }
-                    )
+                    }
                 } else Modifier
             ),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            com.secondream.novagram.ui.icons.PhosphorIcons.Microphone,
-            null,
-            tint = if (recording) MaterialTheme.colorScheme.onError
-                   else MaterialTheme.colorScheme.onPrimary
-        )
+        // Inner circle sized to MATCH the send button (40dp visible disc inside
+        // a 48dp touch target), so mic and send look identical — the mic was a
+        // full 48dp disc before, which read as bigger.
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(baseColor),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                com.secondream.novagram.ui.icons.PhosphorIcons.Microphone,
+                null,
+                tint = if (recording) MaterialTheme.colorScheme.onError
+                       else MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
     }
 }
 
