@@ -4160,8 +4160,27 @@ internal fun ChatInfoDialog(
     // Bumped after a member action so the Membri list reloads in place (the
     // action already lands server-side; this gives immediate visual feedback).
     var membersRefresh by remember(chatId) { mutableStateOf(0) }
-    // Admin "Modifica gruppo" sheet (title / bio / invite link).
-    var editGroupOpen by remember(chatId) { mutableStateOf(false) }
+    // Group-photo picker for admins/owners: tapping the header avatar pulls an
+    // image, copies it off the content:// URI into cache, and pushes it via
+    // setChatPhoto. The editor itself now lives inline in the Info tab.
+    val infoCtx = LocalContext.current
+    val groupPhotoPicker = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            infoScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val file = com.secondream.novagram.util.FileUtils.copyUriToCache(infoCtx, uri)
+                if (file != null) {
+                    runCatching { TdClient.setChatPhoto(chatId, file.absolutePath) }
+                    com.secondream.novagram.ui.components.NovaSnackbar.show(
+                        R.string.admin_group_photo_updated,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                    )
+                }
+            }
+        }
+    }
+    val canEditGroup = isSelfAdmin && isGroup
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -4199,16 +4218,7 @@ internal fun ChatInfoDialog(
                             Icon(phos.CaretLeft, contentDescription = "Indietro")
                         }
                     },
-                    actions = {
-                        if (isSelfAdmin && isGroup) {
-                            androidx.compose.material3.IconButton(onClick = { editGroupOpen = true }) {
-                                Icon(
-                                    phos.PencilSimple,
-                                    contentDescription = stringResource(R.string.admin_edit_group)
-                                )
-                            }
-                        }
-                    }
+                    actions = {}
                 )
                 // Compact identity header.
                 Column(
@@ -4240,17 +4250,31 @@ internal fun ChatInfoDialog(
                             .graphicsLayer { scaleX = avatarScale; scaleY = avatarScale }
                             .clip(CircleShape)
                             .clickable {
-                                val big = chat?.photo?.big ?: return@clickable
-                                infoScope.launch {
-                                    val path = ensureDownloaded(big)
-                                    if (path != null) {
-                                        com.secondream.novagram.ui.screens.MediaViewerHolder.isVideo = false
-                                        com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
-                                        onOpenMediaViewer()
+                                if (canEditGroup) {
+                                    groupPhotoPicker.launch("image/*")
+                                } else {
+                                    val big = chat?.photo?.big ?: return@clickable
+                                    infoScope.launch {
+                                        val path = ensureDownloaded(big)
+                                        if (path != null) {
+                                            com.secondream.novagram.ui.screens.MediaViewerHolder.isVideo = false
+                                            com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
+                                            onOpenMediaViewer()
+                                        }
                                     }
                                 }
                             }
                     )
+                    if (canEditGroup) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(R.string.profile_change_photo),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable { groupPhotoPicker.launch("image/*") }
+                        )
+                    }
                     Spacer(Modifier.height(10.dp))
                     Text(
                         title,
@@ -4358,7 +4382,16 @@ internal fun ChatInfoDialog(
                         .weight(1f)
                 ) { page ->
                     when (page) {
-                        0 -> ChatInfoDetailPage(description, username, phone)
+                        0 -> if (canEditGroup) {
+                            GroupInfoEditor(
+                                chatId = chatId,
+                                currentTitle = title,
+                                currentBio = description ?: "",
+                                onSaved = onDismiss
+                            )
+                        } else {
+                            ChatInfoDetailPage(description, username, phone)
+                        }
                         membersIndex -> ChatMembersTab(
                             chatId = chatId,
                             supergroupId = supergroupId,
@@ -4438,14 +4471,7 @@ internal fun ChatInfoDialog(
                 onChanged = { membersRefresh++ }
             )
         }
-        if (editGroupOpen && isGroup) {
-            EditGroupSheet(
-                chatId = chatId,
-                currentTitle = title,
-                currentBio = description ?: "",
-                onDismiss = { editGroupOpen = false }
-            )
-        }
+        // Group editing now lives inline in the Info tab (GroupInfoEditor).
     }
 }
 
@@ -4596,272 +4622,178 @@ private fun GroupTypeEditor(
 }
 
 /**
- * Admin "Modifica gruppo": a full-screen editor (same visual language as the
- * Profile screen) — centred group photo with accent ring + "Cambia foto",
- * grouped fields in rounded cards (name, description), a permissions tile, the
- * public/private type editor and the invite link with copy/share. Gated on
- * isSelfAdmin at the call site. Rendered as a full-bleed Dialog so it fills
- * the screen instead of the cramped centered card it used to be.
+ * Inline group editor rendered directly inside the chat-info "Info" tab for
+ * admins/owners (everyone else sees the read-only bio). Mirrors the Profile
+ * screen's grouped field cards. The group PHOTO is edited by tapping the info
+ * header avatar, so there is intentionally no duplicate photo here. "Salva"
+ * persists name/description and calls [onSaved]; the call site wires that to
+ * the info view's dismiss, so saving simply takes the user back.
  */
 @Composable
-private fun EditGroupSheet(
+private fun GroupInfoEditor(
     chatId: Long,
     currentTitle: String,
     currentBio: String,
-    onDismiss: () -> Unit
+    onSaved: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
-    var title by remember { mutableStateOf(currentTitle) }
-    var bio by remember { mutableStateOf(currentBio) }
-    var inviteLink by remember { mutableStateOf<String?>(null) }
+    var title by remember(chatId) { mutableStateOf(currentTitle) }
+    var bio by remember(chatId) { mutableStateOf(currentBio) }
+    var inviteLink by remember(chatId) { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var permsOpen by remember { mutableStateOf(false) }
-    var photoUri by remember { mutableStateOf<android.net.Uri?>(null) }
-    var chatPhoto by remember { mutableStateOf<TdApi.File?>(null) }
-    val photoPicker = rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri != null) {
-            photoUri = uri
-            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                val file = com.secondream.novagram.util.FileUtils.copyUriToCache(ctx, uri)
-                if (file != null) {
-                    runCatching { TdClient.setChatPhoto(chatId, file.absolutePath) }
-                    com.secondream.novagram.ui.components.NovaSnackbar.show(
-                        R.string.admin_group_photo_updated,
-                        com.secondream.novagram.ui.icons.PhosphorIcons.Check
-                    )
-                }
-            }
-        }
-    }
     LaunchedEffect(chatId) {
         inviteLink = runCatching { TdClient.getOrCreatePrimaryInviteLink(chatId) }.getOrNull()
-        chatPhoto = runCatching { TdClient.getChat(chatId).photo?.small }.getOrNull()
     }
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    val fieldColors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = MaterialTheme.colorScheme.primary,
+        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+        focusedLabelColor = MaterialTheme.colorScheme.primary
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 8.dp)
     ) {
-        androidx.compose.material3.Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(16.dp)
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 4.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    androidx.compose.material3.IconButton(onClick = onDismiss) {
-                        Icon(
-                            com.secondream.novagram.ui.icons.PhosphorIcons.CaretLeft,
-                            contentDescription = stringResource(R.string.action_back)
-                        )
-                    }
-                    Text(
-                        stringResource(R.string.admin_edit_group),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                    )
-                }
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Spacer(Modifier.height(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(132.dp)
-                            .clip(CircleShape)
-                            .background(
-                                androidx.compose.ui.graphics.Brush.linearGradient(
-                                    listOf(
-                                        MaterialTheme.colorScheme.primary,
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-                                    )
-                                )
-                            )
-                            .padding(3.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable { photoPicker.launch("image/*") },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (photoUri != null) {
-                            coil.compose.AsyncImage(
-                                model = photoUri,
-                                contentDescription = null,
-                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize().clip(CircleShape)
-                            )
-                        } else {
-                            com.secondream.novagram.ui.components.Avatar(
-                                file = chatPhoto,
-                                fallbackText = title.ifBlank { currentTitle },
-                                size = 126.dp
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        stringResource(R.string.profile_change_photo),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.clickable { photoPicker.launch("image/*") }
-                    )
-                    Spacer(Modifier.height(24.dp))
-                    val fieldColors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                        focusedLabelColor = MaterialTheme.colorScheme.primary
-                    )
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .padding(16.dp)
-                    ) {
-                        androidx.compose.material3.OutlinedTextField(
-                            value = title,
-                            onValueChange = { title = it },
-                            label = { Text(stringResource(R.string.admin_group_name)) },
-                            leadingIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree, null) },
-                            singleLine = true,
-                            shape = RoundedCornerShape(14.dp),
-                            colors = fieldColors,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        androidx.compose.material3.OutlinedTextField(
-                            value = bio,
-                            onValueChange = { bio = it },
-                            label = { Text(stringResource(R.string.admin_group_bio)) },
-                            leadingIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Info, null) },
-                            shape = RoundedCornerShape(14.dp),
-                            colors = fieldColors,
-                            modifier = Modifier.fillMaxWidth(),
-                            minLines = 2,
-                            maxLines = 4
-                        )
-                    }
-                    Spacer(Modifier.height(14.dp))
+            androidx.compose.material3.OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                label = { Text(stringResource(R.string.admin_group_name)) },
+                leadingIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree, null) },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                colors = fieldColors,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(12.dp))
+            androidx.compose.material3.OutlinedTextField(
+                value = bio,
+                onValueChange = { bio = it },
+                label = { Text(stringResource(R.string.admin_group_bio)) },
+                leadingIcon = { Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Info, null) },
+                shape = RoundedCornerShape(14.dp),
+                colors = fieldColors,
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+                maxLines = 4
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        com.secondream.novagram.ui.components.ActionTileButton(
+            tile = com.secondream.novagram.ui.components.ActionTile(
+                label = stringResource(R.string.perm_group_title),
+                icon = com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
+                onClick = { permsOpen = true }
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(14.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(16.dp)
+        ) {
+            GroupTypeEditor(chatId = chatId, onAfterChange = onSaved)
+        }
+        Spacer(Modifier.height(14.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(16.dp)
+        ) {
+            Text(
+                stringResource(R.string.admin_invite_link),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(6.dp))
+            val link = inviteLink
+            if (link.isNullOrBlank()) {
+                Text(
+                    stringResource(R.string.admin_invite_link_none),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    link,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
                     com.secondream.novagram.ui.components.ActionTileButton(
                         tile = com.secondream.novagram.ui.components.ActionTile(
-                            label = stringResource(R.string.perm_group_title),
-                            icon = com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
-                            onClick = { permsOpen = true }
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .padding(16.dp)
-                    ) {
-                        GroupTypeEditor(chatId = chatId, onAfterChange = onDismiss)
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .padding(16.dp)
-                    ) {
-                        Text(
-                            stringResource(R.string.admin_invite_link),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        val link = inviteLink
-                        if (link.isNullOrBlank()) {
-                            Text(
-                                stringResource(R.string.admin_invite_link_none),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            Text(
-                                link,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 2,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                            )
-                            Spacer(Modifier.height(10.dp))
-                            Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
-                                com.secondream.novagram.ui.components.ActionTileButton(
-                                    tile = com.secondream.novagram.ui.components.ActionTile(
-                                        label = stringResource(R.string.admin_copy),
-                                        icon = com.secondream.novagram.ui.icons.PhosphorIcons.Copy,
-                                        onClick = {
-                                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(link))
-                                            com.secondream.novagram.ui.components.NovaSnackbar.show(
-                                                R.string.admin_link_copied,
-                                                com.secondream.novagram.ui.icons.PhosphorIcons.Copy
-                                            )
-                                        }
-                                    ),
-                                    modifier = Modifier.weight(1f)
-                                )
-                                com.secondream.novagram.ui.components.ActionTileButton(
-                                    tile = com.secondream.novagram.ui.components.ActionTile(
-                                        label = stringResource(R.string.admin_share),
-                                        icon = com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight,
-                                        onClick = {
-                                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                                type = "text/plain"
-                                                putExtra(android.content.Intent.EXTRA_TEXT, link)
-                                            }
-                                            runCatching {
-                                                ctx.startActivity(android.content.Intent.createChooser(send, null))
-                                            }
-                                        }
-                                    ),
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(24.dp))
-                    androidx.compose.material3.Button(
-                        enabled = !saving && title.isNotBlank(),
-                        onClick = {
-                            saving = true
-                            scope.launch {
-                                if (title.trim() != currentTitle.trim() && title.isNotBlank()) {
-                                    runCatching { TdClient.setChatTitle(chatId, title.trim()) }
-                                }
-                                if (bio.trim() != currentBio.trim()) {
-                                    runCatching { TdClient.setChatDescription(chatId, bio.trim()) }
-                                }
+                            label = stringResource(R.string.admin_copy),
+                            icon = com.secondream.novagram.ui.icons.PhosphorIcons.Copy,
+                            onClick = {
+                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(link))
                                 com.secondream.novagram.ui.components.NovaSnackbar.show(
-                                    R.string.admin_group_updated,
-                                    com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                                    R.string.admin_link_copied,
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.Copy
                                 )
-                                onDismiss()
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(stringResource(R.string.admin_save))
-                    }
-                    Spacer(Modifier.height(40.dp))
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                    com.secondream.novagram.ui.components.ActionTileButton(
+                        tile = com.secondream.novagram.ui.components.ActionTile(
+                            label = stringResource(R.string.admin_share),
+                            icon = com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight,
+                            onClick = {
+                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(android.content.Intent.EXTRA_TEXT, link)
+                                }
+                                runCatching {
+                                    ctx.startActivity(android.content.Intent.createChooser(send, null))
+                                }
+                            }
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
         }
+        Spacer(Modifier.height(20.dp))
+        androidx.compose.material3.Button(
+            enabled = !saving && title.isNotBlank(),
+            onClick = {
+                saving = true
+                scope.launch {
+                    if (title.trim() != currentTitle.trim() && title.isNotBlank()) {
+                        runCatching { TdClient.setChatTitle(chatId, title.trim()) }
+                    }
+                    if (bio.trim() != currentBio.trim()) {
+                        runCatching { TdClient.setChatDescription(chatId, bio.trim()) }
+                    }
+                    com.secondream.novagram.ui.components.NovaSnackbar.show(
+                        R.string.admin_group_updated,
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                    )
+                    onSaved()
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(stringResource(R.string.admin_save))
+        }
+        Spacer(Modifier.height(40.dp))
     }
     if (permsOpen) {
         val curPerms = TdClient.getCachedChat(chatId)?.permissions
