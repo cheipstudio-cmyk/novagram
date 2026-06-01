@@ -6,6 +6,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
@@ -698,7 +699,7 @@ private fun BlockedUsersDialog(onDismiss: () -> Unit) {
                         androidx.compose.foundation.lazy.LazyColumn(
                             modifier = Modifier.heightIn(max = 360.dp)
                         ) {
-                            androidx.compose.foundation.lazy.items(list) { uid ->
+                            items(list) { uid ->
                                 BlockedUserRow(
                                     uid = uid,
                                     onUnblocked = { ids = ids?.filter { it != uid } }
