@@ -57,6 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.os.LocaleListCompat
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.LaunchedEffect
 import com.secondream.novagram.BuildConfig
 import com.secondream.novagram.R
 import com.secondream.novagram.settings.AccentColor
@@ -77,6 +79,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val savedThemes by AppSettings.savedThemes.collectAsState(initial = emptyList())
     var showReadDate by remember { mutableStateOf(true) }
     var showThemeBuilder by remember { mutableStateOf(false) }
+    var blockedOpen by remember { mutableStateOf(false) }
     var builderTheme by remember { mutableStateOf<com.secondream.novagram.settings.SavedTheme?>(null) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         runCatching { showReadDate = TdClient.getReadDatePrivacy() }
@@ -579,6 +582,26 @@ fun SettingsScreen(onBack: () -> Unit) {
                         scope.launch { AppSettings.setMessageSounds(enabled) }
                     }
                 )
+                Divider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { blockedOpen = true }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.settings_blocked_users),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            stringResource(R.string.settings_blocked_users_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
             Spacer(Modifier.height(20.dp))
@@ -616,6 +639,127 @@ fun SettingsScreen(onBack: () -> Unit) {
                 builderTheme = null
             }
         )
+    }
+    if (blockedOpen) {
+        BlockedUsersDialog(onDismiss = { blockedOpen = false })
+    }
+}
+
+/**
+ * Lists the user ids on the main block list and lets you unblock each one in
+ * place. Reached from Settings → Privacy → "Utenti bloccati".
+ */
+@Composable
+private fun BlockedUsersDialog(onDismiss: () -> Unit) {
+    var ids by remember { mutableStateOf<List<Long>?>(null) }
+    LaunchedEffect(Unit) {
+        ids = runCatching { TdClient.getBlockedUserIds() }.getOrDefault(emptyList())
+    }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    stringResource(R.string.settings_blocked_users),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(Modifier.height(12.dp))
+                val list = ids
+                when {
+                    list == null -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.primary,
+                                strokeWidth = 3.dp
+                            )
+                        }
+                    }
+                    list.isEmpty() -> {
+                        Text(
+                            stringResource(R.string.blocked_users_none),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+                    }
+                    else -> {
+                        androidx.compose.foundation.lazy.LazyColumn(
+                            modifier = Modifier.heightIn(max = 360.dp)
+                        ) {
+                            androidx.compose.foundation.lazy.items(list) { uid ->
+                                BlockedUserRow(
+                                    uid = uid,
+                                    onUnblocked = { ids = ids?.filter { it != uid } }
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    androidx.compose.material3.TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.delete_chat_cancel))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BlockedUserRow(uid: Long, onUnblocked: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var user by remember(uid) {
+        mutableStateOf<org.drinkless.tdlib.TdApi.User?>(TdClient.getCachedUser(uid))
+    }
+    LaunchedEffect(uid) {
+        if (user == null) user = runCatching { TdClient.getUser(uid) }.getOrNull()
+    }
+    val name = user?.let { "${it.firstName} ${it.lastName}".trim() }
+        ?.takeIf { it.isNotBlank() } ?: stringResource(R.string.blocked_user_fallback)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            name,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
+        androidx.compose.material3.TextButton(
+            onClick = {
+                scope.launch {
+                    runCatching { TdClient.unblockUser(uid) }.onSuccess {
+                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                            R.string.snack_user_unblocked,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                        )
+                        onUnblocked()
+                    }
+                }
+            }
+        ) {
+            Text(stringResource(R.string.action_unblock_user))
+        }
     }
 }
 

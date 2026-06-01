@@ -1947,6 +1947,35 @@ object TdClient {
         }.getOrNull()
     }
 
+    // ---- Block list (global user blocking, distinct from group ban) ----
+
+    /** Block a user globally (they can't message you / see your status). */
+    suspend fun blockUser(userId: Long) {
+        send(
+            TdApi.SetMessageSenderBlockList(
+                TdApi.MessageSenderUser(userId),
+                TdApi.BlockListMain()
+            )
+        )
+    }
+
+    /** Remove a user from the block list. */
+    suspend fun unblockUser(userId: Long) {
+        send(TdApi.SetMessageSenderBlockList(TdApi.MessageSenderUser(userId), null))
+    }
+
+    /** The user ids currently on the main block list. */
+    suspend fun getBlockedUserIds(limit: Int = 200): List<Long> = runCatching {
+        send(TdApi.GetBlockedMessageSenders(TdApi.BlockListMain(), 0, limit))
+            .senders
+            .mapNotNull { (it as? TdApi.MessageSenderUser)?.userId }
+    }.getOrDefault(emptyList())
+
+    /** Whether [userId] is currently blocked (reads the user's full info). */
+    suspend fun isUserBlocked(userId: Long): Boolean = runCatching {
+        getUserFullInfo(userId).blockList is TdApi.BlockListMain
+    }.getOrDefault(false)
+
 
     /**
      * Who has *viewed* this message in the group (distinct from who

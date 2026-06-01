@@ -1470,8 +1470,14 @@ fun ChatScreen(
                     // back each frame until it stops. We BAIL the instant the
                     // user starts scrolling (isScrollInProgress) or the target
                     // leaves the viewport, so we never fight them.
+                    // Anchor for a longer window (~2s) because the bubble that
+                    // most often shifts the target is one BELOW it (a newer
+                    // photo/video) finishing its decode late and pushing the
+                    // target UP — the "a volte troppo in alto di qualche
+                    // messaggio" case. Re-pinning by ID each frame pulls it
+                    // back. Still bails the instant the user scrolls.
                     var f2 = 0
-                    while (f2 < 72) {
+                    while (f2 < 130) {
                         kotlinx.coroutines.delay(16)
                         if (listState.isScrollInProgress) break
                         val li = messages.indexOfFirst { it.id == targetId }
@@ -1993,6 +1999,19 @@ fun ChatScreen(
                 }
                 val isChannel = cachedChatLive?.type is TdApi.ChatTypeSupergroup &&
                     (cachedChatLive.type as TdApi.ChatTypeSupergroup).isChannel
+                // Peer user id for a 1-to-1 chat (private chat id == user id;
+                // secret carries it on the type). Drives block / unblock.
+                val blockPeerId = when (val t = cachedChatLive?.type) {
+                    is TdApi.ChatTypePrivate -> t.userId
+                    is TdApi.ChatTypeSecret -> t.userId
+                    else -> null
+                }
+                var peerBlocked by remember(chatId) { mutableStateOf(false) }
+                LaunchedEffect(blockPeerId, menuOpen) {
+                    peerBlocked = blockPeerId?.let {
+                        runCatching { TdClient.isUserBlocked(it) }.getOrDefault(false)
+                    } ?: false
+                }
                 val menuTiles = buildList {
                     add(
                         com.secondream.novagram.ui.components.ActionTile(
@@ -2039,6 +2058,38 @@ fun ChatScreen(
                             )
                         )
                     } else {
+                        if (blockPeerId != null) {
+                            add(
+                                com.secondream.novagram.ui.components.ActionTile(
+                                    label = stringResource(
+                                        if (peerBlocked) R.string.action_unblock_user
+                                        else R.string.action_block_user
+                                    ),
+                                    icon = if (peerBlocked)
+                                        com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                                    else com.secondream.novagram.ui.icons.PhosphorIcons.UserMinus,
+                                    destructive = !peerBlocked,
+                                    onClick = {
+                                        menuOpen = false
+                                        val uid = blockPeerId
+                                        val wasBlocked = peerBlocked
+                                        scope.launch {
+                                            runCatching {
+                                                if (wasBlocked) TdClient.unblockUser(uid)
+                                                else TdClient.blockUser(uid)
+                                            }.onSuccess {
+                                                com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                                    if (wasBlocked) R.string.snack_user_unblocked
+                                                    else R.string.snack_user_blocked,
+                                                    if (wasBlocked) com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                                                    else com.secondream.novagram.ui.icons.PhosphorIcons.UserMinus
+                                                )
+                                            }
+                                        }
+                                    }
+                                )
+                            )
+                        }
                         add(
                             com.secondream.novagram.ui.components.ActionTile(
                                 label = stringResource(R.string.action_delete_chat),

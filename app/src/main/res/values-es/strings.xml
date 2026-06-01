@@ -423,4 +423,12 @@
     <string name="members_tab_members">Miembros</string>
     <string name="members_tab_banned">Bloqueados</string>
     <string name="members_none_banned">Sin usuarios bloqueados</string>
+    <string name="action_block_user">Bloquear</string>
+    <string name="action_unblock_user">Desbloquear</string>
+    <string name="snack_user_blocked">Usuario bloqueado</string>
+    <string name="snack_user_unblocked">Usuario desbloqueado</string>
+    <string name="settings_blocked_users">Usuarios bloqueados</string>
+    <string name="settings_blocked_users_desc">Gestiona los usuarios que has bloqueado</string>
+    <string name="blocked_users_none">Sin usuarios bloqueados</string>
+    <string name="blocked_user_fallback">Usuario</string>
 </resources>

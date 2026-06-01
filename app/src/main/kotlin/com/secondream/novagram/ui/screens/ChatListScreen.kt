@@ -686,6 +686,14 @@ fun ChatListScreen(
     chatActionTarget?.let { target ->
         val cachedChat = TdClient.getCachedChat(target.id)
         val isMuted = (cachedChat?.notificationSettings?.muteFor ?: 0) > 0
+        val isOneToOne = target.kind == ChatKind.Private || target.kind == ChatKind.Secret
+        // For a private chat the chat id IS the peer's user id (TDLib).
+        var isBlocked by remember(target.id) { mutableStateOf(false) }
+        LaunchedEffect(target.id) {
+            isBlocked = if (isOneToOne && target.id != myUserId)
+                runCatching { TdClient.isUserBlocked(target.id) }.getOrDefault(false)
+            else false
+        }
         ChatActionSheet(
             chatTitle = target.title,
             chatKind = target.kind,
@@ -693,6 +701,24 @@ fun ChatListScreen(
             isArchived = target.isArchived,
             isPinned = target.isPinned,
             isSavedMessages = (myUserId != 0L && target.id == myUserId),
+            isBlocked = isBlocked,
+            onToggleBlock = {
+                val uid = target.id
+                val wasBlocked = isBlocked
+                chatActionTarget = null
+                scope.launch {
+                    runCatching {
+                        if (wasBlocked) TdClient.unblockUser(uid) else TdClient.blockUser(uid)
+                    }.onSuccess {
+                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                            if (wasBlocked) R.string.snack_user_unblocked
+                            else R.string.snack_user_blocked,
+                            if (wasBlocked) com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                            else com.secondream.novagram.ui.icons.PhosphorIcons.UserMinus
+                        )
+                    }
+                }
+            },
             onDismiss = { chatActionTarget = null },
             onToggleMute = {
                 val cid = target.id
@@ -857,12 +883,14 @@ private fun ChatActionSheet(
     isArchived: Boolean,
     isPinned: Boolean,
     isSavedMessages: Boolean = false,
+    isBlocked: Boolean = false,
     onDismiss: () -> Unit,
     onToggleMute: () -> Unit,
     onTogglePin: () -> Unit,
     onToggleArchive: () -> Unit,
     onDeleteRequest: () -> Unit,
-    onLeaveRequest: () -> Unit
+    onLeaveRequest: () -> Unit,
+    onToggleBlock: () -> Unit = {}
 ) {
     // Tiles built dynamically from the chat's state. Pin/unpin uses
     // the PushPin icon (filled when active, struck-through when not —
@@ -926,6 +954,21 @@ private fun ChatActionSheet(
                 )
             }
             ChatKind.Private, ChatKind.Secret -> {
+                if (!isSavedMessages) {
+                    add(
+                        com.secondream.novagram.ui.components.ActionTile(
+                            label = stringResource(
+                                if (isBlocked) R.string.action_unblock_user
+                                else R.string.action_block_user
+                            ),
+                            icon = if (isBlocked)
+                                com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                            else com.secondream.novagram.ui.icons.PhosphorIcons.UserMinus,
+                            destructive = !isBlocked,
+                            onClick = onToggleBlock
+                        )
+                    )
+                }
                 add(
                     com.secondream.novagram.ui.components.ActionTile(
                         label = stringResource(R.string.action_delete_chat),
