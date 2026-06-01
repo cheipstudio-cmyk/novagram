@@ -455,4 +455,10 @@
     <string name="info_tab_music">Musica</string>
     <string name="info_tab_members">Membri</string>
     <string name="two_pane_select_chat">Seleziona una chat</string>
+    <string name="new_group_title">Nuovo gruppo</string>
+    <string name="new_group_create">Crea</string>
+    <string name="new_group_name">Nome del gruppo</string>
+    <string name="new_group_selected">%1$d selezionati</string>
+    <string name="new_group_entry">Nuovo gruppo</string>
+    <string name="snack_group_created">Gruppo creato</string>
 </resources>

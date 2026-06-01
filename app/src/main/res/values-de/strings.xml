@@ -441,4 +441,10 @@
     <string name="info_tab_music">Musik</string>
     <string name="info_tab_members">Mitglieder</string>
     <string name="two_pane_select_chat">Wähle einen Chat</string>
+    <string name="new_group_title">Neue Gruppe</string>
+    <string name="new_group_create">Erstellen</string>
+    <string name="new_group_name">Gruppenname</string>
+    <string name="new_group_selected">%1$d ausgewählt</string>
+    <string name="new_group_entry">Neue Gruppe</string>
+    <string name="snack_group_created">Gruppe erstellt</string>
 </resources>

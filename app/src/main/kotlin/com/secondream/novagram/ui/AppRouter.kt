@@ -40,6 +40,7 @@ import com.secondream.novagram.ui.screens.LoginScreen
 import com.secondream.novagram.ui.screens.MediaViewerHolder
 import com.secondream.novagram.ui.screens.MediaViewerScreen
 import com.secondream.novagram.ui.screens.NewChatScreen
+import com.secondream.novagram.ui.screens.NewGroupScreen
 import com.secondream.novagram.ui.screens.ProfileScreen
 import com.secondream.novagram.ui.screens.SettingsScreen
 
@@ -55,6 +56,7 @@ object Routes {
     const val SETTINGS = "settings"
     const val PROFILE = "profile"
     const val NEW_CHAT = "new_chat"
+    const val NEW_GROUP = "new_group"
     const val MEDIA_VIEWER = "media_viewer"
     fun chat(id: Long, msg: Long? = null) =
         if (msg != null && msg != 0L) "chat/$id?msg=$msg" else "chat/$id?msg=0"
@@ -161,18 +163,6 @@ fun AppRouter(
         dampingRatio = 1.0f,
         stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
     )
-    val scaleEnterSpring = androidx.compose.animation.core.spring<Float>(
-        // Critically damped (was 0.70 under-damped): the incoming screen used
-        // to overshoot past 100% and bounce back, which read as the "glitch"
-        // on chat open/close. 1.0 gives a clean 0.90→1.0 settle — smooth like
-        // the info-tab swipe.
-        dampingRatio = 1.0f,
-        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
-    )
-    val scaleExitSpring = androidx.compose.animation.core.spring<Float>(
-        dampingRatio = 1.0f,
-        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
-    )
     val fadeInSpec = tween<Float>(durationMillis = 180)
     val fadeOutSpec = tween<Float>(durationMillis = 140)
     NavHost(
@@ -182,42 +172,45 @@ fun AppRouter(
             androidx.compose.animation.slideInHorizontally(
                 animationSpec = slideEnterSpring,
                 initialOffsetX = { fullWidth -> fullWidth }
-            ) + androidx.compose.animation.scaleIn(
-                initialScale = 0.90f,
-                animationSpec = scaleEnterSpring
             ) + androidx.compose.animation.fadeIn(fadeInSpec)
         },
         exitTransition = {
             androidx.compose.animation.slideOutHorizontally(
                 animationSpec = slideExitSpring,
                 targetOffsetX = { fullWidth -> -(fullWidth * 0.30f).toInt() }
-            ) + androidx.compose.animation.scaleOut(
-                targetScale = 0.94f,
-                animationSpec = scaleExitSpring
             ) + androidx.compose.animation.fadeOut(fadeOutSpec)
         },
         popEnterTransition = {
             androidx.compose.animation.slideInHorizontally(
                 animationSpec = slideEnterSpring,
                 initialOffsetX = { fullWidth -> -(fullWidth * 0.30f).toInt() }
-            ) + androidx.compose.animation.scaleIn(
-                initialScale = 0.94f,
-                animationSpec = scaleEnterSpring
             ) + androidx.compose.animation.fadeIn(fadeInSpec)
         },
         popExitTransition = {
             androidx.compose.animation.slideOutHorizontally(
                 animationSpec = slideExitSpring,
                 targetOffsetX = { fullWidth -> fullWidth }
-            ) + androidx.compose.animation.scaleOut(
-                targetScale = 0.90f,
-                animationSpec = scaleExitSpring
             ) + androidx.compose.animation.fadeOut(fadeOutSpec)
         }
     ) {
         composable(Routes.CONFIG) { ApiConfigScreen() }
         composable(Routes.LOGIN) { LoginScreen() }
-        composable(Routes.CHATS) {
+        composable(
+            Routes.CHATS,
+            popEnterTransition = {
+                // Returning to the chat list, the data often reflows right then
+                // (the chat you just read jumps to the top, unread clears). The
+                // full 30% parallax slide made that reflow visibly "jump"
+                // mid-slide — Eugenio's "strano glitch della lista alla
+                // chiusura". A gentle fade with a tiny 6% slide lands the list
+                // at its final spot so the reorder (animateItem on each row)
+                // resolves cleanly instead of compounding with a big slide.
+                androidx.compose.animation.slideInHorizontally(
+                    animationSpec = slideEnterSpring,
+                    initialOffsetX = { fullWidth -> -(fullWidth * 0.06f).toInt() }
+                ) + androidx.compose.animation.fadeIn(fadeInSpec)
+            }
+        ) {
             val wide = androidx.compose.ui.platform.LocalConfiguration
                 .current.screenWidthDp >= 600
             if (wide) {
@@ -253,6 +246,19 @@ fun AppRouter(
                 onOpenChat = { id ->
                     nav.popBackStack()
                     nav.navigate(Routes.chat(id))
+                },
+                onNewGroup = { nav.navigate(Routes.NEW_GROUP) }
+            )
+        }
+        composable(Routes.NEW_GROUP) {
+            NewGroupScreen(
+                onBack = { nav.popBackStack() },
+                onOpenChat = { id ->
+                    // Land in the new group and flatten the picker stack so
+                    // back goes to the chat list, not the contact picker.
+                    nav.navigate(Routes.chat(id)) {
+                        popUpTo(Routes.CHATS)
+                    }
                 }
             )
         }

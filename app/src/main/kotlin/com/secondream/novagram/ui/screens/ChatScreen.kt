@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -1435,7 +1436,7 @@ fun ChatScreen(
                     // many messages above). Single knob: bump up if still too
                     // low, down if too high. Used by every placement below so
                     // the instant, animated and re-pin paths always agree.
-                    val FRAC = 82
+                    val FRAC = 88
                     val info0 = listState.layoutInfo
                     val vp0 = info0.viewportSize.height
                     if (vp0 <= 0) {
@@ -2775,7 +2776,7 @@ fun ChatScreen(
                             val cmdText =
                                 if (isGroupChat && !uname.isNullOrBlank()) "/${cmd.command}@$uname"
                                 else "/${cmd.command}"
-                            runCatching { TdClient.sendText(chatId, cmdText, replyId) }
+                            runCatching { TdClient.sendBotCommand(chatId, cmdText, replyId) }
                         }
                     }
                 )
@@ -2812,7 +2813,7 @@ fun ChatScreen(
                                 val cmdText =
                                     if (isGroupChat && !uname.isNullOrBlank()) "/${cmd.command}@$uname"
                                     else "/${cmd.command}"
-                                runCatching { TdClient.sendText(chatId, cmdText, replyId) }
+                                runCatching { TdClient.sendBotCommand(chatId, cmdText, replyId) }
                             }
                         }
                     )
@@ -4161,8 +4162,21 @@ internal fun ChatInfoDialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        // On tablets / landscape the full-bleed info sheet looked stretched
+        // (Eugenio). The Dialog centres its content, so constraining the
+        // Surface to a comfortable reading width turns it into a centred modal
+        // card with the scrim around it; phones keep the full-screen sheet.
+        val infoWide =
+            androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 600
         androidx.compose.material3.Surface(
-            modifier = Modifier.fillMaxSize(),
+            modifier = if (infoWide)
+                Modifier
+                    .width(560.dp)
+                    .fillMaxHeight(0.94f)
+            else Modifier.fillMaxSize(),
+            shape = if (infoWide)
+                RoundedCornerShape(20.dp)
+            else androidx.compose.ui.graphics.RectangleShape,
             color = MaterialTheme.colorScheme.surface
         ) {
           androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
@@ -5710,6 +5724,7 @@ private fun MicButton(
             .then(
                 if (enabled) Modifier.pointerInput(Unit) {
                     val lockPx = 120.dp.toPx()
+                    val cancelPx = 120.dp.toPx()
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         onDown()
@@ -5723,10 +5738,21 @@ private fun MicButton(
                                 if (!locked) onUp(true)
                                 break
                             }
+                            val dx = change.position.x - down.position.x
+                            val dy = change.position.y - down.position.y
+                            // Slide LEFT past the threshold → CANCEL: discard the
+                            // note (onUp(false) → recorder.cancel()). This is the
+                            // slide-to-cancel the slide-up-to-lock change dropped
+                            // (Eugenio). Only while NOT locked — a locked note is
+                            // cancelled with the trash button instead.
+                            if (!locked && dx <= -cancelPx) {
+                                onUp(false)
+                                break
+                            }
                             // Slide UP past the threshold → LOCK so the user can
                             // let go and keep recording (long notes), then send
                             // with the explicit send button.
-                            if (!locked && (change.position.y - down.position.y) <= -lockPx) {
+                            if (!locked && dy <= -lockPx) {
                                 locked = true
                                 onLock()
                             }

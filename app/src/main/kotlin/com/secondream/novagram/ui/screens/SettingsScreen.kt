@@ -652,9 +652,13 @@ fun SettingsScreen(onBack: () -> Unit) {
  */
 @Composable
 private fun BlockedUsersDialog(onDismiss: () -> Unit) {
-    var ids by remember { mutableStateOf<List<Long>?>(null) }
+    var users by remember { mutableStateOf<List<org.drinkless.tdlib.TdApi.User>?>(null) }
+    var query by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
-        ids = runCatching { TdClient.getBlockedUserIds() }.getOrDefault(emptyList())
+        val idsList = runCatching { TdClient.getBlockedUserIds() }.getOrDefault(emptyList())
+        users = idsList.mapNotNull { uid ->
+            TdClient.getCachedUser(uid) ?: runCatching { TdClient.getUser(uid) }.getOrNull()
+        }
     }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         androidx.compose.material3.Surface(
@@ -672,9 +676,9 @@ private fun BlockedUsersDialog(onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.titleMedium
                 )
                 Spacer(Modifier.height(12.dp))
-                val list = ids
+                val all = users
                 when {
-                    list == null -> {
+                    all == null -> {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -687,7 +691,7 @@ private fun BlockedUsersDialog(onDismiss: () -> Unit) {
                             )
                         }
                     }
-                    list.isEmpty() -> {
+                    all.isEmpty() -> {
                         Text(
                             stringResource(R.string.blocked_users_none),
                             style = MaterialTheme.typography.bodyMedium,
@@ -696,14 +700,47 @@ private fun BlockedUsersDialog(onDismiss: () -> Unit) {
                         )
                     }
                     else -> {
-                        androidx.compose.foundation.lazy.LazyColumn(
-                            modifier = Modifier.heightIn(max = 360.dp)
-                        ) {
-                            items(list) { uid ->
-                                BlockedUserRow(
-                                    uid = uid,
-                                    onUnblocked = { ids = ids?.filter { it != uid } }
+                        // Search/filter by name or @username.
+                        androidx.compose.material3.OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            singleLine = true,
+                            leadingIcon = {
+                                Icon(
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass,
+                                    contentDescription = null
                                 )
+                            },
+                            placeholder = { Text(stringResource(R.string.search_action)) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        val filtered = all.filter { u ->
+                            if (query.isBlank()) true
+                            else {
+                                val nm = "${u.firstName} ${u.lastName}".trim()
+                                val un = u.usernames?.activeUsernames?.firstOrNull() ?: ""
+                                nm.contains(query, ignoreCase = true) ||
+                                    un.contains(query, ignoreCase = true)
+                            }
+                        }
+                        if (filtered.isEmpty()) {
+                            Text(
+                                stringResource(R.string.blocked_users_none),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 12.dp)
+                            )
+                        } else {
+                            androidx.compose.foundation.lazy.LazyColumn(
+                                modifier = Modifier.heightIn(max = 360.dp)
+                            ) {
+                                items(filtered, key = { it.id }) { u ->
+                                    BlockedUserRow(
+                                        user = u,
+                                        onUnblocked = { users = users?.filter { it.id != u.id } }
+                                    )
+                                }
                             }
                         }
                     }
@@ -723,33 +760,44 @@ private fun BlockedUsersDialog(onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun BlockedUserRow(uid: Long, onUnblocked: () -> Unit) {
+private fun BlockedUserRow(user: org.drinkless.tdlib.TdApi.User, onUnblocked: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var user by remember(uid) {
-        mutableStateOf<org.drinkless.tdlib.TdApi.User?>(TdClient.getCachedUser(uid))
-    }
-    LaunchedEffect(uid) {
-        if (user == null) user = runCatching { TdClient.getUser(uid) }.getOrNull()
-    }
-    val name = user?.let { "${it.firstName} ${it.lastName}".trim() }
-        ?.takeIf { it.isNotBlank() } ?: stringResource(R.string.blocked_user_fallback)
+    val name = "${user.firstName} ${user.lastName}".trim().takeIf { it.isNotBlank() }
+        ?: stringResource(R.string.blocked_user_fallback)
+    val username = user.usernames?.activeUsernames?.firstOrNull()?.takeIf { it.isNotBlank() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            name,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        com.secondream.novagram.ui.components.Avatar(
+            file = user.profilePhoto?.small,
+            fallbackText = name,
+            size = 40.dp
         )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                name,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+            if (username != null) {
+                Text(
+                    "@$username",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+        }
         androidx.compose.material3.TextButton(
             onClick = {
                 scope.launch {
-                    runCatching { TdClient.unblockUser(uid) }.onSuccess {
+                    runCatching { TdClient.unblockUser(user.id) }.onSuccess {
                         com.secondream.novagram.ui.components.NovaSnackbar.show(
                             R.string.snack_user_unblocked,
                             com.secondream.novagram.ui.icons.PhosphorIcons.Check

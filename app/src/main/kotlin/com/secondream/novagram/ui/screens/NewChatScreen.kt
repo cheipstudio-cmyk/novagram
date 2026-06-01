@@ -97,7 +97,8 @@ private data class MatchedPhoneContact(
 @Composable
 fun NewChatScreen(
     onBack: () -> Unit,
-    onOpenChat: (Long) -> Unit
+    onOpenChat: (Long) -> Unit,
+    onNewGroup: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -290,10 +291,40 @@ fun NewChatScreen(
                 if (selectedTab != target) selectedTab = target
             }
         }
-        androidx.compose.foundation.pager.HorizontalPager(
-            state = pagerState,
+        Column(
             modifier = Modifier.fillMaxSize().padding(padding)
-        ) { page ->
+        ) {
+            // "Nuovo gruppo" entry — opens the create-group multi-select flow.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onNewGroup() }
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Text(
+                    stringResource(R.string.new_group_entry),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+            androidx.compose.foundation.pager.HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxWidth().weight(1f)
+            ) { page ->
             when (page) {
                 0 -> TelegramList(
                     contacts = filteredTelegram,
@@ -327,6 +358,7 @@ fun NewChatScreen(
                     }
                 )
             }
+        }
         }
     }
 

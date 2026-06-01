@@ -1149,6 +1149,43 @@ object TdClient {
     }
 
     /**
+     * Send a bot command, attaching an explicit bot_command text entity the
+     * way the official clients do. Some bots only react to a properly-entitied
+     * "/cmd@bot" in groups; a plain-text send (no entities) wasn't triggering
+     * them. If TDLib rejects the manually-supplied entity we fall back to a
+     * plain text send so we never end up sending nothing.
+     */
+    suspend fun sendBotCommand(
+        chatId: Long,
+        commandText: String,
+        replyToMessageId: Long? = null
+    ) {
+        val entities = arrayOf<TdApi.TextEntity>(
+            TdApi.TextEntity(0, commandText.length, TdApi.TextEntityTypeBotCommand())
+        )
+        val content = TdApi.InputMessageText(
+            TdApi.FormattedText(commandText, entities), null, true
+        )
+        val ok = runCatching {
+            send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
+        }.isSuccess
+        if (!ok) sendText(chatId, commandText, replyToMessageId)
+    }
+
+    /**
+     * Create a new basic group with the given members + title; returns the new
+     * chat id (or null on failure). TDLib auto-upgrades basic groups to
+     * supergroups as they grow, so this is the right primitive for the
+     * "create group" contact multi-select flow.
+     */
+    suspend fun createGroup(userIds: List<Long>, title: String): Long? {
+        val res = runCatching {
+            send(TdApi.CreateNewBasicGroupChat(userIds.toLongArray(), title, 0))
+        }.getOrNull()
+        return (res as? TdApi.CreatedBasicGroupChat)?.chatId
+    }
+
+    /**
      * Announce a "X is doing Y" action to the chat. Telegram clients
      * call this every ~5 seconds while the user is composing a message
      * (and once with [TdApi.ChatActionCancel] when they stop) so peers
