@@ -85,6 +85,9 @@ object TransferTracker {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     @Volatile private var started = false
 
+    /** fileId → (lastTransferredBytes, lastChangeMs). Drives stall detection. */
+    private val progressStamp = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, Long>>()
+
     /**
      * Idempotent start. Called from MainActivity after TDLib has been
      * initialised so the very first fileUpdate we see is real. Subsequent
@@ -96,6 +99,33 @@ object TransferTracker {
         scope.launch {
             TdClient.fileUpdates.collect { file -> onFile(file) }
         }
+        // Stuck-download watchdog. TDLib sometimes parks an active download
+        // (its isDownloadingActive stays true but no bytes move) and doesn't
+        // resume on its own when connectivity comes back. Every few seconds
+        // we re-issue DownloadFile for any download whose byte count hasn't
+        // advanced for a while — TDLib resumes from the already-fetched prefix
+        // (offset 0 / limit 0), so this nudges it forward without restarting.
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(6_000)
+                val now = System.currentTimeMillis()
+                val stalled = synchronized(mutex) {
+                    active.values
+                        .filter { !it.isUpload && it.totalBytes > 0 && it.transferredBytes < it.totalBytes }
+                        .map { it.fileId }
+                }.filter { fid ->
+                    val s = progressStamp[fid]
+                    s != null && now - s.second > 9_000
+                }
+                for (fid in stalled) {
+                    runCatching { TdClient.startDownload(fid) }
+                    // Push the stamp forward so we don't hammer the same file
+                    // every tick; if the nudge works, onFile will refresh it
+                    // with real progress.
+                    progressStamp[fid] = (progressStamp[fid]?.first ?: 0L) to now
+                }
+            }
+        }
     }
 
     private fun onFile(file: TdApi.File) {
@@ -104,6 +134,17 @@ object TransferTracker {
         val downloaded = file.local.downloadedSize
         val uploaded = file.remote.uploadedSize
         val total = file.size.coerceAtLeast(0L)
+        // Stall detection: remember the last byte count + when it last moved.
+        // TDLib stops emitting updates for a parked transfer, so a stamp that
+        // hasn't advanced is exactly how the watchdog spots a stuck download.
+        val now = System.currentTimeMillis()
+        if (downloading || uploading) {
+            val bytes = if (downloading) downloaded else uploaded
+            val prev = progressStamp[file.id]
+            if (prev == null || bytes != prev.first) progressStamp[file.id] = bytes to now
+        } else {
+            progressStamp.remove(file.id)
+        }
         synchronized(mutex) {
             val loc = locations[file.id]
             when {

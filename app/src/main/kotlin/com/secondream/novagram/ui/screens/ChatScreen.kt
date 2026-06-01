@@ -2603,19 +2603,26 @@ fun ChatScreen(
                 BotCommandPicker(
                     commands = botCommands,
                     onPick = { cmd ->
-                        // In a group a bare "/cmd" isn't routed to any bot —
-                        // address it as "/cmd@botusername" so the owning bot
-                        // actually runs it. In a 1-to-1 bot chat the plain
-                        // form is fine (and looks cleaner).
-                        val cmdText =
-                            if (isGroupChat && !cmd.botUsername.isNullOrBlank())
-                                "/${cmd.command}@${cmd.botUsername}"
-                            else "/${cmd.command}"
+                        // In a group a bare "/cmd" reaches no bot — it must be
+                        // "/cmd@botusername". The username is resolved when the
+                        // commands load, but re-resolve here if it's still
+                        // missing so a transient miss doesn't send a dead bare
+                        // command. 1-to-1 bot chats use the plain form.
                         input = androidx.compose.ui.text.input.TextFieldValue("")
                         val replyId = replyTarget?.id
                         replyTarget = null
                         showAllCommands = false
                         scope.launch {
+                            var uname = cmd.botUsername
+                            if (isGroupChat && uname.isNullOrBlank()) {
+                                uname = runCatching {
+                                    TdClient.getUser(cmd.botUserId).usernames
+                                        ?.let { it.activeUsernames.firstOrNull() ?: it.editableUsername }
+                                }.getOrNull()?.takeIf { it.isNotBlank() }
+                            }
+                            val cmdText =
+                                if (isGroupChat && !uname.isNullOrBlank()) "/${cmd.command}@$uname"
+                                else "/${cmd.command}"
                             runCatching { TdClient.sendText(chatId, cmdText, replyId) }
                         }
                     }
@@ -2634,25 +2641,26 @@ fun ChatScreen(
                     BotCommandPicker(
                         commands = filtered,
                         onPick = { cmd ->
-                            // Fire the command immediately on tap —
-                            // matches official Telegram behaviour where
-                            // picking from the suggestion list is the
-                            // act of sending it, not staging it. In a group
-                            // we address it as "/cmd@botusername" so the
-                            // owning bot actually receives + runs it (a bare
-                            // "/cmd" goes to no one when several bots are in
-                            // the chat).
-                            val cmdText =
-                                if (isGroupChat && !cmd.botUsername.isNullOrBlank())
-                                    "/${cmd.command}@${cmd.botUsername}"
-                                else "/${cmd.command}"
+                            // Fire on tap (matches Telegram: picking from the
+                            // list IS sending). In a group address it as
+                            // "/cmd@botusername" so the owning bot receives it;
+                            // re-resolve the username here if it wasn't captured
+                            // at load time.
                             input = androidx.compose.ui.text.input.TextFieldValue("")
                             val replyId = replyTarget?.id
                             replyTarget = null
                             scope.launch {
-                                runCatching {
-                                    TdClient.sendText(chatId, cmdText, replyId)
+                                var uname = cmd.botUsername
+                                if (isGroupChat && uname.isNullOrBlank()) {
+                                    uname = runCatching {
+                                        TdClient.getUser(cmd.botUserId).usernames
+                                            ?.let { it.activeUsernames.firstOrNull() ?: it.editableUsername }
+                                    }.getOrNull()?.takeIf { it.isNotBlank() }
                                 }
+                                val cmdText =
+                                    if (isGroupChat && !uname.isNullOrBlank()) "/${cmd.command}@$uname"
+                                    else "/${cmd.command}"
+                                runCatching { TdClient.sendText(chatId, cmdText, replyId) }
                             }
                         }
                     )

@@ -997,12 +997,30 @@ object TdClient {
     }
 
     suspend fun loadChats(limit: Int) {
-        try { send(TdApi.LoadChats(TdApi.ChatListMain(), limit)) }
-        catch (e: TdException) { Log.w(TAG, "loadChats: ${e.message}") }
-        // Also pull the archive so the Archiviati tab (when enabled) has
-        // data. Failures are non-fatal — archive is a secondary surface.
-        try { send(TdApi.LoadChats(TdApi.ChatListArchive(), limit)) }
-        catch (e: TdException) { Log.w(TAG, "loadChats(archive): ${e.message}") }
+        // LoadChats pulls the NEXT `limit` chats into the in-memory list in
+        // activity order — one call only loads one batch. TDLib answers with
+        // error 404 ("Chats list is exhausted") once everything is loaded, so
+        // a single call leaves chats further down the list unloaded. That's
+        // why low-traffic channels were missing from the Canali tab. Drain
+        // the list in batches until 404 (or a hard loop cap, so a giant
+        // account can't spin forever). Each batch only loads lightweight chat
+        // metadata, not messages, so this stays cheap.
+        suspend fun drain(list: TdApi.ChatList, label: String) {
+            repeat(40) {
+                val r = runCatching { send(TdApi.LoadChats(list, limit)) }
+                if (r.isFailure) {
+                    // 404 = fully loaded (expected); anything else we also stop
+                    // on, but log it so a real error is visible.
+                    (r.exceptionOrNull() as? TdException)?.let {
+                        if (it.code != 404) Log.w(TAG, "loadChats($label): ${it.message}")
+                    }
+                    return
+                }
+            }
+        }
+        drain(TdApi.ChatListMain(), "main")
+        // Also pull the archive so the Archiviati tab (when enabled) has data.
+        drain(TdApi.ChatListArchive(), "archive")
     }
 
     suspend fun openChat(chatId: Long) { send(TdApi.OpenChat(chatId)) }
