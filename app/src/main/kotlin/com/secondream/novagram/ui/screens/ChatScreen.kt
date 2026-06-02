@@ -137,6 +137,20 @@ fun ChatScreen(
     var loading by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
     var noMore by remember { mutableStateOf(false) }
+    // True while `messages` is showing the live tail (the newest messages are
+    // loaded). Goes false once jumpToMessage parks us in an OLD, disjoint
+    // window (e.g. a pinned-message tap to July). It gates two things that
+    // would otherwise stitch a far window onto the latest and leave a hidden
+    // "burned middle" gap you'd silently scroll through: (1) injecting a
+    // freshly-arrived message at the top, (2) the go-to-bottom button's plain
+    // scroll. Initialised from the cached window so it stays correct across a
+    // MediaViewer round-trip (which re-enters with the cached list intact).
+    var atLatestWindow by remember(chatId) {
+        mutableStateOf(
+            messages.isEmpty() ||
+                messages.firstOrNull()?.id == TdClient.getCachedChat(chatId)?.lastMessage?.id
+        )
+    }
     // The input is keyed on chatId so switching between chats wipes the
     // text field instead of letting the previous chat's typing bleed into
     // the new one. The draft loader below repopulates it from TDLib.
@@ -618,7 +632,11 @@ fun ChatScreen(
                     android.view.WindowManager.LayoutParams.FLAG_SECURE
                 )
             }
-            scope.launch { runCatching { TdClient.closeChat(chatId) } }
+            // CloseChat MUST go through a durable scope: launching it on the
+            // composition's rememberCoroutineScope here cancels it on the way
+            // out (the scope dies with the composition) so it never reaches
+            // TDLib, leaving the chat open and its firehose persisting forever.
+            TdClient.closeChatDetached(chatId)
             // Only clear if still pointing to us — if the user nav'd to
             // another chat the new ChatScreen has already overwritten this.
             if (com.secondream.novagram.AppForegroundState.currentChatId == chatId) {
@@ -810,6 +828,13 @@ fun ChatScreen(
         if (messages.isNotEmpty()) {
             loading = false
             runCatching {
+                // Re-entering an OLD jumped window (e.g. popped back from
+                // MediaViewer after a pinned-message jump): leave the window
+                // and the scroll position exactly as they were — do NOT
+                // prepend the latest (that would forge the burned-middle gap)
+                // nor yank to the bottom. The go-to-bottom button reloads the
+                // live tail when the user actually wants the present.
+                if (!atLatestWindow) return@runCatching
                 val cachedNewestId = messages.firstOrNull()?.id ?: 0L
                 val res = TdClient.getChatHistory(chatId, 0L, 30)
                 val toAdd = res.messages.filter { it.id > cachedNewestId }
@@ -966,6 +991,9 @@ fun ChatScreen(
                 }
                 attempts++
             }
+            // Initial load fetches from the newest end, so the list IS the
+            // live tail — new messages may inject at the top from here on.
+            atLatestWindow = true
 
             // If there's no unread backlog we keep the original behaviour:
             // mark loaded incoming messages as viewed and stay anchored at
@@ -1125,24 +1153,44 @@ fun ChatScreen(
     LaunchedEffect(chatId) {
         TdClient.newMessages.collect { msg ->
             if (msg.chatId == chatId) {
-                // Dedupe: avoid double-insertion when getChatHistory and
-                // UpdateNewMessage race over the same message id.
-                if (messages.none { it.id == msg.id }) {
-                    messages.add(0, msg)
-                }
-                if (!msg.isOutgoing) {
-                    runCatching { TdClient.viewMessages(chatId, longArrayOf(msg.id)) }
-                    // In-app receive blip ("ding"), but only while the app is
-                    // actually foregrounded on this chat — when backgrounded the
-                    // system notification carries its own sound, so gating on
-                    // isInForeground prevents a double chime. Toggleable via the
-                    // messageSounds pref.
-                    if (appearance.messageSounds &&
-                        com.secondream.novagram.AppForegroundState.isInForeground
-                    ) {
-                        com.secondream.novagram.util.SoundFx.playReceive(context)
+                if (atLatestWindow) {
+                    // On the live tail — inject at the top (adjacent, no gap).
+                    // Dedupe: getChatHistory and UpdateNewMessage can race.
+                    if (messages.none { it.id == msg.id }) {
+                        messages.add(0, msg)
                     }
+                    if (!msg.isOutgoing) {
+                        runCatching { TdClient.viewMessages(chatId, longArrayOf(msg.id)) }
+                        // In-app receive blip ("ding"), only while foregrounded
+                        // on this chat — backgrounded, the system notification
+                        // carries its own sound. Toggleable via messageSounds.
+                        if (appearance.messageSounds &&
+                            com.secondream.novagram.AppForegroundState.isInForeground
+                        ) {
+                            com.secondream.novagram.util.SoundFx.playReceive(context)
+                        }
+                    }
+                } else if (msg.isOutgoing) {
+                    // The user sent a message while parked in an OLD jumped
+                    // window — reload the live tail so their message shows up
+                    // contiguous at the bottom, instead of injecting it next
+                    // to a months-old message (which would forge a gap).
+                    runCatching {
+                        val res = TdClient.getChatHistory(chatId, 0L, 50)
+                        val fresh = res.messages.toList().sortedByDescending { it.id }
+                        if (fresh.isNotEmpty()) {
+                            messages.clear()
+                            messages.addAll(fresh)
+                            noMore = false
+                            atLatestWindow = true
+                        }
+                    }
+                    runCatching { listState.scrollToItem(0) }
                 }
+                // else: incoming message while reading old history. We do NOT
+                // inject it (not adjacent to this window) and do NOT mark it
+                // read (unseen). The unread count rises → the go-to-bottom FAB
+                // lights up; tapping it reloads the tail and shows it.
             }
         }
     }
@@ -1469,24 +1517,27 @@ fun ChatScreen(
                 runCatching {
                     val limit = 50
                     val ctx = TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
-                    val toAdd = ctx.messages.toList().filter { m ->
-                        messages.none { it.id == m.id }
-                    }
-                    if (toAdd.isNotEmpty()) {
-                        // Re-insert in the position that keeps the list
-                        // sorted by id descending (newest at index 0).
-                        // Simpler: just append and re-sort. The list is
-                        // small enough that the cost is negligible, and
-                        // re-sorting is the only way to handle the case
-                        // where the new batch interleaves with existing
-                        // (cached) messages without producing
-                        // out-of-order bubbles.
-                        messages.addAll(toAdd)
-                        val sorted = messages.sortedByDescending { it.id }
+                    // Reset the window to a CONTIGUOUS slice centered on the
+                    // target rather than MERGING it with the (disjoint) latest
+                    // window already in memory. Merging two non-adjacent pages
+                    // and sorting by id presented them as contiguous, leaving a
+                    // hidden gap you'd silently scroll through — the burned-
+                    // middle bug (jump to July, go to bottom, scroll up and the
+                    // months in between were gone). A fresh window keeps
+                    // scroll-up (older) contiguous; the go-to-bottom button
+                    // reloads the live tail.
+                    val window = ctx.messages.toList().sortedByDescending { it.id }
+                    if (window.isNotEmpty()) {
                         messages.clear()
-                        messages.addAll(sorted)
+                        messages.addAll(window)
+                        noMore = false
                     }
                     idx = messages.indexOfFirst { it.id == targetId }
+                    // Only still "on the tail" if this window actually reaches
+                    // the newest message; otherwise we've parked in old history
+                    // and new messages must NOT inject at the top.
+                    atLatestWindow =
+                        messages.firstOrNull()?.id == TdClient.getCachedChat(chatId)?.lastMessage?.id
                 }
             }
             // Defensive: if the single round-trip somehow didn't return
@@ -2843,7 +2894,28 @@ fun ChatScreen(
                         androidx.compose.material3.SmallFloatingActionButton(
                             onClick = {
                                 scope.launch {
-                                    runCatching { listState.animateScrollToItem(0) }
+                                    // If we're parked in an OLD jumped window
+                                    // (atLatestWindow=false) the newest messages
+                                    // aren't loaded — reload the live tail FIRST
+                                    // so the list is contiguous. Otherwise
+                                    // scrolling up from here would re-traverse
+                                    // the old window (the burned-middle gap).
+                                    if (!atLatestWindow) {
+                                        runCatching {
+                                            val res = TdClient.getChatHistory(chatId, 0L, 50)
+                                            val fresh = res.messages.toList()
+                                                .sortedByDescending { it.id }
+                                            if (fresh.isNotEmpty()) {
+                                                messages.clear()
+                                                messages.addAll(fresh)
+                                                noMore = false
+                                                atLatestWindow = true
+                                            }
+                                        }
+                                        runCatching { listState.scrollToItem(0) }
+                                    } else {
+                                        runCatching { listState.animateScrollToItem(0) }
+                                    }
                                     // Reaching the bottom is the user's
                                     // explicit "I've seen everything"
                                     // gesture — mark all loaded incoming
@@ -3878,7 +3950,7 @@ fun ChatScreen(
             },
             onEdit = onEdit,
             onSaveToDownloads = onSaveToDownloads,
-            onAi = if (!appearance.anthropicApiKey.isNullOrBlank()) {
+            onAi = if (!appearance.anthropicApiKey.isNullOrBlank() && appearance.aiMessageActionsEnabled) {
                 {
                     aiTarget = msg
                     deleteTarget = null
@@ -4371,6 +4443,12 @@ internal fun ChatInfoDialog(
     var isSelfAdmin by remember(chatId) { mutableStateOf(false) }
     var selfIsCreator by remember(chatId) { mutableStateOf(false) }
     var selfCanChangeInfo by remember(chatId) { mutableStateOf(false) }
+    // Self-hosted full-screen photo/media viewer. The avatar/shared-media taps
+    // used to delegate to the caller's onOpenMediaViewer, which the chat screen
+    // wired up but the chat-list home did NOT — so from home the photo tap did
+    // nothing. Hosting the viewer inside the dialog makes it work from every
+    // entry point with no caller changes.
+    var photoViewerOpen by remember(chatId) { mutableStateOf(false) }
     var selfCanRestrict by remember(chatId) { mutableStateOf(false) }
 
     LaunchedEffect(chatId) {
@@ -4584,7 +4662,7 @@ internal fun ChatInfoDialog(
                                         if (path != null) {
                                             com.secondream.novagram.ui.screens.MediaViewerHolder.isVideo = false
                                             com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
-                                            onOpenMediaViewer()
+                                            photoViewerOpen = true
                                         }
                                     }
                                 }
@@ -4768,7 +4846,7 @@ internal fun ChatInfoDialog(
                     // not to the bare chat. isVideo is set by the action sheet
                     // before this fires.
                     com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath = path
-                    onOpenMediaViewer()
+                    photoViewerOpen = true
                 },
                 onOpenViaIntent = { path, mime ->
                     selectedMediaMessage = null
@@ -4807,6 +4885,20 @@ internal fun ChatInfoDialog(
             )
         }
         // Group editing now lives inline in the Info tab (GroupInfoEditor).
+    }
+    if (photoViewerOpen) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { photoViewerOpen = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnClickOutside = false
+            )
+        ) {
+            com.secondream.novagram.ui.screens.MediaViewerScreen(
+                filePath = com.secondream.novagram.ui.screens.MediaViewerHolder.currentPath ?: "",
+                onClose = { photoViewerOpen = false }
+            )
+        }
     }
 }
 

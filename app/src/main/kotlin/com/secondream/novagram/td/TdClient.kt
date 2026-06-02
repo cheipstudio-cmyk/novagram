@@ -196,9 +196,17 @@ object TdClient {
     private val _userUpdates = MutableSharedFlow<TdApi.User>(extraBufferCapacity = 16)
     val userUpdates = _userUpdates.asSharedFlow()
 
-    private val chatCache = mutableMapOf<Long, TdApi.Chat>()
-    private val userCache = mutableMapOf<Long, TdApi.User>()
-    private val supergroupCache = mutableMapOf<Long, TdApi.Supergroup>()
+    // ConcurrentHashMap (not plain mutableMapOf) so the coalesced chat-list
+    // refresh — now hopping onto a coroutine in scheduleRefresh() instead of
+    // running inline on TDLib's update thread — can iterate .values without a
+    // ConcurrentModificationException while update handlers keep mutating the
+    // maps on the TDLib thread. Field reads on a chat being updated are atomic
+    // (ref/int), so the worst case is a momentarily mixed snapshot that the
+    // next refresh corrects — never a crash. This also retro-fixes the
+    // pre-existing off-thread refreshChats() calls inside suspend funcs.
+    private val chatCache = java.util.concurrent.ConcurrentHashMap<Long, TdApi.Chat>()
+    private val userCache = java.util.concurrent.ConcurrentHashMap<Long, TdApi.User>()
+    private val supergroupCache = java.util.concurrent.ConcurrentHashMap<Long, TdApi.Supergroup>()
 
     // Per-scope mute / notification settings. Telegram bundles every chat
     // into one of three scopes; muting "all groups" or "all channels"
@@ -389,7 +397,7 @@ object TdClient {
                         scope.launch { runCatching { downloadFile(f.id) } }
                     }
                 }
-                refreshChats()
+                scheduleRefresh()
             }
             is TdApi.UpdateChatLastMessage -> {
                 chatCache[obj.chatId]?.let { chat ->
@@ -401,7 +409,7 @@ object TdClient {
                     // message on top.
                     if (obj.positions.isNotEmpty()) chat.positions = obj.positions
                 }
-                refreshChats()
+                scheduleRefresh()
             }
             is TdApi.UpdateChatPosition -> {
                 chatCache[obj.chatId]?.let { chat ->
@@ -420,11 +428,11 @@ object TdClient {
                 if (obj.position.list is TdApi.ChatListMain && obj.position.order == 0L) {
                     hiddenChats.remove(obj.chatId)
                 }
-                refreshChats()
+                scheduleRefresh()
             }
             is TdApi.UpdateChatTitle -> {
                 chatCache[obj.chatId]?.title = obj.title
-                refreshChats()
+                scheduleRefresh()
             }
             is TdApi.UpdateChatPermissions -> {
                 // Keep cached default permissions fresh so the group "Permessi"
@@ -442,7 +450,7 @@ object TdClient {
             }
             is TdApi.UpdateChatReadInbox -> {
                 chatCache[obj.chatId]?.unreadCount = obj.unreadCount
-                refreshChats()
+                scheduleRefresh()
                 // If the unread count just hit zero, drop any active
                 // notification for the chat. Covers two cases at once:
                 // (a) we ourselves just opened the chat → openChat
@@ -471,7 +479,7 @@ object TdClient {
                 // the server says "unread" — exactly the gap audit #3
                 // called out.
                 chatCache[obj.chatId]?.isMarkedAsUnread = obj.isMarkedAsUnread
-                refreshChats()
+                scheduleRefresh()
             }
             is TdApi.UpdateChatUnreadMentionCount -> {
                 // Reconcile server echo with our optimistic client
@@ -494,7 +502,7 @@ object TdClient {
                 }
                 chatCache[obj.chatId]?.unreadMentionCount = finalValue.coerceAtLeast(0)
                 lastKnownServerMentionCount[obj.chatId] = newServer
-                refreshChats()
+                scheduleRefresh()
                 // Also notify per-chat observers (the in-chat mention
                 // chip in ChatScreen listens on chatUpdates to know
                 // when to hide itself after readAllChatMentions). Without
@@ -513,7 +521,7 @@ object TdClient {
                 }
                 chatCache[obj.chatId]?.unreadReactionCount = finalValue.coerceAtLeast(0)
                 lastKnownServerReactionCount[obj.chatId] = newServer
-                refreshChats()
+                scheduleRefresh()
                 // Same per-chat observer notify as mention count above.
                 scope.launch { _chatUpdates.emit(obj.chatId) }
             }
@@ -523,7 +531,7 @@ object TdClient {
                 // showing the old muteFor and "Silenzia" in the action sheet
                 // never flips to "Riattiva" even though the mute actually took.
                 chatCache[obj.chatId]?.notificationSettings = obj.notificationSettings
-                refreshChats()
+                scheduleRefresh()
                 // Wake per-chat observers (in-chat title-bar bell icon,
                 // mute toggle label in the action sheet) — they listen
                 // on chatUpdates rather than on the chat-list flow.
@@ -572,7 +580,7 @@ object TdClient {
                 // rebuild shows the right preview and so ChatScreen reads
                 // the latest draft when it opens.
                 chatCache[obj.chatId]?.draftMessage = obj.draftMessage
-                refreshChats()
+                scheduleRefresh()
             }
             is TdApi.UpdateScopeNotificationSettings -> {
                 // Telegram exposes THREE mute scopes: Private chats, basic
@@ -633,7 +641,7 @@ object TdClient {
                 chatCache[obj.chatId]?.lastMessage?.let { lm ->
                     if (lm.id == obj.messageId) {
                         lm.content = obj.newContent
-                        refreshChats()
+                        scheduleRefresh()
                     }
                 }
                 scope.launch {
@@ -734,6 +742,43 @@ object TdClient {
     }
 
     private var refreshRevision = 0L
+
+    // ---- Chat-list refresh throttle -------------------------------------
+    // A busy chat (a large, active group) emits a torrent of updates for
+    // every single message — UpdateNewMessage + UpdateChatLastMessage +
+    // UpdateChatReadInbox + position/mention/reaction — and each one used to
+    // fire a full O(N) refreshChats() (rebuild every ChatSummary + sort +
+    // emit the _chats StateFlow) inline on TDLib's update thread. Dozens of
+    // those a second saturate the thread and spam the flow, janking the whole
+    // UI even while you sit in an unrelated, short chat. This survives a
+    // force-stop (TDLib re-streams the group's updates from disk on the next
+    // launch) yet clears on "cancella dati" (no group → no firehose), which
+    // is exactly the lag pattern reported. scheduleRefresh() collapses the
+    // storm: it publishes on the leading edge, then at most once per window,
+    // turning a burst into a single rebuild. Correctness is unchanged — the
+    // final coalesced state always lands via the trailing refresh.
+    @Volatile private var lastRefreshUptime = 0L
+    private val refreshPending = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val refreshMinIntervalMs = 140L
+    private fun scheduleRefresh() {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastRefreshUptime >= refreshMinIntervalMs) {
+            lastRefreshUptime = now
+            refreshChats()
+            return
+        }
+        // Inside the window: queue exactly one trailing refresh so the final
+        // state is published once the burst settles. set(false) happens
+        // BEFORE the refresh so an update arriving mid-rebuild re-arms the
+        // window instead of being dropped.
+        if (!refreshPending.compareAndSet(false, true)) return
+        scope.launch {
+            kotlinx.coroutines.delay(refreshMinIntervalMs)
+            refreshPending.set(false)
+            lastRefreshUptime = android.os.SystemClock.uptimeMillis()
+            refreshChats()
+        }
+    }
 
     private fun refreshChats() {
         val rev = ++refreshRevision
@@ -951,6 +996,23 @@ object TdClient {
             is TdApi.AuthorizationStateReady -> {
                 _authState.value = AuthState.Ready
                 scope.launch { loadChats(100) }
+                // One-shot on-disk footprint probe. The chat lag that
+                // survives a force-stop but clears on "cancella dati" points
+                // at TDLib's on-disk store (message db + binlog), not RAM.
+                // TDLib exposes no in-place vacuum, so measuring is step one:
+                // log the per-table db breakdown plus the two dir sizes so we
+                // can see exactly what's bloated (which chat, how many MB).
+                // Read it with: adb logcat | grep "DB stats"
+                scope.launch {
+                    runCatching {
+                        val dbMb = com.secondream.novagram.util.FileUtils
+                            .dirSize(File(appContext.filesDir, "tdlib")) / 1024 / 1024
+                        val filesMb = com.secondream.novagram.util.FileUtils
+                            .dirSize(File(appContext.filesDir, "tdlib_files")) / 1024 / 1024
+                        val stats = send(TdApi.GetDatabaseStatistics()).statistics
+                        Log.i(TAG, "DB stats — tdlib(db)=${dbMb}MB tdlib_files=${filesMb}MB\n$stats")
+                    }
+                }
                 // Set online on auth-ready when we're foreground. On cold
                 // start the lifecycle onStart can fire before TDLib finished
                 // authorizing, so that setOnline(true) is dropped; this
@@ -1158,6 +1220,24 @@ object TdClient {
 
     suspend fun openChat(chatId: Long) { send(TdApi.OpenChat(chatId)) }
     suspend fun closeChat(chatId: Long) { send(TdApi.CloseChat(chatId)) }
+
+    /**
+     * Fire-and-forget CloseChat on TdClient's OWN long-lived scope.
+     *
+     * The chat screen runs this from a DisposableEffect.onDispose, which
+     * fires AS the composition — and its rememberCoroutineScope — is being
+     * torn down. Launching the close on that dying composition scope cancels
+     * the coroutine before TDLib ever receives the CloseChat, so the chat
+     * stays OPEN. TDLib then keeps syncing and PERSISTING that chat's full
+     * message firehose to the on-disk database indefinitely (even while the
+     * user is in other chats or the app is backgrounded). Over a long session
+     * with a busy group that silently bloats the database and is exactly what
+     * degrades scrolling until a full data wipe. Routing the close through
+     * this durable scope guarantees it actually reaches TDLib.
+     */
+    fun closeChatDetached(chatId: Long) {
+        scope.launch { runCatching { send(TdApi.CloseChat(chatId)) } }
+    }
     /**
      * Tell the Telegram server whether the user is actively in the app.
      * Setting the "online" option to true is what makes the server PUSH
@@ -2444,12 +2524,20 @@ object TdClient {
 
     /** Replace the group / channel photo from a local image file path. */
     suspend fun setChatPhoto(chatId: Long, localPath: String) {
-        send(
-            TdApi.SetChatPhoto(
-                chatId,
-                TdApi.InputChatPhotoStatic(TdApi.InputFileLocal(localPath))
+        val f = java.io.File(localPath)
+        Log.i(TAG, "setChatPhoto chat=$chatId path=$localPath exists=${f.exists()} size=${f.length()}")
+        try {
+            send(
+                TdApi.SetChatPhoto(
+                    chatId,
+                    TdApi.InputChatPhotoStatic(TdApi.InputFileLocal(localPath))
+                )
             )
-        )
+            Log.i(TAG, "setChatPhoto chat=$chatId accepted")
+        } catch (t: Throwable) {
+            Log.e(TAG, "setChatPhoto chat=$chatId FAILED", t)
+            throw t
+        }
     }
 
     /**
@@ -2547,7 +2635,15 @@ object TdClient {
      * isPublic=true makes it visible to non-contacts (default Telegram).
      */
     suspend fun setProfilePhoto(filePath: String, isPublic: Boolean = true) {
-        send(TdApi.SetProfilePhoto(TdApi.InputChatPhotoStatic(TdApi.InputFileLocal(filePath)), isPublic))
+        val f = java.io.File(filePath)
+        Log.i(TAG, "setProfilePhoto path=$filePath exists=${f.exists()} size=${f.length()} public=$isPublic")
+        try {
+            send(TdApi.SetProfilePhoto(TdApi.InputChatPhotoStatic(TdApi.InputFileLocal(filePath)), isPublic))
+            Log.i(TAG, "setProfilePhoto accepted")
+        } catch (t: Throwable) {
+            Log.e(TAG, "setProfilePhoto FAILED", t)
+            throw t
+        }
     }
 
     // ----- Contacts & creating chats -----

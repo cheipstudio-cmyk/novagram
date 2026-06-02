@@ -1724,9 +1724,17 @@ private fun FormattedTextRendering(
             }
         }
     }
+    // Message body scales with the SEPARATE message-size slider, not the UI
+    // one: take the unscaled base bodyLarge and apply messageScale, so it's
+    // independent of the global typography scale baked in by the theme.
+    val msgScale = com.secondream.novagram.ui.theme.LocalMessageTextScale.current
+    val baseBody = com.secondream.novagram.ui.theme.AppTypography.bodyLarge
     androidx.compose.foundation.text.ClickableText(
         text = annotated,
-        style = MaterialTheme.typography.bodyLarge.copy(color = onBackground),
+        style = baseBody.copy(
+            color = onBackground,
+            fontSize = baseBody.fontSize * msgScale
+        ),
         onClick = { offset ->
             // Try URL, then EMAIL, then PHONE annotation at that offset.
             annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let {

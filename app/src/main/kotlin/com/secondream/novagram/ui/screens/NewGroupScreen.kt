@@ -625,9 +625,15 @@ fun NewGroupContent(
                         TdClient.createGroup(selected.toList(), groupName.trim())
                     if (chatId != null) {
                         defaultPerms?.let { runCatching { TdClient.setChatPermissions(chatId, it) } }
-                        photoPath?.let { p -> runCatching { TdClient.setChatPhoto(chatId, p) } }
+                        val pPath = photoPath
+                        val photoOk = pPath == null ||
+                            runCatching { TdClient.setChatPhoto(chatId, pPath) }.isSuccess
                         creating = false
-                        NovaSnackbar.show(R.string.snack_group_created, PhosphorIcons.Check)
+                        if (photoOk) {
+                            NovaSnackbar.show(R.string.snack_group_created, PhosphorIcons.Check)
+                        } else {
+                            NovaSnackbar.show(R.string.photo_set_failed, PhosphorIcons.X)
+                        }
                         onOpenChat(chatId)
                     } else {
                         creating = false
@@ -802,9 +808,21 @@ fun NewChannelContent(onOpenChat: (Long) -> Unit) {
                         if (isPublic) username.trim() else ""
                     )
                     if (chatId != null) {
-                        photoPath?.let { p -> runCatching { TdClient.setChatPhoto(chatId, p) } }
+                        // photoPath is produced by an async copy in the picker;
+                        // if the user tapped Crea before it finished it would
+                        // still be null and the photo would silently vanish.
+                        // Fall back to copying the picked uri synchronously now.
+                        val finalPath = photoPath ?: photoUri?.let {
+                            com.secondream.novagram.util.FileUtils.copyUriToCache(ctx, it)?.absolutePath
+                        }
+                        val photoOk = finalPath == null ||
+                            runCatching { TdClient.setChatPhoto(chatId, finalPath) }.isSuccess
                         creating = false
-                        NovaSnackbar.show(R.string.snack_group_created, PhosphorIcons.Check)
+                        if (photoOk) {
+                            NovaSnackbar.show(R.string.snack_group_created, PhosphorIcons.Check)
+                        } else {
+                            NovaSnackbar.show(R.string.photo_set_failed, PhosphorIcons.X)
+                        }
                         onOpenChat(chatId)
                     } else {
                         creating = false

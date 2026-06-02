@@ -264,7 +264,7 @@
     <string name="reactions_who_title">Reactions</string>
     <string name="home_shortcut_search">Search</string>
     <string name="home_shortcut_new_chat">New chat</string>
-    <string name="settings_section_text_size">Text size</string>
+    <string name="settings_section_text_size">Text</string>
     <string name="settings_text_size_sample">Preview sample</string>
     <string name="chat_pinned_label">Pinned message</string>
     <string name="home_period_morning">Good morning</string>
@@ -561,4 +561,15 @@
     <string name="settings_section_privacy_sub">Privacy, security and blocks</string>
     <string name="settings_section_info_sub">Version, links and app</string>
     <string name="settings_privacy_policy">Privacy Policy</string>
+    <string name="photo_set_failed">Could not set the photo</string>
+    <string name="settings_section_display">Display sizes</string>
+    <string name="settings_section_display_sub">Interface and message text</string>
+    <string name="settings_display_ui">Interface and chat list</string>
+    <string name="settings_display_messages">Messages in chat</string>
+    <string name="settings_translator_label">Translator in chats</string>
+    <string name="settings_translator_soon">Coming soon — will translate chats with messages in other languages</string>
+    <string name="settings_ai_recap_label">AI recap button on home</string>
+    <string name="settings_ai_recap_desc">Shows the unread-messages summary button</string>
+    <string name="settings_ai_messages_label">AI actions on messages</string>
+    <string name="settings_ai_messages_desc">The AI option shown when you long-press a message</string>
 </resources>

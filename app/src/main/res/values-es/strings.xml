@@ -264,7 +264,7 @@
     <string name="reactions_who_title">Reacciones</string>
     <string name="home_shortcut_search">Buscar</string>
     <string name="home_shortcut_new_chat">Nuevo chat</string>
-    <string name="settings_section_text_size">Tamaño del texto</string>
+    <string name="settings_section_text_size">Texto</string>
     <string name="settings_text_size_sample">Texto de muestra</string>
     <string name="chat_pinned_label">Mensaje fijado</string>
     <string name="home_period_morning">Buenos días</string>
@@ -561,4 +561,15 @@
     <string name="settings_section_privacy_sub">Privacidad, seguridad y bloqueos</string>
     <string name="settings_section_info_sub">Versión, enlaces y app</string>
     <string name="settings_privacy_policy">Política de privacidad</string>
+    <string name="photo_set_failed">No se pudo establecer la foto</string>
+    <string name="settings_section_display">Tamaños de visualización</string>
+    <string name="settings_section_display_sub">Texto de interfaz y mensajes</string>
+    <string name="settings_display_ui">Interfaz y lista de chats</string>
+    <string name="settings_display_messages">Mensajes en el chat</string>
+    <string name="settings_translator_label">Traductor en los chats</string>
+    <string name="settings_translator_soon">Próximamente — traducirá los chats con mensajes en otros idiomas</string>
+    <string name="settings_ai_recap_label">Botón de resumen IA en inicio</string>
+    <string name="settings_ai_recap_desc">Muestra el botón de resumen de mensajes no leídos</string>
+    <string name="settings_ai_messages_label">Funciones IA en los mensajes</string>
+    <string name="settings_ai_messages_desc">La opción IA que aparece al mantener pulsado un mensaje</string>
 </resources>

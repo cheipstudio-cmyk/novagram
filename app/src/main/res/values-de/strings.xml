@@ -264,7 +264,7 @@
     <string name="reactions_who_title">Reaktionen</string>
     <string name="home_shortcut_search">Suchen</string>
     <string name="home_shortcut_new_chat">Neuer Chat</string>
-    <string name="settings_section_text_size">Schriftgröße</string>
+    <string name="settings_section_text_size">Text</string>
     <string name="settings_text_size_sample">Vorschau</string>
     <string name="chat_pinned_label">Angeheftete Nachricht</string>
     <string name="home_period_morning">Guten Morgen</string>
@@ -561,4 +561,15 @@
     <string name="settings_section_privacy_sub">Datenschutz, Sicherheit und Sperren</string>
     <string name="settings_section_info_sub">Version, Links und App</string>
     <string name="settings_privacy_policy">Datenschutzerklärung</string>
+    <string name="photo_set_failed">Foto konnte nicht festgelegt werden</string>
+    <string name="settings_section_display">Anzeigegrößen</string>
+    <string name="settings_section_display_sub">Oberflächen- und Nachrichtentext</string>
+    <string name="settings_display_ui">Oberfläche und Chatliste</string>
+    <string name="settings_display_messages">Nachrichten im Chat</string>
+    <string name="settings_translator_label">Übersetzer in Chats</string>
+    <string name="settings_translator_soon">Demnächst — übersetzt Chats mit Nachrichten in anderen Sprachen</string>
+    <string name="settings_ai_recap_label">KI-Zusammenfassung auf der Startseite</string>
+    <string name="settings_ai_recap_desc">Zeigt die Schaltfläche zur Zusammenfassung ungelesener Nachrichten</string>
+    <string name="settings_ai_messages_label">KI-Funktionen für Nachrichten</string>
+    <string name="settings_ai_messages_desc">Die KI-Option beim langen Drücken einer Nachricht</string>
 </resources>

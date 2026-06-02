@@ -144,6 +144,15 @@ object PhosphorIcons {
     val Info: ImageVector by lazy { phosphor("Info",
         "M108,84a16,16,0,1,1,16,16A16,16,0,0,1,108,84Zm128,44A108,108,0,1,1,128,20,108.12,108.12,0,0,1,236,128Zm-24,0a84,84,0,1,0-84,84A84.09,84.09,0,0,0,212,128Zm-72,36.68V132a20,20,0,0,0-20-20,12,12,0,0,0-4,23.32V168a20,20,0,0,0,20,20,12,12,0,0,0,4-23.32Z") }
 
+    // Vertical key: a holed round bow joined flush to a toothed shaft. Drawn
+    // as ONE continuous silhouette outline (bow major-arc over the top, then
+    // down the toothed shaft and back up) plus a separate inner circle for the
+    // bow hole. EvenOdd carves the hole; because the shaft is part of the
+    // single outline there's no overlap and no junction gap.
+    val Key: ImageVector by lazy { phosphor("Key",
+        "M116,116 A44,44,0,1,1,140,116 L140,176 L168,176 L168,194 L140,194 L140,206 L156,206 L156,222 L140,222 L140,232 L116,232 Z M106,72 A22,22,0,1,1,150,72 A22,22,0,1,1,106,72 Z",
+        fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd) }
+
     val Trash: ImageVector by lazy { phosphor("Trash",
         "M216,48H180V36A28,28,0,0,0,152,8H104A28,28,0,0,0,76,36V48H40a12,12,0,0,0,0,24h4V208a20,20,0,0,0,20,20H192a20,20,0,0,0,20-20V72h4a12,12,0,0,0,0-24ZM100,36a4,4,0,0,1,4-4h48a4,4,0,0,1,4,4V48H100Zm88,168H68V72H188ZM116,104v64a12,12,0,0,1-24,0V104a12,12,0,0,1,24,0Zm48,0v64a12,12,0,0,1-24,0V104a12,12,0,0,1,24,0Z") }
 

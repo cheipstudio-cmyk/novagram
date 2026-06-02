@@ -31,6 +31,8 @@ fun NovaTheme(
      * from the user's slider in Settings.
      */
     textScale: Float = 1.0f,
+    /** In-chat message-body text multiplier (1.0 = default), independent of [textScale]. */
+    messageScale: Float = 1.0f,
     content: @Composable () -> Unit
 ) {
     val isDark = when (themeMode) {
@@ -180,9 +182,13 @@ fun NovaTheme(
     }
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = scaledTypography,
-        content = content
-    )
+        typography = scaledTypography
+    ) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalMessageTextScale provides messageScale,
+            content = content
+        )
+    }
 }
 
 private fun buildDarkScheme(accent: Accent): ColorScheme = darkColorScheme(

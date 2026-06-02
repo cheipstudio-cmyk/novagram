@@ -243,14 +243,16 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             Spacer(Modifier.height(10.dp))
 
             // TEXT SIZE — global multiplier for every Text in the app.
-            CollapsibleSection(stringResource(R.string.settings_section_text_size), subtitle = stringResource(R.string.settings_section_text_size_sub), icon = phos.FileText, expanded = expandedSection == "textsize", onToggle = { expandedSection = if (expandedSection == "textsize") null else "textsize" }) {
+            CollapsibleSection(stringResource(R.string.settings_section_display), subtitle = stringResource(R.string.settings_section_display_sub), icon = phos.FileText, expanded = expandedSection == "textsize", onToggle = { expandedSection = if (expandedSection == "textsize") null else "textsize" }) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    // Slider 1 — interface + chat list (incl. message previews).
+                    // Drives the global typography scale (textScale).
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            stringResource(R.string.settings_text_size_sample),
+                            stringResource(R.string.settings_display_ui),
                             style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.weight(1f)
                         )
@@ -263,12 +265,35 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                     Spacer(Modifier.height(8.dp))
                     androidx.compose.material3.Slider(
                         value = appearance.textScale,
-                        // The slider commits the new value to DataStore on
-                        // every drag step. DataStore writes are cheap and
-                        // the Theme recomposes immediately, so the preview
-                        // line above updates as the user scrubs.
                         onValueChange = { v ->
                             scope.launch { AppSettings.setTextScale(v) }
+                        },
+                        valueRange = 0.70f..1.60f,
+                        steps = 17
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    // Slider 2 — in-chat message bubble text only (messageScale),
+                    // independent of slider 1 so the two never compound.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            stringResource(R.string.settings_display_messages),
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "${(appearance.messageScale * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.Slider(
+                        value = appearance.messageScale,
+                        onValueChange = { v ->
+                            scope.launch { AppSettings.setMessageScale(v) }
                         },
                         valueRange = 0.70f..1.60f,
                         steps = 17
@@ -300,6 +325,17 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                         }
                     }
                 )
+                // Coming soon: a free-translation toggle that auto-translates
+                // chats whose messages aren't in the app language. Disabled
+                // placeholder for now so the slot is visible.
+                Divider()
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_translator_label),
+                    description = stringResource(R.string.settings_translator_soon),
+                    checked = false,
+                    onToggle = {},
+                    enabled = false
+                )
             }
 
             Spacer(Modifier.height(10.dp))
@@ -315,8 +351,6 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             // them. The single state of truth is `activeSavedThemeId`:
             // null means a base mode row is selected, non-null means a
             // saved-theme row is.)
-
-            Spacer(Modifier.height(10.dp))
 
             // MEDIA — controls how aggressively TDLib pulls media files
             // while the user scrolls a chat. Off = nothing downloads
@@ -383,7 +417,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             // AI — the user pastes their Anthropic API key here. Without
             // one the AI tile in the message actions sheet stays hidden.
             // Key is stored locally and only ever sent to api.anthropic.com.
-            CollapsibleSection(stringResource(R.string.settings_section_ai), subtitle = stringResource(R.string.settings_section_ai_sub), icon = phos.Sparkle, expanded = expandedSection == "ai", onToggle = { expandedSection = if (expandedSection == "ai") null else "ai" }) {
+            CollapsibleSection(stringResource(R.string.settings_section_ai), subtitle = stringResource(R.string.settings_section_ai_sub), icon = phos.Key, expanded = expandedSection == "ai", onToggle = { expandedSection = if (expandedSection == "ai") null else "ai" }) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     // Header: sparkle icon in an accent circle + title +
                     // a status chip showing whether a key is configured.
@@ -396,7 +430,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
+                                com.secondream.novagram.ui.icons.PhosphorIcons.Key,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(22.dp)
@@ -500,6 +534,24 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                         }
                     }
                 }
+                // Feature gates — both call Anthropic, so they're forced off
+                // and non-toggleable until a key is configured.
+                val aiKeySet = appearance.anthropicApiKey != null
+                Divider()
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_ai_recap_label),
+                    description = stringResource(R.string.settings_ai_recap_desc),
+                    checked = aiKeySet && appearance.aiRecapEnabled,
+                    onToggle = { v -> scope.launch { AppSettings.setAiRecapEnabled(v) } },
+                    enabled = aiKeySet
+                )
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_ai_messages_label),
+                    description = stringResource(R.string.settings_ai_messages_desc),
+                    checked = aiKeySet && appearance.aiMessageActionsEnabled,
+                    onToggle = { v -> scope.launch { AppSettings.setAiMessageActionsEnabled(v) } },
+                    enabled = aiKeySet
+                )
             }
 
             Spacer(Modifier.height(10.dp))
@@ -579,6 +631,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                     label = stringResource(R.string.settings_build),
                     value = BuildConfig.VERSION_CODE.toString()
                 )
+                Divider()
+                InfoLinksGrid()
             }
 
             Spacer(Modifier.height(10.dp))
@@ -1304,12 +1358,14 @@ private fun PrivacyToggleRow(
     label: String,
     description: String,
     checked: Boolean,
-    onToggle: (Boolean) -> Unit
+    onToggle: (Boolean) -> Unit,
+    enabled: Boolean = true
 ) {
+    val contentAlpha = if (enabled) 1f else 0.45f
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onToggle(!checked) }
+            .clickable(enabled = enabled) { onToggle(!checked) }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1317,15 +1373,19 @@ private fun PrivacyToggleRow(
             Text(
                 label,
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)
             )
             Text(
                 description,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)
             )
         }
-        androidx.compose.material3.Switch(checked = checked, onCheckedChange = onToggle)
+        androidx.compose.material3.Switch(
+            checked = checked,
+            onCheckedChange = onToggle,
+            enabled = enabled
+        )
     }
 }
 
@@ -1446,116 +1506,83 @@ private fun ClearAppDataRow() {
 }
 
 @Composable
-private fun CreditsBlock() {
+private fun InfoLinksGrid() {
     val context = LocalContext.current
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Nova brand glyph — sits above the credits + CTAs as a quiet
-        // signature mark for the page footer. We pick the dark / light
-        // PNG variant by whether the current theme background is light
-        // or dark, since each PNG is colour-baked: the "dark" file is a
-        // dark glyph meant for light surfaces, and vice-versa. Keeping
-        // them as raster PNGs (rather than tintable vectors) preserves
-        // the gold-foil highlight on the diagonal stroke that's part of
-        // the brand identity.
-        val isLightTheme = MaterialTheme.colorScheme.background.luminance() > 0.5f
-        val novaIcon = if (isLightTheme) R.drawable.ic_novagram_dark
-                       else R.drawable.ic_novagram_light
-        androidx.compose.foundation.Image(
-            painter = androidx.compose.ui.res.painterResource(novaIcon),
-            contentDescription = "Novagram",
-            modifier = Modifier
-                .size(64.dp)
-                .padding(bottom = 4.dp)
+    // The four CTAs, now living inside the Informazioni section. The update
+    // tile keeps the accent "update available" dot (same signal as the
+    // chat-list Settings gear).
+    val updateAvailable by com.secondream.novagram.update
+        .UpdateChecker.updateAvailable
+        .collectAsState()
+    val phos = com.secondream.novagram.ui.icons.PhosphorIcons
+    val creditTiles = listOf(
+        com.secondream.novagram.ui.components.ActionTile(
+            label = stringResource(R.string.action_check_updates),
+            icon = phos.DownloadSimple,
+            onClick = {
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse(
+                                com.secondream.novagram.update.UpdateChecker.RELEASES_PAGE
+                            )
+                        )
+                    )
+                }
+            }
+        ),
+        com.secondream.novagram.ui.components.ActionTile(
+            label = stringResource(R.string.credits_github),
+            icon = phos.Github,
+            onClick = {
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://github.com/cheipstudio-cmyk/novagram")
+                        )
+                    )
+                }
+            }
+        ),
+        com.secondream.novagram.ui.components.ActionTile(
+            label = stringResource(R.string.credits_join_group),
+            icon = phos.UsersThree,
+            onClick = {
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://t.me/novagram_messenger")
+                        ).setPackage(context.packageName)
+                    )
+                }.recoverCatching {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://t.me/novagram_messenger")
+                        )
+                    )
+                }
+            }
+        ),
+        com.secondream.novagram.ui.components.ActionTile(
+            label = stringResource(R.string.credits_buy_coffee),
+            icon = phos.Sparkle,
+            onClick = {
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://buymeacoffee.com/M12oPyJwty")
+                        )
+                    )
+                }
+            }
         )
-        Text(
-            stringResource(R.string.credits_built_by),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(14.dp))
-        // Check for updates — opens the Play Store listing. Gains an
-        // accent dot at top-right when UpdateChecker.updateAvailable
-        // is true, matching the dot that shows on the topbar Settings
-        // gear in the chat list. The dot is the same visual signal at
-        // both entry points so the user can see "there's an update" at
-        // a glance and then act on it here.
-        val updateAvailable by com.secondream.novagram.update
-            .UpdateChecker.updateAvailable
-            .collectAsState()
-        val phos = com.secondream.novagram.ui.icons.PhosphorIcons
-        // Footer CTAs as a 2x2 grid of the shared sheet-style tiles
-        // (surfaceVariant card + accent icon) so they match the modal
-        // sheets. The update tile keeps the "update available" dot.
-        val creditTiles = listOf(
-            com.secondream.novagram.ui.components.ActionTile(
-                label = stringResource(R.string.action_check_updates),
-                icon = phos.DownloadSimple,
-                onClick = {
-                    runCatching {
-                        context.startActivity(
-                            android.content.Intent(
-                                android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse(
-                                    com.secondream.novagram.update.UpdateChecker.RELEASES_PAGE
-                                )
-                            )
-                        )
-                    }
-                }
-            ),
-            com.secondream.novagram.ui.components.ActionTile(
-                label = stringResource(R.string.credits_github),
-                icon = phos.Github,
-                onClick = {
-                    runCatching {
-                        context.startActivity(
-                            android.content.Intent(
-                                android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://github.com/cheipstudio-cmyk/novagram")
-                            )
-                        )
-                    }
-                }
-            ),
-            com.secondream.novagram.ui.components.ActionTile(
-                label = stringResource(R.string.credits_join_group),
-                icon = phos.UsersThree,
-                onClick = {
-                    runCatching {
-                        context.startActivity(
-                            android.content.Intent(
-                                android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://t.me/novagram_messenger")
-                            ).setPackage(context.packageName)
-                        )
-                    }.recoverCatching {
-                        context.startActivity(
-                            android.content.Intent(
-                                android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://t.me/novagram_messenger")
-                            )
-                        )
-                    }
-                }
-            ),
-            com.secondream.novagram.ui.components.ActionTile(
-                label = stringResource(R.string.credits_buy_coffee),
-                icon = phos.Sparkle,
-                onClick = {
-                    runCatching {
-                        context.startActivity(
-                            android.content.Intent(
-                                android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://buymeacoffee.com/M12oPyJwty")
-                            )
-                        )
-                    }
-                }
-            )
-        )
+    )
+    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
         creditTiles.chunked(2).forEachIndexed { rowIdx, rowTiles ->
             if (rowIdx > 0) Spacer(Modifier.height(10.dp))
             Row(
@@ -1589,6 +1616,39 @@ private fun CreditsBlock() {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CreditsBlock() {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Nova brand glyph — sits above the credits + CTAs as a quiet
+        // signature mark for the page footer. We pick the dark / light
+        // PNG variant by whether the current theme background is light
+        // or dark, since each PNG is colour-baked: the "dark" file is a
+        // dark glyph meant for light surfaces, and vice-versa. Keeping
+        // them as raster PNGs (rather than tintable vectors) preserves
+        // the gold-foil highlight on the diagonal stroke that's part of
+        // the brand identity.
+        val isLightTheme = MaterialTheme.colorScheme.background.luminance() > 0.5f
+        val novaIcon = if (isLightTheme) R.drawable.ic_novagram_dark
+                       else R.drawable.ic_novagram_light
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(novaIcon),
+            contentDescription = "Novagram",
+            modifier = Modifier
+                .size(64.dp)
+                .padding(bottom = 4.dp)
+        )
+        Text(
+            stringResource(R.string.credits_built_by),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         Spacer(Modifier.height(16.dp))
         Text(
             stringResource(R.string.settings_privacy_policy),

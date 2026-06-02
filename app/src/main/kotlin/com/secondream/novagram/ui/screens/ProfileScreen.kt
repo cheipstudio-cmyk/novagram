@@ -130,6 +130,14 @@ fun ProfileScreen(onBack: () -> Unit) {
     }
 
     var profileCropUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    // Optimistic local preview. SetProfilePhoto uploads asynchronously and the
+    // circle only swaps to the server copy once UpdateUser pushes it back
+    // (seconds later), so without this the avatar stays blank right after a
+    // crop and the change looks like it silently failed — exactly the
+    // "non lo carica nel cerchio" report. We show the freshly cropped file at
+    // once; the downloaded server photo takes over the moment it lands, and on
+    // an actual upload failure we drop the preview and surface a notice.
+    var pendingAvatarPath by remember { mutableStateOf<String?>(null) }
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -142,12 +150,20 @@ fun ProfileScreen(onBack: () -> Unit) {
             onDismiss = { profileCropUri = null },
             onCropped = { path ->
                 profileCropUri = null
+                pendingAvatarPath = path
                 saving = true
                 scope.launch {
                     // SetProfilePhoto is async; the userUpdates collector above
                     // swaps in (and downloads) the new avatar when TDLib pushes it.
-                    runCatching { TdClient.setProfilePhoto(path, isPublic = true) }
+                    val ok = runCatching { TdClient.setProfilePhoto(path, isPublic = true) }.isSuccess
                     saving = false
+                    if (!ok) {
+                        pendingAvatarPath = null
+                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                            R.string.photo_set_failed,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.X
+                        )
+                    }
                 }
             }
         )
@@ -213,9 +229,20 @@ fun ProfileScreen(onBack: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 val path = photoFile?.local?.path
-                if (!path.isNullOrBlank() && photoFile?.local?.isDownloadingCompleted == true) {
+                val serverReady = !path.isNullOrBlank() && photoFile?.local?.isDownloadingCompleted == true
+                val pending = pendingAvatarPath
+                if (serverReady) {
                     AsyncImage(
                         model = path,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                    )
+                } else if (pending != null) {
+                    // Optimistic: show the just-cropped local file until the
+                    // uploaded server photo finishes downloading and takes over.
+                    AsyncImage(
+                        model = java.io.File(pending),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize().clip(CircleShape)

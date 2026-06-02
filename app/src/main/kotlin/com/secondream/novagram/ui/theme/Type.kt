@@ -20,6 +20,15 @@ private val gfProvider = GoogleFont.Provider(
 private fun gFamily(name: String, weight: FontWeight, style: FontStyle = FontStyle.Normal) =
     Font(googleFont = GoogleFont(name), fontProvider = gfProvider, weight = weight, style = style)
 
+/**
+ * In-chat message-body text scale, provided at the app root from
+ * AppSettings.messageScale. Kept separate from the global [textScale] (which
+ * scales the whole typography in the theme): message bubbles read THIS and
+ * apply it onto the unscaled base size, so the "interface" and "message" text
+ * sliders stay independent instead of multiplying together. Default 1f.
+ */
+val LocalMessageTextScale = androidx.compose.runtime.compositionLocalOf { 1f }
+
 val InstrumentSerif = FontFamily(
     gFamily("Instrument Serif", FontWeight.Normal),
     gFamily("Instrument Serif", FontWeight.Normal, FontStyle.Italic)

@@ -334,7 +334,7 @@ fun ChatListScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                if (aiKeySet) {
+                if (aiKeySet && appearance.aiRecapEnabled) {
                     androidx.compose.material3.SmallFloatingActionButton(
                         onClick = { if (online) showAiSummary = true },
                         // Same palette as the primary + FAB below (solid

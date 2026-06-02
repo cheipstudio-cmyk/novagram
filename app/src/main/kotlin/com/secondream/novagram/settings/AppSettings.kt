@@ -54,6 +54,14 @@ data class AppearancePrefs(
      */
     val textScale: Float = 1.0f,
     /**
+     * Separate scale for the in-chat message-bubble body text, independent
+     * of [textScale] (which covers UI + chat list + message previews).
+     * Mirrors Telegram's split between "interface" and "message" text size.
+     * Applied via LocalMessageTextScale onto the UNSCALED base typography so
+     * the two sliders never compound. Same 0.70–1.60 range.
+     */
+    val messageScale: Float = 1.0f,
+    /**
      * Id of the saved theme currently applied (so the row gets a checkmark in
      * Settings). null = no saved theme active, the user is on a base theme
      * mode (System/Light/Dark/Amoled) or freely tweaked customs.
@@ -78,6 +86,17 @@ data class AppearancePrefs(
      * Authorization header to api.anthropic.com.
      */
     val anthropicApiKey: String? = null,
+    /**
+     * Gate for the AI recap FAB on the chat-list home. Off hides it even
+     * with a key set. Forced-off and non-toggleable in Settings when no key
+     * is configured (a recap needs the key).
+     */
+    val aiRecapEnabled: Boolean = true,
+    /**
+     * Gate for the AI entry in the message long-press actions sheet. Off
+     * removes it. Same key-required disabling as [aiRecapEnabled].
+     */
+    val aiMessageActionsEnabled: Boolean = true,
     /** When true, a 4th "Archiviati" tab appears in the chat list. */
     val showArchivedTab: Boolean = false,
     /**
@@ -193,8 +212,11 @@ object AppSettings {
     private val ACTIVE_SAVED_THEME_ID = stringPreferencesKey("active_saved_theme_id")
     private val SAVED_THEMES_JSON = stringPreferencesKey("saved_themes_json")
     private val TEXT_SCALE = androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
+    private val MESSAGE_SCALE = androidx.datastore.preferences.core.floatPreferencesKey("message_scale")
     private val AUTO_DOWNLOAD_MEDIA = androidx.datastore.preferences.core.booleanPreferencesKey("auto_download_media")
     private val ANTHROPIC_API_KEY = androidx.datastore.preferences.core.stringPreferencesKey("anthropic_api_key")
+    private val AI_RECAP_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("ai_recap_enabled")
+    private val AI_MESSAGE_ACTIONS_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("ai_message_actions_enabled")
     private val SHOW_ARCHIVED_TAB = androidx.datastore.preferences.core.booleanPreferencesKey("show_archived_tab")
     private val SHOW_LAST_SEEN = androidx.datastore.preferences.core.booleanPreferencesKey("show_last_seen")
     private val SHOW_ALL_TAB = androidx.datastore.preferences.core.booleanPreferencesKey("show_all_tab")
@@ -243,10 +265,13 @@ object AppSettings {
                 customInputBarArgb = prefs[CUSTOM_INPUT_BAR],
                 activeSavedThemeId = prefs[ACTIVE_SAVED_THEME_ID],
                 textScale = (prefs[TEXT_SCALE] ?: 1.0f).coerceIn(0.70f, 1.60f),
+                messageScale = (prefs[MESSAGE_SCALE] ?: 1.0f).coerceIn(0.70f, 1.60f),
                 autoDownloadMedia = prefs[AUTO_DOWNLOAD_MEDIA] ?: true,
                 anthropicApiKey = prefs[ANTHROPIC_API_KEY]
                     ?.let { com.secondream.novagram.security.SecretCrypto.decrypt(it) }
                     ?.takeIf { it.isNotBlank() },
+                aiRecapEnabled = prefs[AI_RECAP_ENABLED] ?: true,
+                aiMessageActionsEnabled = prefs[AI_MESSAGE_ACTIONS_ENABLED] ?: true,
                 showArchivedTab = prefs[SHOW_ARCHIVED_TAB] ?: false,
                 showAllTab = prefs[SHOW_ALL_TAB] ?: true,
                 lockSavedToTop = prefs[LOCK_SAVED_TOP] ?: true,
@@ -531,6 +556,20 @@ object AppSettings {
     suspend fun setTextScale(scale: Float) {
         val clamped = scale.coerceIn(0.70f, 1.60f)
         appContext.dataStore.edit { it[TEXT_SCALE] = clamped }
+    }
+
+    /** Message-bubble body text scale. Same clamp/range as [setTextScale]. */
+    suspend fun setMessageScale(scale: Float) {
+        val clamped = scale.coerceIn(0.70f, 1.60f)
+        appContext.dataStore.edit { it[MESSAGE_SCALE] = clamped }
+    }
+
+    suspend fun setAiRecapEnabled(enabled: Boolean) {
+        appContext.dataStore.edit { it[AI_RECAP_ENABLED] = enabled }
+    }
+
+    suspend fun setAiMessageActionsEnabled(enabled: Boolean) {
+        appContext.dataStore.edit { it[AI_MESSAGE_ACTIONS_ENABLED] = enabled }
     }
 
     suspend fun setThemeMode(mode: ThemeMode) {

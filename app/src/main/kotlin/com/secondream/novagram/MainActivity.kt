@@ -113,7 +113,8 @@ class MainActivity : ComponentActivity() {
                 accentColor = appearance.accentColor,
                 customAccentArgb = appearance.customAccentArgb,
                 customBgArgb = appearance.customBgArgb,
-                textScale = appearance.textScale
+                textScale = appearance.textScale,
+                messageScale = appearance.messageScale
             ) {
                 // Sync the Activity's window background to the Compose theme
                 // background. The static @color/ink_bg in themes.xml is dark,
