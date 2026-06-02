@@ -282,7 +282,9 @@ private fun RoundSelectToggle(selected: Boolean, onClick: () -> Unit) {
 }
 
 
- * small-avatar-beside-the-name row.
+/**
+ * Group-creation avatar header: a tappable round avatar (tap to pick a group
+ * photo), the classic small-avatar-beside-the-name row.
  */
 @Composable
 private fun CreationAvatarHeader(

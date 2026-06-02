@@ -66,6 +66,12 @@ class App : Application(), ImageLoaderFactory {
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
                 AppForegroundState.isInForeground = true
+                // Tell TDLib we're online so the server pushes read receipts
+                // (our ✓✓) and peer online/typing status in real time instead
+                // of batching them. Paired with the onStop call below.
+                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    TdClient.setOnline(true)
+                }
                 // Re-read connectivity state on foreground entry. Some OEM
                 // ROMs throttle our NetworkCallback while the app is
                 // backgrounded so a transition that happened during that
@@ -86,7 +92,16 @@ class App : Application(), ImageLoaderFactory {
                     com.secondream.novagram.update.UpdateChecker.check()
                 }
             }
-            override fun onStop(owner: LifecycleOwner) { AppForegroundState.isInForeground = false }
+            override fun onStop(owner: LifecycleOwner) {
+                AppForegroundState.isInForeground = false
+                // Drop online status when backgrounded: stops us appearing
+                // permanently online to peers and lets TDLib relax the
+                // connection. Read receipts for chats we already sent will
+                // resync on next foreground.
+                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    TdClient.setOnline(false)
+                }
+            }
         })
 
         NotificationHelper.init(this)

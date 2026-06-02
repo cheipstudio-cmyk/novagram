@@ -115,6 +115,66 @@ fun ForwardChatPickerSheet(
 }
 
 /**
+ * Single-step chat picker for "share into a chat" flows that don't forward a
+ * message (e.g. sharing a saved theme). Same look as the forward picker's
+ * step 1 — search field + recency-sorted chat list reusing [ForwardChatRow] —
+ * but tapping a chat fires [onPick] with its id straight away (no composer /
+ * caption step). The caller does the actual send + navigation.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ShareChatPickerSheet(
+    title: String,
+    onDismiss: () -> Unit,
+    onPick: (chatId: Long) -> Unit
+) {
+    val allChats by TdClient.chats.collectAsState()
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(allChats, query) {
+        val q = query.trim()
+        if (q.isBlank()) allChats
+        else allChats.filter { it.title.contains(q, ignoreCase = true) }
+    }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .navigationBarsPadding()
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge,
+                fontStyle = FontStyle.Italic
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text(stringResource(R.string.forward_picker_search_hint)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(12.dp))
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 0.dp, max = 480.dp)
+            ) {
+                items(filtered, key = { it.id }) { c ->
+                    ForwardChatRow(summary = c, onClick = { onPick(c.id) })
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+/**
  * Step 2 of the forward flow: top bar with back + destination chat name,
  * a quoted preview of the source message, a free-form caption field, and a
  * send button. Matches the visual language of ReplyPreview in ChatScreen

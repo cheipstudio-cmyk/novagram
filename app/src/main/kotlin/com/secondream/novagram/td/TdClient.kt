@@ -937,6 +937,14 @@ object TdClient {
             is TdApi.AuthorizationStateReady -> {
                 _authState.value = AuthState.Ready
                 scope.launch { loadChats(100) }
+                // Set online on auth-ready when we're foreground. On cold
+                // start the lifecycle onStart can fire before TDLib finished
+                // authorizing, so that setOnline(true) is dropped; this
+                // re-applies it once we're logged in so read receipts (✓✓)
+                // and peer status stream in real time from the first screen.
+                if (com.secondream.novagram.AppForegroundState.isInForeground) {
+                    scope.launch { setOnline(true) }
+                }
                 // Eagerly populate scope notification settings cache.
                 // TDLib also pushes these via UpdateScopeNotificationSettings
                 // but the timing isn't deterministic — without prefetch
@@ -1136,6 +1144,21 @@ object TdClient {
 
     suspend fun openChat(chatId: Long) { send(TdApi.OpenChat(chatId)) }
     suspend fun closeChat(chatId: Long) { send(TdApi.CloseChat(chatId)) }
+    /**
+     * Tell the Telegram server whether the user is actively in the app.
+     * Setting the "online" option to true is what makes the server PUSH
+     * real-time updates the instant they happen — most visibly
+     * updateChatReadOutbox (the peer's read receipt, i.e. our ✓✓) and the
+     * peers' own online/typing status. It's also what makes us appear
+     * "online" to others. When it's false the server batches read receipts
+     * and only flushes them when another event wakes the connection (e.g.
+     * the peer's reply), which is why the second tick used to lag until the
+     * other side wrote back. Driven by the process foreground/background
+     * lifecycle in App.kt.
+     */
+    suspend fun setOnline(online: Boolean) {
+        runCatching { send(TdApi.SetOption("online", TdApi.OptionValueBoolean(online))) }
+    }
     suspend fun viewMessages(chatId: Long, ids: LongArray) {
         send(TdApi.ViewMessages(chatId, ids, TdApi.MessageSourceChatHistory(), true))
     }

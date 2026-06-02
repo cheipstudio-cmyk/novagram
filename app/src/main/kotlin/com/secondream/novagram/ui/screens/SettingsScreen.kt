@@ -72,7 +72,7 @@ import com.secondream.novagram.ui.theme.AccentPalette
 import com.secondream.novagram.ui.theme.BubblePalette
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val appearance by AppSettings.appearance.collectAsState(
@@ -83,6 +83,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var showThemeBuilder by remember { mutableStateOf(false) }
     var blockedOpen by remember { mutableStateOf(false) }
     var builderTheme by remember { mutableStateOf<com.secondream.novagram.settings.SavedTheme?>(null) }
+    // Theme the user is sharing into a chat (drives the in-app chat picker).
+    var shareThemeTarget by remember { mutableStateOf<com.secondream.novagram.settings.SavedTheme?>(null) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         runCatching { showReadDate = TdClient.getReadDatePrivacy() }
     }
@@ -174,38 +176,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                                         showThemeBuilder = true
                                     },
                                     onShare = {
-                                        // Build a "synthesized" AppearancePrefs from the theme
-                                        // so the share payload imports cleanly on any device.
-                                        val payload = appearance.copy(
-                                            customAccentArgb = theme.accentArgb,
-                                            customMyBubbleArgb = theme.myBubbleArgb,
-                                            customOthersBubbleArgb = theme.othersBubbleArgb,
-                                            customBgArgb = theme.bgArgb,
-                                            customInputBarArgb = theme.inputBarArgb,
-                                            activeSavedThemeId = null
-                                        )
-                                        val json = buildThemeShareJson(payload)
-                                        val encoded = android.util.Base64.encodeToString(
-                                            json.toByteArray(Charsets.UTF_8),
-                                            android.util.Base64.URL_SAFE or
-                                                android.util.Base64.NO_WRAP or
-                                                android.util.Base64.NO_PADDING
-                                        )
-                                        val deeplink = "nova://theme?data=$encoded"
-                                        val message = context.getString(R.string.theme_share_body, deeplink)
-                                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                            type = "text/plain"
-                                            putExtra(android.content.Intent.EXTRA_TEXT, message)
-                                            putExtra(android.content.Intent.EXTRA_SUBJECT, theme.name)
-                                        }
-                                        runCatching {
-                                            context.startActivity(
-                                                android.content.Intent.createChooser(
-                                                    intent,
-                                                    context.getString(R.string.theme_share_chooser)
-                                                )
-                                            )
-                                        }
+                                        // Open the in-app chat picker instead of
+                                        // the OS share sheet: the user picks a
+                                        // chat, we send the theme deeplink there
+                                        // and drop straight into that chat. The
+                                        // deeplink is built when the chat is
+                                        // chosen (see ShareChatPickerSheet below).
+                                        shareThemeTarget = theme
                                     },
                                     onDelete = {
                                         scope.launch { AppSettings.deleteSavedTheme(theme.id) }
@@ -656,6 +633,39 @@ fun SettingsScreen(onBack: () -> Unit) {
     }
     if (blockedOpen) {
         BlockedUsersDialog(onDismiss = { blockedOpen = false })
+    }
+    shareThemeTarget?.let { theme ->
+        com.secondream.novagram.ui.components.ShareChatPickerSheet(
+            title = stringResource(R.string.theme_share_picker_title),
+            onDismiss = { shareThemeTarget = null },
+            onPick = { chatId ->
+                // Synthesize the share payload from this saved theme so it
+                // imports cleanly on the recipient's device, encode it into the
+                // nova://theme deeplink, send it to the chosen chat, then drop
+                // the user into that chat.
+                val payload = appearance.copy(
+                    customAccentArgb = theme.accentArgb,
+                    customMyBubbleArgb = theme.myBubbleArgb,
+                    customOthersBubbleArgb = theme.othersBubbleArgb,
+                    customBgArgb = theme.bgArgb,
+                    customInputBarArgb = theme.inputBarArgb,
+                    activeSavedThemeId = null
+                )
+                val json = buildThemeShareJson(payload)
+                val encoded = android.util.Base64.encodeToString(
+                    json.toByteArray(Charsets.UTF_8),
+                    android.util.Base64.URL_SAFE or
+                        android.util.Base64.NO_WRAP or
+                        android.util.Base64.NO_PADDING
+                )
+                val message = context.getString(
+                    R.string.theme_share_body, "nova://theme?data=$encoded"
+                )
+                scope.launch { runCatching { TdClient.sendText(chatId, message) } }
+                shareThemeTarget = null
+                onOpenChat(chatId)
+            }
+        )
     }
 }
 

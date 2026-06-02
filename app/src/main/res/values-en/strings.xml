@@ -200,6 +200,7 @@
     <string name="theme_open_builder">Customize</string>
     <string name="theme_reset">Reset</string>
     <string name="theme_share">Share theme</string>
+    <string name="theme_share_picker_title">Share theme with…</string>
     <string name="theme_share_chooser">Share Novagram theme</string>
     <string name="theme_builder_title">Accent color</string>
     <string name="theme_preview">Preview</string>

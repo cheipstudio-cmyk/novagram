@@ -239,7 +239,14 @@ fun AppRouter(
             }
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(onBack = { nav.popBackStack() })
+            SettingsScreen(
+                onBack = { nav.popBackStack() },
+                onOpenChat = { id ->
+                    nav.navigate(Routes.chat(id, 0L)) {
+                        popUpTo(Routes.SETTINGS) { inclusive = true }
+                    }
+                }
+            )
         }
         composable(Routes.PROFILE) {
             ProfileScreen(onBack = { nav.popBackStack() })
