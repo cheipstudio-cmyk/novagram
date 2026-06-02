@@ -4995,9 +4995,13 @@ private fun ChatMembersTab(
     var showBanned by remember(chatId) { mutableStateOf(false) }
     var members by remember(chatId) { mutableStateOf<List<TdApi.ChatMember>>(emptyList()) }
     var loading by remember(chatId) { mutableStateOf(true) }
+    // Track the last refreshKey so we can tell an ACTION-triggered reload
+    // (restrict/mute/unmute → membersRefresh++) apart from a query/tab change.
+    var prevRefreshKey by remember(chatId) { mutableStateOf(refreshKey) }
     LaunchedEffect(chatId, query, supergroupId, basicGroupId, refreshKey, showBanned) {
-        loading = true
-        members = when {
+        val actionTriggered = refreshKey != prevRefreshKey
+        prevRefreshKey = refreshKey
+        suspend fun loadMembers(): List<TdApi.ChatMember> = when {
             supergroupId != null -> {
                 val filter = when {
                     showBanned -> TdApi.SupergroupMembersFilterBanned(query)
@@ -5024,7 +5028,22 @@ private fun ChatMembersTab(
             }
             else -> emptyList()
         }
-        loading = false
+        if (actionTriggered) {
+            // After setChatMemberStatus (restrict / mute / unmute) TDLib's
+            // supergroup member cache lags a beat, so an immediate refetch
+            // returns the OLD status and the "Limitato" label fails to appear
+            // or disappear in real time. Don't blank the list to a spinner on a
+            // toggle (jarring) — keep the current rows visible, refetch after a
+            // short delay, then confirm once more in case the sync was slow.
+            kotlinx.coroutines.delay(300)
+            members = loadMembers()
+            kotlinx.coroutines.delay(900)
+            members = loadMembers()
+        } else {
+            loading = true
+            members = loadMembers()
+            loading = false
+        }
     }
     Column(modifier = Modifier.fillMaxSize()) {
         if (supergroupId != null) {

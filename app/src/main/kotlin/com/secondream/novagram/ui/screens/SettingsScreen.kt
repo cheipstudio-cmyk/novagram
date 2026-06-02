@@ -1302,6 +1302,15 @@ private fun ClearAppDataRow() {
                     freedBytes += com.secondream.novagram.td.TdClient.clearTdlibDownloads()
                     done = true
                     cleaning = false
+                    // Show the "Liberati X MB" result briefly — long enough for
+                    // the count-up animation (800ms) to finish and be read —
+                    // then collapse back to the normal tappable button. Without
+                    // this the row stayed stuck on a full/"finished" progress
+                    // bar and never returned to button state.
+                    kotlinx.coroutines.delay(2500)
+                    done = false
+                    freedBytes = 0L
+                    estimateBytes = 0L
                 }
             }
             .padding(horizontal = 16.dp, vertical = 14.dp),
