@@ -434,6 +434,17 @@ object TdClient {
                 chatCache[obj.chatId]?.title = obj.title
                 scheduleRefresh()
             }
+            is TdApi.UpdateChatPhoto -> {
+                // TDLib echoes a chat's avatar change here — including a
+                // group/channel photo set right after creation. Without this
+                // handler the cached chat kept its old/empty photo, so a
+                // just-set avatar never appeared until an app restart
+                // re-fetched the chat. Update the cache, refresh the list
+                // (chat-row avatar) and ping the chat (header avatar).
+                chatCache[obj.chatId]?.photo = obj.photo
+                scheduleRefresh()
+                scope.launch { _chatUpdates.emit(obj.chatId) }
+            }
             is TdApi.UpdateChatPermissions -> {
                 // Keep cached default permissions fresh so the group "Permessi"
                 // dialog shows the real values right after a save (previously it

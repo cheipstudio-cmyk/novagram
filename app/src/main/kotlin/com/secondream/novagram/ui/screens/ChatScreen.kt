@@ -2289,6 +2289,19 @@ fun ChatScreen(
                     } ?: false
                 }
                 val menuTiles = buildList {
+                    if (isNonMember) {
+                        // Public group/channel we're only previewing — Join not
+                        // tapped yet — so mute / leave are meaningless (we're not
+                        // members). Placeholder "Annulla" tile until there are
+                        // real preview-state actions to offer here.
+                        add(
+                            com.secondream.novagram.ui.components.ActionTile(
+                                label = stringResource(R.string.action_cancel),
+                                icon = com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                                onClick = { menuOpen = false }
+                            )
+                        )
+                    } else {
                     add(
                         com.secondream.novagram.ui.components.ActionTile(
                             label = stringResource(
@@ -2377,6 +2390,7 @@ fun ChatScreen(
                                 }
                             )
                         )
+                    }
                     }
                 }
                 com.secondream.novagram.ui.components.ActionBottomSheet(

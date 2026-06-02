@@ -62,6 +62,17 @@ object SecretCrypto {
             Base64.encodeToString(ct, Base64.NO_WRAP)
     }.getOrDefault(plain)
 
+    // Single-entry memo of the last successful decrypt. The stored ciphertext
+    // only changes when the user edits their key (rare), but decrypt() is
+    // called from the COLD `appearance` flow's map — once per collector per
+    // emission, and there's a collector per visible message bubble. Touching
+    // the hardware Keystore on every call (load entry + AES/GCM = tens of ms,
+    // serialised by the Keystore daemon) made the whole UI lag for as long as
+    // a key was stored. With the memo, every call after the first is a string
+    // compare. No extra exposure: AppearancePrefs already holds the plaintext.
+    @Volatile private var memoCipher: String? = null
+    @Volatile private var memoPlain: String? = null
+
     /**
      * Decrypt a value produced by [encrypt]. Legacy/plaintext values (no
      * "v1:" prefix) are returned as-is. Returns null only when a v1 value
@@ -71,7 +82,8 @@ object SecretCrypto {
     fun decrypt(stored: String): String? {
         if (stored.isEmpty()) return null
         if (!stored.startsWith(PREFIX)) return stored
-        return runCatching {
+        memoCipher?.let { if (it == stored) return memoPlain }
+        val plain = runCatching {
             val parts = stored.removePrefix(PREFIX).split(":")
             val iv = Base64.decode(parts[0], Base64.NO_WRAP)
             val ct = Base64.decode(parts[1], Base64.NO_WRAP)
@@ -79,5 +91,7 @@ object SecretCrypto {
             cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
             String(cipher.doFinal(ct), Charsets.UTF_8)
         }.getOrNull()
+        if (plain != null) { memoCipher = stored; memoPlain = plain }
+        return plain
     }
 }

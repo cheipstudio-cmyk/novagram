@@ -417,7 +417,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             // AI — the user pastes their Anthropic API key here. Without
             // one the AI tile in the message actions sheet stays hidden.
             // Key is stored locally and only ever sent to api.anthropic.com.
-            CollapsibleSection(stringResource(R.string.settings_section_ai), subtitle = stringResource(R.string.settings_section_ai_sub), icon = phos.Key, expanded = expandedSection == "ai", onToggle = { expandedSection = if (expandedSection == "ai") null else "ai" }) {
+            CollapsibleSection(stringResource(R.string.settings_section_ai), subtitle = stringResource(R.string.settings_section_ai_sub), icon = phos.Sparkle, expanded = expandedSection == "ai", onToggle = { expandedSection = if (expandedSection == "ai") null else "ai" }) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     // Header: sparkle icon in an accent circle + title +
                     // a status chip showing whether a key is configured.

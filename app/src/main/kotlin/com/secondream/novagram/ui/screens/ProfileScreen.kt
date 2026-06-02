@@ -155,14 +155,17 @@ fun ProfileScreen(onBack: () -> Unit) {
                 scope.launch {
                     // SetProfilePhoto is async; the userUpdates collector above
                     // swaps in (and downloads) the new avatar when TDLib pushes it.
-                    val ok = runCatching { TdClient.setProfilePhoto(path, isPublic = true) }.isSuccess
+                    val res = runCatching { TdClient.setProfilePhoto(path, isPublic = true) }
                     saving = false
-                    if (!ok) {
+                    res.exceptionOrNull()?.let { e ->
+                        // Surface the REAL reason in-app (no adb needed): bad
+                        // key / network / TDLib rejection all land here.
                         pendingAvatarPath = null
-                        com.secondream.novagram.ui.components.NovaSnackbar.show(
-                            R.string.photo_set_failed,
-                            com.secondream.novagram.ui.icons.PhosphorIcons.X
-                        )
+                        android.widget.Toast.makeText(
+                            context,
+                            "Foto profilo: ${e.message ?: e}",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
                     }
                 }
             }
