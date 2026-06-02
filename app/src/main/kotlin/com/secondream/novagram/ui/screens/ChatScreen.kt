@@ -4728,13 +4728,34 @@ private fun GroupInfoEditor(
         unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
         focusedLabelColor = MaterialTheme.colorScheme.primary
     )
+    // Inside a full-screen Dialog the window doesn't dispatch system-bar
+    // insets, so navigationBarsPadding() resolved to 0 and the "Salva" button
+    // sat under the gesture bar (Eugenio: "Salva ancora tagliato in basso").
+    // Read the REAL navigation-bar height off the Activity's decor view and
+    // pad the scroll content by it, so the last element always clears the
+    // nav/gesture area regardless of the dialog's broken inset dispatch.
+    val editorDensity = androidx.compose.ui.platform.LocalDensity.current
+    val editorNavBottom = remember {
+        val act = ctx as? android.app.Activity
+        val insets = act?.window?.decorView?.let {
+            androidx.core.view.ViewCompat.getRootWindowInsets(it)
+        }
+        val px = insets?.getInsets(
+            androidx.core.view.WindowInsetsCompat.Type.navigationBars()
+        )?.bottom ?: 0
+        with(editorDensity) { px.toDp() }
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 8.dp)
-            .navigationBarsPadding()
             .imePadding()
+            .padding(
+                start = 20.dp,
+                end = 20.dp,
+                top = 8.dp,
+                bottom = editorNavBottom + 24.dp
+            )
     ) {
         Column(
             modifier = Modifier
@@ -5504,7 +5525,16 @@ private fun MemberActionSheet(
         return
     }
     val isBanned = status is TdApi.ChatMemberStatusBanned
-    val isMuted = status is TdApi.ChatMemberStatusRestricted
+    // "Muted" (→ shows Riattiva) ONLY when the restriction actually silences
+    // the member, i.e. they can't send basic/text messages. A PARTIAL
+    // restriction set via "Permessi utente" (e.g. media off but text still
+    // allowed) leaves canSendBasicMessages = true, so it must NOT read as
+    // muted — that was Eugenio's bug: removing media showed "Limitato" (correct)
+    // but also flipped the toggle to "Riattiva" as if muted. The row's
+    // "Limitato" label still derives from Restricted status, which is right;
+    // only the mute/unmute toggle is gated on real silence.
+    val isMuted = (status as? TdApi.ChatMemberStatusRestricted)
+        ?.permissions?.canSendBasicMessages == false
     val isAdmin = status is TdApi.ChatMemberStatusAdministrator
     val isCreator = status is TdApi.ChatMemberStatusCreator
     val tiles = buildList {

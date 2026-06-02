@@ -381,6 +381,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         }
                     }
                 )
+                ClearAppDataRow()
                 PrivacyToggleRow(
                     label = stringResource(R.string.settings_show_all_tab),
                     description = stringResource(R.string.settings_show_all_tab_desc),
@@ -1241,6 +1242,113 @@ private fun PrivacyToggleRow(
             )
         }
         androidx.compose.material3.Switch(checked = checked, onCheckedChange = onToggle)
+    }
+}
+
+/**
+ * "Elimina dati app" — wipes all downloaded media + local caches (TDLib files,
+ * Coil image cache, app cacheDir) WITHOUT logging the user out. Shows an
+ * animated progress bar and counts up the freed space in MB/GB as it goes.
+ */
+@Composable
+private fun ClearAppDataRow() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var cleaning by remember { mutableStateOf(false) }
+    var done by remember { mutableStateOf(false) }
+    var freedBytes by remember { mutableStateOf(0L) }
+    var estimateBytes by remember { mutableStateOf(0L) }
+
+    val rawProgress = when {
+        done -> 1f
+        estimateBytes > 0L -> (freedBytes.toFloat() / estimateBytes.toFloat()).coerceIn(0f, 1f)
+        else -> 0f
+    }
+    val animProgress by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = rawProgress,
+        animationSpec = androidx.compose.animation.core.tween(600),
+        label = "clearProgress"
+    )
+    val animBytes by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = freedBytes.toFloat(),
+        animationSpec = androidx.compose.animation.core.tween(800),
+        label = "clearBytes"
+    )
+    fun fmt(bytes: Float): String {
+        val mb = bytes / (1024f * 1024f)
+        return if (mb >= 1024f) String.format("%.2f GB", mb / 1024f)
+        else String.format("%.1f MB", mb)
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !cleaning) {
+                cleaning = true
+                done = false
+                freedBytes = 0L
+                estimateBytes = 0L
+                scope.launch {
+                    estimateBytes = (
+                        com.secondream.novagram.td.TdClient.storageFilesSize() +
+                            com.secondream.novagram.util.FileUtils.dirSize(ctx.cacheDir)
+                        ).coerceAtLeast(1L)
+                    // 1) Local caches (Coil + cacheDir) off the main thread.
+                    val appFreed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.secondream.novagram.util.FileUtils.clearAppCaches(ctx)
+                    }
+                    freedBytes += appFreed
+                    // 2) TDLib downloads (usually the bulk).
+                    freedBytes += com.secondream.novagram.td.TdClient.clearTdlibDownloads()
+                    done = true
+                    cleaning = false
+                }
+            }
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                stringResource(R.string.clear_app_data_title),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (cleaning || done) {
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { animProgress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    stringResource(
+                        if (done) R.string.clear_app_data_done
+                        else R.string.clear_app_data_cleaning,
+                        fmt(animBytes)
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    stringResource(R.string.clear_app_data_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 

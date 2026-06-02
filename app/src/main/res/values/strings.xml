@@ -499,4 +499,8 @@
     <string name="perm_change_info">Cambiare le info</string>
     <string name="perm_saved">Permessi aggiornati</string>
     <string name="unread_messages_separator">Messaggi non letti</string>
+    <string name="clear_app_data_title">Elimina dati app</string>
+    <string name="clear_app_data_desc">Libera spazio: download e cache</string>
+    <string name="clear_app_data_cleaning">Pulizia in corso… %1$s</string>
+    <string name="clear_app_data_done">Liberati %1$s</string>
 </resources>

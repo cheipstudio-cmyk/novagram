@@ -235,6 +235,62 @@ fun NewGroupScreen(
 }
 
 /**
+ * Large centered circular photo picker shared by the group/channel creation
+ * tabs, matching the "modifica profilo / info gruppo" look (big round avatar
+ * with a "Cambia foto" affordance underneath) instead of the old cramped
+ * small-avatar-beside-the-name row.
+ */
+@Composable
+private fun CreationAvatarHeader(
+    photoUri: android.net.Uri?,
+    onPick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp, bottom = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(112.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable { onPick() },
+            contentAlignment = Alignment.Center
+        ) {
+            if (photoUri != null) {
+                AsyncImage(
+                    model = photoUri,
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                )
+            } else {
+                Icon(
+                    PhosphorIcons.Camera,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(38.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            stringResource(R.string.profile_change_photo),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onPick() }
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+    }
+}
+
+/**
  * Group-creation body for use as a TAB inside NewChatScreen (no Scaffold/app
  * bar of its own). Member search reuses NewChatScreen's header search [query];
  * the Crea button lives at the bottom of the content. Lands in the new group
@@ -322,50 +378,25 @@ fun NewGroupContent(
         (!isPublic || available == true)
 
     Column(modifier = Modifier.fillMaxSize()) {
+        CreationAvatarHeader(
+            photoUri = photoUri,
+            onPick = { photoPicker.launch("image/*") }
+        )
+        OutlinedTextField(
+            value = groupName,
+            onValueChange = { groupName = it },
+            singleLine = true,
+            label = { Text(stringResource(R.string.new_group_name)) },
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable { photoPicker.launch("image/*") },
-                contentAlignment = Alignment.Center
-            ) {
-                if (photoUri != null) {
-                    AsyncImage(
-                        model = photoUri,
-                        contentDescription = null,
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(CircleShape)
-                    )
-                } else {
-                    Icon(
-                        PhosphorIcons.Camera,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-            OutlinedTextField(
-                value = groupName,
-                onValueChange = { groupName = it },
-                singleLine = true,
-                label = { Text(stringResource(R.string.new_group_name)) },
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.weight(1f)
-            )
-        }
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
         ) {
             FilterChip(
                 selected = !isPublic,
@@ -594,47 +625,20 @@ fun NewChannelContent(onOpenChat: (Long) -> Unit) {
     }
     val canCreate = name.isNotBlank() && !creating && (!isPublic || available == true)
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
+        CreationAvatarHeader(
+            photoUri = photoUri,
+            onPick = { photoPicker.launch("image/*") }
+        )
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            singleLine = true,
+            label = { Text(stringResource(R.string.new_channel_name)) },
+            shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable { photoPicker.launch("image/*") },
-                contentAlignment = Alignment.Center
-            ) {
-                if (photoUri != null) {
-                    AsyncImage(
-                        model = photoUri,
-                        contentDescription = null,
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(CircleShape)
-                    )
-                } else {
-                    Icon(
-                        PhosphorIcons.Camera,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                label = { Text(stringResource(R.string.new_channel_name)) },
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.weight(1f)
-            )
-        }
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+        )
         OutlinedTextField(
             value = description,
             onValueChange = { description = it },
@@ -644,11 +648,13 @@ fun NewChannelContent(onOpenChat: (Long) -> Unit) {
             maxLines = 4,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .padding(horizontal = 20.dp, vertical = 4.dp)
         )
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
         ) {
             FilterChip(
                 selected = !isPublic,

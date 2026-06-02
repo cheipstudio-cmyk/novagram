@@ -485,4 +485,8 @@
     <string name="perm_change_info">Change info</string>
     <string name="perm_saved">Permissions updated</string>
     <string name="unread_messages_separator">Unread messages</string>
+    <string name="clear_app_data_title">Clear app data</string>
+    <string name="clear_app_data_desc">Free up space: downloads and cache</string>
+    <string name="clear_app_data_cleaning">Cleaning… %1$s</string>
+    <string name="clear_app_data_done">Freed %1$s</string>
 </resources>

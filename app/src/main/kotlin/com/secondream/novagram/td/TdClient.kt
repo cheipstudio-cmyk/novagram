@@ -2492,6 +2492,39 @@ object TdClient {
         runCatching { send(TdApi.ReadAllChatReactions(chatId)) }
     }
 
+    /** Total size (bytes) of TDLib's downloaded files — fast, no full scan. */
+    suspend fun storageFilesSize(): Long {
+        val s = runCatching { send(TdApi.GetStorageStatisticsFast()) }
+            .getOrNull() as? TdApi.StorageStatisticsFast
+        return s?.filesSize ?: 0L
+    }
+
+    /**
+     * Delete every downloaded media/cache file TDLib is holding, WITHOUT
+     * touching the account or session (no logout). All limits set to 0 and
+     * immunity_delay 0 means "nothing is spared". return_deleted_file_statistics
+     * = true makes the returned StorageStatistics describe the DELETED files, so
+     * .size is the number of bytes actually freed.
+     */
+    suspend fun clearTdlibDownloads(): Long {
+        val stats = runCatching {
+            send(
+                TdApi.OptimizeStorage(
+                    0L,            // size: keep 0 bytes
+                    0,             // ttl
+                    0,             // count
+                    0,             // immunity_delay: nothing immune
+                    emptyArray(),  // file_types: all
+                    longArrayOf(), // chat_ids: all
+                    longArrayOf(), // exclude_chat_ids
+                    true,          // return_deleted_file_statistics
+                    0              // chat_limit
+                )
+            )
+        }.getOrNull() as? TdApi.StorageStatistics
+        return stats?.size ?: 0L
+    }
+
     /**
      * Locally decrement the chat's unread mention count by 1 and notify
      * subscribers. Used by the @-mention chip click flow: tapping the

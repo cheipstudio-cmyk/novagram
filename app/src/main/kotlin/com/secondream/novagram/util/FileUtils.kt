@@ -163,6 +163,43 @@ object FileUtils {
 
     enum class SaveCategory { Media, File }
 
+    /** Recursively sum the size in bytes of every file under [dir]. */
+    fun dirSize(dir: File?): Long {
+        if (dir == null || !dir.exists()) return 0L
+        return runCatching {
+            dir.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+        }.getOrDefault(0L)
+    }
+
+    /**
+     * Clear the caches TDLib does NOT manage: Coil's image disk cache and the
+     * app cacheDir (upload temp, voice temp, image_cache, ...). Returns the
+     * number of bytes freed. Does NOT touch the TDLib session/account — these
+     * are purely local scratch files, so the user is never logged out.
+     */
+    fun clearAppCaches(context: Context): Long {
+        var freed = 0L
+        // Coil's image disk + memory cache (its disk dir lives under cacheDir,
+        // so clear it FIRST and count its size, then the cacheDir sweep below
+        // won't double-count the now-emptied folder).
+        runCatching {
+            val loader = coil.Coil.imageLoader(context)
+            loader.diskCache?.let { dc ->
+                freed += dc.size
+                dc.clear()
+            }
+            loader.memoryCache?.clear()
+        }
+        // Everything else left in cacheDir.
+        runCatching {
+            context.cacheDir?.listFiles()?.forEach { f ->
+                val sz = dirSize(f)
+                if (f.deleteRecursively()) freed += sz
+            }
+        }
+        return freed
+    }
+
     /**
      * Downscale + re-encode an image for chat upload. Decodes bounds
      * first to compute an integer sample size (cheap, avoids decoding the
