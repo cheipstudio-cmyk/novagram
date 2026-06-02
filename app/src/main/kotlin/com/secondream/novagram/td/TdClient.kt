@@ -427,6 +427,13 @@ object TdClient {
                 chatCache[obj.chatId]?.permissions = obj.permissions
                 scope.launch { _chatUpdates.emit(obj.chatId) }
             }
+            is TdApi.UpdateChatHasProtectedContent -> {
+                // "Gruppo protetto" toggle echo. Keeping the cached flag fresh is
+                // what makes the media-save / forward / copy gating react in real
+                // time (it reads chatCache[..].hasProtectedContent).
+                chatCache[obj.chatId]?.hasProtectedContent = obj.hasProtectedContent
+                scope.launch { _chatUpdates.emit(obj.chatId) }
+            }
             is TdApi.UpdateChatReadInbox -> {
                 chatCache[obj.chatId]?.unreadCount = obj.unreadCount
                 refreshChats()
@@ -2063,6 +2070,17 @@ object TdClient {
     suspend fun setChatPermissions(chatId: Long, permissions: TdApi.ChatPermissions) {
         send(TdApi.SetChatPermissions(chatId, permissions))
     }
+
+    /**
+     * Toggle the chat's "protected content" flag ("Gruppo protetto"). When on,
+     * Telegram blocks forwarding, local saving/copying and (best-effort)
+     * screenshots of the chat. Returns true on success. Caller-gated to
+     * owner/admins who can change group info.
+     */
+    suspend fun toggleChatHasProtectedContent(chatId: Long, enabled: Boolean): Boolean =
+        runCatching { send<TdApi.Ok>(TdApi.ToggleChatHasProtectedContent(chatId, enabled)) }
+            .onSuccess { chatCache[chatId]?.hasProtectedContent = enabled }
+            .isSuccess
 
     /**
      * Restrict a single member to the given permissions (granular per-user,

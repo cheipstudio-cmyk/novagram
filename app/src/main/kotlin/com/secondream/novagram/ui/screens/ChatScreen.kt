@@ -4999,6 +4999,9 @@ private fun GroupInfoEditor(
     var inviteLink by remember(chatId) { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var permsOpen by remember { mutableStateOf(false) }
+    var isProtected by remember(chatId) {
+        mutableStateOf(TdClient.getCachedChat(chatId)?.hasProtectedContent == true)
+    }
     LaunchedEffect(chatId) {
         inviteLink = runCatching { TdClient.getOrCreatePrimaryInviteLink(chatId) }.getOrNull()
     }
@@ -5075,6 +5078,52 @@ private fun GroupInfoEditor(
                     onClick = { permsOpen = true }
                 ),
                 modifier = Modifier.fillMaxWidth()
+            )
+        }
+        // Advanced privacy: "Gruppo protetto" — when on, Telegram blocks
+        // forwarding, local saving/copying and (best-effort) screenshots.
+        // Visible to anyone who can edit the group (owner / admins with
+        // change-info), matching the editor's own gate.
+        Spacer(Modifier.height(14.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.group_protected_title),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    stringResource(R.string.group_protected_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            androidx.compose.material3.Switch(
+                checked = isProtected,
+                onCheckedChange = { want ->
+                    val previous = isProtected
+                    isProtected = want // optimistic
+                    scope.launch {
+                        val ok = TdClient.toggleChatHasProtectedContent(chatId, want)
+                        if (!ok) isProtected = previous // revert on failure
+                    }
+                }
             )
         }
         Spacer(Modifier.height(14.dp))
@@ -6164,6 +6213,9 @@ private fun ChatMediaItemActions(
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     val phos = com.secondream.novagram.ui.icons.PhosphorIcons
+    // When the chat restricts saving (Telegram "Restrict saving content" /
+    // our "Gruppo protetto"), the Salva tile must not appear at all.
+    val isProtected = TdClient.getCachedChat(message.chatId)?.hasProtectedContent == true
     // Build the tiles list dynamically so we can label them per content
     // kind (Apri foto vs Apri video vs Apri file) — matches how
     // Telegram differentiates the verbs across content types.
@@ -6323,7 +6375,7 @@ private fun ChatMediaItemActions(
                 icon = openIcon,
                 onClick = openAction
             ),
-            saveAction?.let {
+            (if (isProtected) null else saveAction)?.let {
                 com.secondream.novagram.ui.components.ActionTile(
                     label = stringResource(R.string.action_save),
                     icon = phos.DownloadSimple,

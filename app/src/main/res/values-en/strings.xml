@@ -548,4 +548,6 @@
     <string name="snack_sticker_pack_added">Pack added</string>
     <string name="sticker_tab_packs">My packs</string>
     <string name="sticker_pack_count">stickers</string>
+    <string name="group_protected_title">Protected group</string>
+    <string name="group_protected_desc">Blocks forwarding, saving and screenshots of the chat</string>
 </resources>

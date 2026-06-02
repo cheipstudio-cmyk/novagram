@@ -73,6 +73,7 @@ import com.secondream.novagram.ui.theme.BubblePalette
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
+    val phos = com.secondream.novagram.ui.icons.PhosphorIcons
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val appearance by AppSettings.appearance.collectAsState(

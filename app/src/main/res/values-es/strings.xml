@@ -548,4 +548,6 @@
     <string name="snack_sticker_pack_added">Paquete añadido</string>
     <string name="sticker_tab_packs">Mis paquetes</string>
     <string name="sticker_pack_count">stickers</string>
+    <string name="group_protected_title">Grupo protegido</string>
+    <string name="group_protected_desc">Bloquea reenvío, guardado y capturas de la chat</string>
 </resources>
