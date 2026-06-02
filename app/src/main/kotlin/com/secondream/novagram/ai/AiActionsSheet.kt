@@ -32,6 +32,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -507,6 +508,26 @@ private fun buildPrompt(
 @Composable
 internal fun AiThinkingIndicator() {
     val accent = MaterialTheme.colorScheme.primary
+    // On weak devices the user can disable heavy motion; the continuous
+    // breathing orb (three infinite float animations + a glow) is exactly
+    // the kind of thing that stutters there, so fall back to a plain spinner.
+    val reduceAnim by com.secondream.novagram.settings.AppSettings.appearance
+        .collectAsState(initial = com.secondream.novagram.settings.AppearancePrefs())
+    if (reduceAnim.reduceAnimations) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            CircularProgressIndicator(color = accent, modifier = Modifier.size(36.dp))
+            Text(
+                stringResource(com.secondream.novagram.R.string.ai_thinking_1),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                fontStyle = FontStyle.Italic
+            )
+        }
+        return
+    }
     val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "ai-think")
     // Scale: slow breathing motion 0.85 → 1.15 over ~1.4s, ease-in-out.
     val scale by transition.animateFloat(

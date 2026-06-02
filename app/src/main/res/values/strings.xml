@@ -394,6 +394,8 @@
     <string name="settings_sounds_desc">Riproduci un suono all\'invio (toc) e alla ricezione (ding) di un messaggio</string>
     <string name="settings_bot_commands">Pulsante comandi bot</string>
     <string name="settings_bot_commands_desc">Mostra il pulsante dei comandi bot nelle chat abilitate</string>
+    <string name="settings_reduce_animations">Riduci animazioni</string>
+    <string name="settings_reduce_animations_desc">Disattiva le animazioni più pesanti sui telefoni meno potenti</string>
     <string name="action_in_progress_muting">Silenziando…</string>
     <string name="action_in_progress_unmuting">Ripristinando…</string>
     <string name="action_in_progress_banning">Bannando…</string>
@@ -415,6 +417,7 @@
     <string name="ai_summary_nokey">Imposta la chiave Anthropic nelle impostazioni per usare l\'AI.</string>
     <string name="ai_summary_close">Chiudi</string>
     <string name="ai_summary_fab_cd">Riepilogo AI</string>
+    <string name="offline_action_notice">Nessuna connessione</string>
     <string name="chat_info_media_action_title">Apri media</string>
     <string name="chat_info_media_open_photo">Apri foto</string>
     <string name="chat_info_media_open_video">Apri video</string>

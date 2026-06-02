@@ -139,7 +139,16 @@ data class AppearancePrefs(
      * button is hidden everywhere — the slash menu is still reachable by
      * typing "/". Purely client-side.
      */
-    val showBotCommandsButton: Boolean = true
+    val showBotCommandsButton: Boolean = true,
+    /**
+     * Performance escape hatch for very low-end devices. When true, the
+     * heaviest motion in the app is disabled: the chat message-list item
+     * placement animation and the continuous AI "thinking" orb (which falls
+     * back to a plain spinner). Lightweight one-shot press feedback stays —
+     * it's cheap even on weak hardware. Default false: full motion on first
+     * launch; users opt in from Settings.
+     */
+    val reduceAnimations: Boolean = false
 )
 
 /**
@@ -194,6 +203,7 @@ object AppSettings {
     private val SEND_TYPING_STATUS = androidx.datastore.preferences.core.booleanPreferencesKey("send_typing_status")
     private val MESSAGE_SOUNDS = androidx.datastore.preferences.core.booleanPreferencesKey("message_sounds")
     private val SHOW_BOT_COMMANDS_BUTTON = androidx.datastore.preferences.core.booleanPreferencesKey("show_bot_commands_button")
+    private val REDUCE_ANIMATIONS = androidx.datastore.preferences.core.booleanPreferencesKey("reduce_animations")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -244,7 +254,8 @@ object AppSettings {
                 showLastSeen = prefs[SHOW_LAST_SEEN] ?: true,
                 sendTypingStatus = prefs[SEND_TYPING_STATUS] ?: true,
                 messageSounds = prefs[MESSAGE_SOUNDS] ?: true,
-                showBotCommandsButton = prefs[SHOW_BOT_COMMANDS_BUTTON] ?: true
+                showBotCommandsButton = prefs[SHOW_BOT_COMMANDS_BUTTON] ?: true,
+                reduceAnimations = prefs[REDUCE_ANIMATIONS] ?: false
             )
         }
 
@@ -274,6 +285,10 @@ object AppSettings {
 
     suspend fun setShowBotCommandsButton(enabled: Boolean) {
         appContext.dataStore.edit { it[SHOW_BOT_COMMANDS_BUTTON] = enabled }
+    }
+
+    suspend fun setReduceAnimations(enabled: Boolean) {
+        appContext.dataStore.edit { it[REDUCE_ANIMATIONS] = enabled }
     }
 
     suspend fun setShowLastSeen(enabled: Boolean) {

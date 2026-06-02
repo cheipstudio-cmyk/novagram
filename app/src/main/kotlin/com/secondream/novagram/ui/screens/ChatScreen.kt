@@ -2463,7 +2463,11 @@ fun ChatScreen(
                                 .animateItem(
                                     fadeInSpec = null,
                                     fadeOutSpec = null,
-                                    placementSpec = androidx.compose.animation.core.spring(
+                                    // Reduce-animations escape hatch for weak
+                                    // devices: null placement spec = items snap
+                                    // to position with no animation at all.
+                                    placementSpec = if (appearance.reduceAnimations) null
+                                    else androidx.compose.animation.core.spring(
                                         dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
                                         stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
                                     )

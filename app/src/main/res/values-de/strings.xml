@@ -397,6 +397,7 @@
     <string name="ai_summary_nokey">Hinterlege deinen Anthropic-Schlüssel in den Einstellungen, um die KI zu nutzen.</string>
     <string name="ai_summary_close">Schließen</string>
     <string name="ai_summary_fab_cd">KI-Zusammenfassung</string>
+    <string name="offline_action_notice">Keine Verbindung</string>
     <string name="chat_info_media_action_title">Medien öffnen</string>
     <string name="chat_info_media_open_photo">Foto öffnen</string>
     <string name="chat_info_media_open_video">Video öffnen</string>
@@ -421,6 +422,8 @@
     <string name="settings_sounds_desc">Einen Ton beim Senden (Tap) und Empfangen (Ding) einer Nachricht abspielen</string>
     <string name="settings_bot_commands">Bot-Befehlsschaltfläche</string>
     <string name="settings_bot_commands_desc">Schaltfläche für Bot-Befehle in unterstützten Chats anzeigen</string>
+    <string name="settings_reduce_animations">Animationen reduzieren</string>
+    <string name="settings_reduce_animations_desc">Schaltet die aufwendigeren Animationen auf schwächeren Telefonen ab</string>
     <string name="member_role_owner">Inhaber</string>
     <string name="member_role_admin">Administrator</string>
     <string name="member_role_restricted">Eingeschränkt</string>

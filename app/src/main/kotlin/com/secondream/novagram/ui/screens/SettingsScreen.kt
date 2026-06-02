@@ -281,6 +281,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                         onPick = { color -> scope.launch { AppSettings.setAccentColor(color) } }
                     )
                 }
+                Divider()
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_reduce_animations),
+                    description = stringResource(R.string.settings_reduce_animations_desc),
+                    checked = appearance.reduceAnimations,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setReduceAnimations(enabled) }
+                    }
+                )
             }
 
             Spacer(Modifier.height(20.dp))
@@ -1476,7 +1485,7 @@ private fun CreditsBlock() {
             ),
             com.secondream.novagram.ui.components.ActionTile(
                 label = stringResource(R.string.credits_github),
-                icon = phos.FileText,
+                icon = phos.Github,
                 onClick = {
                     runCatching {
                         context.startActivity(

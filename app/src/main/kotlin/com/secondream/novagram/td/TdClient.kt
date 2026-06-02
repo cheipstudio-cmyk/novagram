@@ -1014,11 +1014,35 @@ object TdClient {
         try { send(params) } catch (e: Throwable) { Log.e(TAG, "setTdlibParameters failed", e) }
     }
 
+    @Volatile private var lastOfflineNoticeMs = 0L
+
+    /**
+     * Deliberate, user-initiated writes that warrant an offline notice when
+     * attempted with no connection. Matched by [TdApi.Function] simple class
+     * name. Intentionally excludes reads and automatic/high-frequency
+     * requests (SendChatAction typing, SetChatDraftMessage, ViewMessages,
+     * OpenChat/CloseChat, CreateChat-by-id) so the notice only fires on
+     * things the user explicitly tapped.
+     */
+    private val OFFLINE_NOTICE_ACTIONS = setOf(
+        "SendMessage", "SendMessageAlbum", "ForwardMessages",
+        "EditMessageText", "EditMessageCaption", "DeleteMessages",
+        "SetPollAnswer", "AddMessageReaction", "RemoveMessageReaction",
+        "ToggleChatIsPinned", "SetChatNotificationSettings", "AddChatToList",
+        "DeleteChatHistory", "LeaveChat", "JoinChat", "JoinChatByInviteLink",
+        "CreateNewBasicGroupChat", "CreateNewSupergroupChat",
+        "CreateNewSecretChat", "CreatePrivateChat", "AddChatMembers",
+        "SetChatMemberStatus", "SetChatTitle", "SetChatDescription",
+        "SetChatPhoto", "SetChatPermissions", "SetChatMessageAutoDeleteTime",
+        "SetMessageSenderBlockList", "SetBio", "SetName", "SetUsername"
+    )
+
     suspend inline fun <reified R : TdApi.Object> send(query: TdApi.Function<R>): R {
         return sendRaw(query) as R
     }
 
     suspend fun sendRaw(query: TdApi.Function<*>): TdApi.Object {
+        maybeNotifyOffline(query)
         val c = client ?: throw IllegalStateException("TDLib client not started")
         return suspendCancellableCoroutine { cont ->
             c.send(query) { result ->
@@ -1029,6 +1053,30 @@ object TdClient {
                 }
             }
         }
+    }
+
+    /**
+     * Global "you're offline" safety net. Every deliberate user action goes
+     * through [sendRaw]; when the device is offline AND the request is one of
+     * the user-initiated writes below, we surface a single transient notice
+     * (NovaSnackbar) so a tap never just fails in silence. Reads (getChat,
+     * getChatHistory, downloadFile, …) and high-frequency/automatic requests
+     * (typing, draft saves, view marks) are deliberately NOT in the set, so
+     * they never trigger the notice. Throttled to one notice per ~1.5s so a
+     * burst of taps (or an album of sends) shows it once. We still pass the
+     * request to TDLib — it queues queueable writes and runs them on
+     * reconnect; the notice is purely informational.
+     */
+    private fun maybeNotifyOffline(query: TdApi.Function<*>) {
+        if (com.secondream.novagram.connectivity.ConnectivityState.isOnline.value) return
+        if (query::class.java.simpleName !in OFFLINE_NOTICE_ACTIONS) return
+        val now = System.currentTimeMillis()
+        if (now - lastOfflineNoticeMs < 1500L) return
+        lastOfflineNoticeMs = now
+        com.secondream.novagram.ui.components.NovaSnackbar.show(
+            com.secondream.novagram.R.string.offline_action_notice,
+            com.secondream.novagram.ui.icons.PhosphorIcons.Info
+        )
     }
 
     suspend fun configureApi(apiId: Int, apiHash: String) {
