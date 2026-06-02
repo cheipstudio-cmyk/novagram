@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -125,8 +126,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             // up when no custom theme is active — a custom theme already
             // owns its own accent so showing the global one would be
             // ambiguous.
-            SectionHeader(stringResource(R.string.settings_section_appearance))
-            SectionCard {
+            CollapsibleSection(stringResource(R.string.settings_section_appearance)) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         stringResource(R.string.settings_theme),
@@ -286,8 +286,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(20.dp))
 
             // TEXT SIZE — global multiplier for every Text in the app.
-            SectionHeader(stringResource(R.string.settings_section_text_size))
-            SectionCard {
+            CollapsibleSection(stringResource(R.string.settings_section_text_size)) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -314,8 +313,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                         onValueChange = { v ->
                             scope.launch { AppSettings.setTextScale(v) }
                         },
-                        valueRange = 0.85f..1.35f,
-                        steps = 9
+                        valueRange = 0.70f..1.60f,
+                        steps = 17
                     )
                 }
             }
@@ -323,8 +322,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(20.dp))
 
             // LANGUAGE
-            SectionHeader(stringResource(R.string.settings_section_language))
-            SectionCard {
+            CollapsibleSection(stringResource(R.string.settings_section_language)) {
                 LanguageRow(
                     current = appearance.languageTag,
                     onPick = { tag ->
@@ -367,8 +365,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             // while the user scrolls a chat. Off = nothing downloads
             // until the user taps the placeholder; useful on metered
             // networks and for "just skimming" workflows.
-            SectionHeader(stringResource(R.string.settings_section_media))
-            SectionCard {
+            CollapsibleSection(stringResource(R.string.settings_section_media)) {
                 PrivacyToggleRow(
                     label = stringResource(R.string.settings_media_autodownload),
                     description = stringResource(R.string.settings_media_autodownload_desc),
@@ -421,8 +418,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             // AI — the user pastes their Anthropic API key here. Without
             // one the AI tile in the message actions sheet stays hidden.
             // Key is stored locally and only ever sent to api.anthropic.com.
-            SectionHeader(stringResource(R.string.settings_section_ai))
-            SectionCard {
+            CollapsibleSection(stringResource(R.string.settings_section_ai)) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     // Header: sparkle icon in an accent circle + title +
                     // a status chip showing whether a key is configured.
@@ -544,8 +540,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(20.dp))
 
             // PRIVACY
-            SectionHeader(stringResource(R.string.settings_section_privacy))
-            SectionCard {
+            CollapsibleSection(stringResource(R.string.settings_section_privacy)) {
                 PrivacyToggleRow(
                     label = stringResource(R.string.settings_privacy_read_receipts),
                     description = stringResource(R.string.settings_privacy_read_receipts_desc),
@@ -585,6 +580,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 )
                 Divider()
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_bot_commands),
+                    description = stringResource(R.string.settings_bot_commands_desc),
+                    checked = appearance.showBotCommandsButton,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setShowBotCommandsButton(enabled) }
+                    }
+                )
+                Divider()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -609,8 +613,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(20.dp))
 
             // INFO
-            SectionHeader(stringResource(R.string.settings_section_info))
-            SectionCard {
+            CollapsibleSection(stringResource(R.string.settings_section_info)) {
                 InfoRow(
                     label = stringResource(R.string.settings_version),
                     value = BuildConfig.VERSION_NAME
@@ -813,6 +816,68 @@ private fun BlockedUserRow(user: org.drinkless.tdlib.TdApi.User, onUnblocked: ()
     }
 }
 
+/**
+ * A settings section with a tappable header that expands/collapses its card
+ * with a fluid animation. The caret rotates 0°→180° on toggle. Replaces the
+ * plain SectionHeader+SectionCard pair so the long settings page can be
+ * folded section-by-section (Eugenio: "bisogna scorrere tanto"). Default
+ * expanded so nothing is hidden on first open.
+ */
+@Composable
+private fun CollapsibleSection(
+    title: String,
+    content: @Composable () -> Unit
+) {
+    var expanded by remember { mutableStateOf(true) }
+    val rotation by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(300),
+        label = "sectionCaret"
+    )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { expanded = !expanded }
+                .padding(start = 16.dp, end = 10.dp, top = 4.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                title.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.2.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                com.secondream.novagram.ui.icons.PhosphorIcons.CaretDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .size(18.dp)
+                    .rotate(rotation)
+            )
+        }
+        androidx.compose.animation.AnimatedVisibility(
+            visible = expanded,
+            enter = androidx.compose.animation.expandVertically(
+                animationSpec = androidx.compose.animation.core.tween(300)
+            ) + androidx.compose.animation.fadeIn(
+                animationSpec = androidx.compose.animation.core.tween(300)
+            ),
+            exit = androidx.compose.animation.shrinkVertically(
+                animationSpec = androidx.compose.animation.core.tween(220)
+            ) + androidx.compose.animation.fadeOut(
+                animationSpec = androidx.compose.animation.core.tween(160)
+            )
+        ) {
+            SectionCard { content() }
+        }
+    }
+}
+
 @Composable
 private fun SectionHeader(title: String) {
     Text(
@@ -1004,14 +1069,8 @@ private fun AccentSwatch(
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
-            if (selected) {
-                Icon(
-                    com.secondream.novagram.ui.icons.PhosphorIcons.Check,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
+            // Selection shown by the accent ring around the swatch — no tick
+            // (a dot would be invisible on the coloured accent swatch).
         }
         Spacer(Modifier.height(6.dp))
         Text(
@@ -1100,11 +1159,11 @@ internal fun LanguageRow(current: String, onPick: (String) -> Unit) {
                             modifier = Modifier.weight(1f)
                         )
                         if (current == opt.tag) {
-                            Icon(
-                                com.secondream.novagram.ui.icons.PhosphorIcons.Check,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
                             )
                         }
                     }
@@ -1160,14 +1219,7 @@ private fun BubbleColorRow(
                     contentAlignment = Alignment.Center
                 ) {
                     if (current == s.color) {
-                        Icon(
-                            com.secondream.novagram.ui.icons.PhosphorIcons.Check,
-                            contentDescription = null,
-                            tint = if (s.color == BubbleColor.Default)
-                                MaterialTheme.colorScheme.onSurface
-                            else Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        // Selection shown by the ring around the swatch — no tick.
                     }
                 }
             }
@@ -1628,17 +1680,20 @@ private fun SavedThemeRow(
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Four-color preview strip. Stacked horizontally so the user gets a
-        // sense of how the theme will look in chat at a glance.
-        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            for (argb in listOf(theme.accentArgb, theme.myBubbleArgb, theme.othersBubbleArgb, theme.bgArgb)) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 10.dp, height = 24.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(Color(argb))
-                )
-            }
+        // Two-colour swatch — accent + background — fused into a single rounded
+        // pill with NO gap between them (Eugenio: "i due colori sfondo e accent
+        // devono essere attaccati, non avere spazio").
+        Row(modifier = Modifier.clip(RoundedCornerShape(6.dp))) {
+            Box(
+                modifier = Modifier
+                    .size(width = 16.dp, height = 26.dp)
+                    .background(Color(theme.accentArgb))
+            )
+            Box(
+                modifier = Modifier
+                    .size(width = 16.dp, height = 26.dp)
+                    .background(Color(theme.bgArgb))
+            )
         }
         Spacer(Modifier.width(12.dp))
         Text(
@@ -1650,49 +1705,53 @@ private fun SavedThemeRow(
             overflow = TextOverflow.Ellipsis
         )
         if (isActive) {
-            Icon(
-                com.secondream.novagram.ui.icons.PhosphorIcons.Check,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp)
+            // Accent dot marks the active theme (replaces the old ✓ tick).
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
             )
             Spacer(Modifier.width(6.dp))
         }
-        Box {
-            androidx.compose.material3.IconButton(onClick = { menuOpen = true }) {
-                Icon(
-                    com.secondream.novagram.ui.icons.PhosphorIcons.DotsThreeVertical,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            androidx.compose.material3.DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false }
-            ) {
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text(stringResource(R.string.theme_action_apply)) },
-                    onClick = { menuOpen = false; onApply() }
-                )
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text(stringResource(R.string.theme_action_edit)) },
-                    onClick = { menuOpen = false; onEdit() }
-                )
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text(stringResource(R.string.theme_share)) },
-                    onClick = { menuOpen = false; onShare() }
-                )
-                androidx.compose.material3.DropdownMenuItem(
-                    text = {
-                        Text(
-                            stringResource(R.string.theme_action_delete),
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    },
-                    onClick = { menuOpen = false; onDelete() }
-                )
-            }
+        androidx.compose.material3.IconButton(onClick = { menuOpen = true }) {
+            Icon(
+                com.secondream.novagram.ui.icons.PhosphorIcons.DotsThreeVertical,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
+    }
+    // Actions live in the app's standard tile bottom-sheet (same look as the
+    // chat/member action sheets) instead of a stock dropdown menu.
+    if (menuOpen) {
+        com.secondream.novagram.ui.components.ActionBottomSheet(
+            title = theme.name,
+            onDismiss = { menuOpen = false },
+            tiles = listOf(
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.theme_action_apply),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Check,
+                    onClick = { menuOpen = false; onApply() }
+                ),
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.theme_action_edit),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.PencilSimple,
+                    onClick = { menuOpen = false; onEdit() }
+                ),
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.theme_share),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.PaperPlaneRight,
+                    onClick = { menuOpen = false; onShare() }
+                ),
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.theme_action_delete),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                    onClick = { menuOpen = false; onDelete() },
+                    destructive = true
+                )
+            )
+        )
     }
 }
 
@@ -1991,11 +2050,11 @@ private fun BaseModeListRow(
             modifier = Modifier.weight(1f)
         )
         if (selected) {
-            Icon(
-                com.secondream.novagram.ui.icons.PhosphorIcons.Check,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
             )
         }
     }

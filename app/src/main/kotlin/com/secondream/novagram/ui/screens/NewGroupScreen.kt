@@ -2,8 +2,10 @@ package com.secondream.novagram.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import coil.compose.AsyncImage
 import androidx.compose.foundation.layout.Box
@@ -220,9 +222,9 @@ fun NewGroupScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Checkbox(
-                                checked = isSel,
-                                onCheckedChange = {
+                            RoundSelectToggle(
+                                selected = isSel,
+                                onClick = {
                                     if (isSel) selected.remove(u.id) else selected.add(u.id)
                                 }
                             )
@@ -235,9 +237,51 @@ fun NewGroupScreen(
 }
 
 /**
- * Large centered circular photo picker shared by the group/channel creation
- * tabs, matching the "modifica profilo / info gruppo" look (big round avatar
- * with a "Cambia foto" affordance underneath) instead of the old cramped
+ * Round, animated member-selection control for the contact list in group
+ * creation. Replaces the stock square Checkbox: an outlined circle that
+ * springs a filled accent dot in/out on toggle (no checkmark — Eugenio wants
+ * accent dots, not ticks). Ring colour animates outline→accent, the dot
+ * scales 0→1 with a bouncy spring.
+ */
+@Composable
+private fun RoundSelectToggle(selected: Boolean, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val ring by androidx.compose.animation.animateColorAsState(
+        targetValue = if (selected) cs.primary else cs.outline,
+        animationSpec = androidx.compose.animation.core.tween(180),
+        label = "toggleRing"
+    )
+    val fill by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+        ),
+        label = "toggleFill"
+    )
+    Box(
+        modifier = Modifier
+            .size(24.dp)
+            .clip(CircleShape)
+            .border(width = 2.dp, color = ring, shape = CircleShape)
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(14.dp)
+                .graphicsLayer { scaleX = fill; scaleY = fill }
+                .clip(CircleShape)
+                .background(cs.primary)
+        )
+    }
+}
+
+
  * small-avatar-beside-the-name row.
  */
 @Composable
@@ -526,9 +570,9 @@ fun NewGroupContent(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Checkbox(
-                                checked = isSel,
-                                onCheckedChange = {
+                            RoundSelectToggle(
+                                selected = isSel,
+                                onClick = {
                                     if (isSel) selected.remove(u.id) else selected.add(u.id)
                                 }
                             )

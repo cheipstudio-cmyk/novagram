@@ -179,6 +179,8 @@ fun ChatListScreen(
 
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var searchOpen by remember { mutableStateOf(false) }
+    // Home AI sheet (opened from the small Sparkle FAB above the + button).
+    var showAiSummary by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     // Server-side public search results — public users (in Chat tab),
     // public groups (in Gruppi), or public channels (in Canali). Populated
@@ -202,7 +204,7 @@ fun ChatListScreen(
     // myUserId is also used to filter Saved Messages out of the Chats tab
     // (Saved Messages is a private chat where chatId == userId; Eugenio
     // wants it accessible only via the Storage card on the home page).
-    var myUserId by remember { mutableStateOf(0L) }
+    var myUserId by remember { mutableStateOf(TdClient.cachedMyUserId) }
     // First name fuels the top-bar greeting on the Home tab ("Ciao, X").
     // Lives at screen scope (rather than inside HomePage) so the Scaffold
     // can read it without re-fetching every time the tab swaps.
@@ -316,20 +318,47 @@ fun ChatListScreen(
                 ),
                 label = "fabScale"
             )
-            FloatingActionButton(
-                onClick = onNewChat,
-                interactionSource = fabInteraction,
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.graphicsLayer {
-                    scaleX = fabScale
-                    scaleY = fabScale
-                }
+            // Stack a smaller AI (Sparkle) FAB above the primary + button.
+            // The AI FAB is gated on realtime connectivity — same logic as the
+            // chat send button — so when offline it greys out and ignores taps
+            // (a summary needs a network round-trip to Anthropic + TDLib).
+            val online by com.secondream.novagram.connectivity
+                .ConnectivityState.isOnline.collectAsState()
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Icon(
-                    com.secondream.novagram.ui.icons.PhosphorIcons.Plus,
-                    contentDescription = stringResource(R.string.action_new_chat)
-                )
+                androidx.compose.material3.SmallFloatingActionButton(
+                    onClick = { if (online) showAiSummary = true },
+                    containerColor = if (online)
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                    else
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                    contentColor = if (online)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                ) {
+                    Icon(
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
+                        contentDescription = stringResource(R.string.ai_summary_fab_cd)
+                    )
+                }
+                FloatingActionButton(
+                    onClick = onNewChat,
+                    interactionSource = fabInteraction,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = fabScale
+                        scaleY = fabScale
+                    }
+                ) {
+                    Icon(
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Plus,
+                        contentDescription = stringResource(R.string.action_new_chat)
+                    )
+                }
             }
         },
         topBar = {
@@ -786,6 +815,10 @@ fun ChatListScreen(
                 chatActionTarget = null
             }
         )
+    }
+
+    if (showAiSummary) {
+        com.secondream.novagram.ai.AiSummarySheet(onDismiss = { showAiSummary = false })
     }
 
     leaveConfirmTarget?.let { target ->
@@ -1439,8 +1472,12 @@ private fun ChatRow(
                 // Pinned-to-top indicator. Sits to the right of the title,
                 // before the mute bell + timestamp. Matches Telegram's
                 // visual cue that this chat was explicitly anchored at
-                // the top of the list by the user.
-                if (c.isPinned) {
+                // the top of the list by the user. Suppressed for Saved
+                // Messages: its position is governed by the "Lock Saved
+                // Messages to top" setting, not a real per-chat pin, so a
+                // pushpin there would be misleading (and can't be toggled
+                // off from the row's action sheet anyway).
+                if (c.isPinned && !isSavedMessages) {
                     Icon(
                         com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
                         contentDescription = stringResource(R.string.action_pin_chat),
@@ -1631,7 +1668,7 @@ private fun HomePage(
     // the card just opens that chat). The greeting/firstName previously
     // rendered at the top of this page now lives in the screen-level
     // TopAppBar instead — replacing the old "Novagram" brand title.
-    var myUserId by remember { mutableStateOf(0L) }
+    var myUserId by remember { mutableStateOf(TdClient.cachedMyUserId) }
     LaunchedEffect(Unit) {
         val me = runCatching { TdClient.getMe() }.getOrNull()
         myUserId = me?.id ?: 0L

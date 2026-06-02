@@ -16,6 +16,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +49,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -717,7 +720,15 @@ private fun MessageContent(
             )
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyLarge, color = onBackground)
+                FormattedTextRendering(
+                    formatted = c.caption,
+                    onBackground = onBackground,
+                    linkColor = MaterialTheme.colorScheme.primary,
+                    currentChatId = message.chatId,
+                    onJumpToMessage = onJumpToMessage,
+                    onOpenTelegramLink = onOpenTelegramLink,
+                    highlightQuery = highlightQuery
+                )
             }
         }
         is TdApi.MessageVideo -> {
@@ -821,7 +832,15 @@ private fun MessageContent(
             }
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyLarge, color = onBackground)
+                FormattedTextRendering(
+                    formatted = c.caption,
+                    onBackground = onBackground,
+                    linkColor = MaterialTheme.colorScheme.primary,
+                    currentChatId = message.chatId,
+                    onJumpToMessage = onJumpToMessage,
+                    onOpenTelegramLink = onOpenTelegramLink,
+                    highlightQuery = highlightQuery
+                )
             }
         }
         is TdApi.MessageAnimation -> {
@@ -834,7 +853,15 @@ private fun MessageContent(
             )
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyLarge, color = onBackground)
+                FormattedTextRendering(
+                    formatted = c.caption,
+                    onBackground = onBackground,
+                    linkColor = MaterialTheme.colorScheme.primary,
+                    currentChatId = message.chatId,
+                    onJumpToMessage = onJumpToMessage,
+                    onOpenTelegramLink = onOpenTelegramLink,
+                    highlightQuery = highlightQuery
+                )
             }
         }
         is TdApi.MessageDocument -> {
@@ -875,7 +902,15 @@ private fun MessageContent(
             }
             if (c.caption.text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(c.caption.text, style = MaterialTheme.typography.bodyLarge, color = onBackground)
+                FormattedTextRendering(
+                    formatted = c.caption,
+                    onBackground = onBackground,
+                    linkColor = MaterialTheme.colorScheme.primary,
+                    currentChatId = message.chatId,
+                    onJumpToMessage = onJumpToMessage,
+                    onOpenTelegramLink = onOpenTelegramLink,
+                    highlightQuery = highlightQuery
+                )
             }
         }
         is TdApi.MessageVoiceNote -> {
@@ -927,9 +962,15 @@ private fun MessageContent(
                 )
             }
         }
+        is TdApi.MessagePoll -> {
+            PollContent(
+                poll = c.poll,
+                chatId = message.chatId,
+                messageId = message.id,
+                onBackground = onBackground
+            )
+        }
         else -> {
-            // Service / system messages (joined, left, pinned, renamed, video
-            // chat, …) carry no text body. Render the name-aware description
             // ("X si è unito al gruppo"), centered + faded. Any content type we
             // don't draw inline yet (poll, location, contact, video note, call,
             // …) falls back to its labelled shorthand rather than a bare
@@ -947,6 +988,208 @@ private fun MessageContent(
                     style = MaterialTheme.typography.bodyLarge,
                     color = onBackground.copy(alpha = 0.85f)
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Renders an inline poll bubble with live voting. Before the local user has
+ * voted (and the poll is open) each option is a tappable row with an outline
+ * circle; single-answer polls vote on tap, multi-answer polls toggle a local
+ * selection (accent dot) and submit via a "Vota" button. After voting (or once
+ * closed) it switches to result mode: an animated accent bar + percentage per
+ * option, with an accent dot marking the option(s) the user chose. A "Ritira
+ * voto" button retracts while the poll is still open. All vote calls go
+ * straight to TdClient.setPollAnswer; TDLib's UpdatePoll echo (mapped back onto
+ * this bubble by the chat screen) refreshes the tallies live.
+ */
+@Composable
+private fun PollContent(
+    poll: TdApi.Poll,
+    chatId: Long,
+    messageId: Long,
+    onBackground: androidx.compose.ui.graphics.Color
+) {
+    val scope = rememberCoroutineScope()
+    val accent = MaterialTheme.colorScheme.primary
+    val options = poll.options.toList()
+    val hasVoted = options.any { it.isChosen }
+    val closed = poll.isClosed
+    val multiple = poll.allowsMultipleAnswers
+    val showResults = hasVoted || closed
+    val totalVotes = poll.totalVoterCount
+
+    // Local pre-submit selection for multi-answer polls. Keyed on messageId +
+    // hasVoted so it resets cleanly once the vote lands.
+    val selected = remember(messageId, hasVoted) { mutableStateListOf<Int>() }
+
+    Column(modifier = Modifier.widthIn(min = 220.dp)) {
+        Text(
+            poll.question.text,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = onBackground
+        )
+        Spacer(Modifier.height(2.dp))
+        val meta = buildString {
+            append(
+                if (poll.isAnonymous) stringResource(R.string.poll_anonymous_label)
+                else stringResource(R.string.poll_public_label)
+            )
+            if (closed) {
+                append(" · ")
+                append(stringResource(R.string.poll_closed))
+            }
+        }
+        Text(
+            meta,
+            style = MaterialTheme.typography.labelSmall,
+            color = onBackground.copy(alpha = 0.6f)
+        )
+        Spacer(Modifier.height(10.dp))
+
+        options.forEachIndexed { idx, opt ->
+            val optText = opt.text.text
+            if (showResults) {
+                val pct = opt.votePercentage
+                val fraction by androidx.compose.animation.core.animateFloatAsState(
+                    targetValue = pct / 100f,
+                    animationSpec = androidx.compose.animation.core.tween(450),
+                    label = "poll-bar"
+                )
+                Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (opt.isChosen) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(accent)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(
+                            optText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = onBackground,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "$pct%",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = onBackground.copy(alpha = 0.8f)
+                        )
+                    }
+                    Spacer(Modifier.height(5.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(5.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(onBackground.copy(alpha = 0.12f))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                                .height(5.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(accent)
+                        )
+                    }
+                }
+            } else {
+                val isSel = selected.contains(idx)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            if (closed) return@clickable
+                            if (multiple) {
+                                if (isSel) selected.remove(idx) else selected.add(idx)
+                            } else {
+                                scope.launch {
+                                    com.secondream.novagram.td.TdClient
+                                        .setPollAnswer(chatId, messageId, intArrayOf(idx))
+                                }
+                            }
+                        }
+                        .padding(vertical = 9.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .border(
+                                2.dp,
+                                if (isSel) accent else onBackground.copy(alpha = 0.4f),
+                                CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isSel) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(accent)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        optText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = onBackground
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val votesText = when {
+                totalVotes == 0 -> stringResource(R.string.poll_no_votes)
+                totalVotes == 1 -> stringResource(R.string.poll_votes_one)
+                else -> stringResource(R.string.poll_votes_many, totalVotes)
+            }
+            Text(
+                votesText,
+                style = MaterialTheme.typography.labelSmall,
+                color = onBackground.copy(alpha = 0.6f),
+                modifier = Modifier.weight(1f)
+            )
+            if (!showResults && multiple && !closed) {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        if (selected.isNotEmpty()) {
+                            val ids = selected.toIntArray()
+                            scope.launch {
+                                com.secondream.novagram.td.TdClient
+                                    .setPollAnswer(chatId, messageId, ids)
+                            }
+                        }
+                    },
+                    enabled = selected.isNotEmpty()
+                ) {
+                    Text(stringResource(R.string.poll_submit_vote), color = accent)
+                }
+            }
+            if (hasVoted && !closed) {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        scope.launch {
+                            com.secondream.novagram.td.TdClient
+                                .setPollAnswer(chatId, messageId, intArrayOf())
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.poll_retract_vote), color = accent)
+                }
             }
         }
     }
@@ -1630,17 +1873,20 @@ private fun ThemeShareCard(prefs: com.secondream.novagram.settings.AppearancePre
                 .background(MaterialTheme.colorScheme.primary)
                 .clickable {
                     scope.launch {
-                        // Don't auto-apply: that would overwrite the
-                        // user's current theme silently. Instead add
-                        // the imported theme to their saved list so it
-                        // appears as a tappable row in Settings → Temi
-                        // salvati. The toast confirms the addition;
-                        // the user activates manually when they're
-                        // ready.
-                        com.secondream.novagram.settings.AppSettings.importAppearanceAsSavedTheme(
-                            appearance = prefs,
-                            baseName = ctx.getString(R.string.theme_imported_default_name)
-                        )
+                        // Tapping "Applica tema" should DO what it says:
+                        // import the theme into the saved list AND activate it
+                        // immediately. Previously it only imported (added a row
+                        // in Settings) and the user had to go to Settings →
+                        // Temi → ⋮ → Applica to actually use it — confusing,
+                        // since the button reads "Applica". The user tapped it
+                        // explicitly, so applying now is the expected action;
+                        // it stays saved too, so they can switch back later.
+                        val newId =
+                            com.secondream.novagram.settings.AppSettings.importAppearanceAsSavedTheme(
+                                appearance = prefs,
+                                baseName = ctx.getString(R.string.theme_imported_default_name)
+                            )
+                        com.secondream.novagram.settings.AppSettings.activateSavedTheme(newId)
                         android.widget.Toast.makeText(
                             ctx,
                             ctx.getString(R.string.theme_paste_success),

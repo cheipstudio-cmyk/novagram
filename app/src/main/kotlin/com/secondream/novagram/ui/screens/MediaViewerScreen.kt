@@ -4,6 +4,10 @@ package com.secondream.novagram.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
@@ -22,17 +26,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.secondream.novagram.R
+import kotlinx.coroutines.launch
 
 /**
  * Full-screen image viewer.
@@ -66,6 +73,18 @@ fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
+    // Swipe-down-to-dismiss offset (only active when the photo is NOT
+    // zoomed). The image follows the finger 1:1 in dismissX/dismissY; on
+    // release it either flings off-screen + closes (past the threshold) or
+    // springs back to centre. Kept as raw float state for lag-free tracking;
+    // the spring/fling on release is driven by the suspend `animate`.
+    var dismissX by remember { mutableFloatStateOf(0f) }
+    var dismissY by remember { mutableFloatStateOf(0f) }
+    val scope = rememberCoroutineScope()
+    // 0 at rest, 1 when dragged a full "dismiss range" down/up. Drives the
+    // background fade and the subtle photo shrink so the picture appears to
+    // lift off the black backdrop as it's flung away.
+    val dismissFrac = (kotlin.math.abs(dismissY) / 600f).coerceIn(0f, 1f)
 
     val targetScale by animateFloatAsState(targetValue = scale, label = "viewer-scale")
     val targetOffsetX by animateFloatAsState(targetValue = offsetX, label = "viewer-ox")
@@ -74,7 +93,7 @@ fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(Color.Black.copy(alpha = 1f - 0.9f * dismissFrac))
             .pointerInput(Unit) {
                 detectTapGestures(
                     // Single tap intentionally does nothing — see kdoc above.
@@ -98,15 +117,65 @@ fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
                 )
             }
             .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    val newScale = (scale * zoom).coerceIn(1f, 5f)
-                    scale = newScale
-                    if (newScale > 1f) {
-                        offsetX += pan.x
-                        offsetY += pan.y
-                    } else {
-                        offsetX = 0f
-                        offsetY = 0f
+                // Unified pinch / pan / swipe-to-dismiss loop. We can't use
+                // detectTransformGestures here because it gives no
+                // gesture-end callback, and the dismiss decision (fling vs
+                // spring back) has to happen on pointer-up. So we run the
+                // raw gesture loop: pinch drives zoom, single-finger pan
+                // moves the zoomed image, and — only while un-zoomed —
+                // vertical drag drives the dismiss offset.
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val zoom = event.calculateZoom()
+                        val pan = event.calculatePan()
+                        if (zoom != 1f) {
+                            scale = (scale * zoom).coerceIn(1f, 5f)
+                        }
+                        if (scale > 1.05f) {
+                            offsetX += pan.x
+                            offsetY += pan.y
+                        } else {
+                            dismissY += pan.y
+                            dismissX += pan.x * 0.35f
+                        }
+                        event.changes.forEach { if (it.positionChanged()) it.consume() }
+                    } while (event.changes.any { it.pressed })
+
+                    if (scale <= 1.05f) {
+                        if (kotlin.math.abs(dismissY) > 180f) {
+                            val dir = if (dismissY >= 0f) 1f else -1f
+                            scope.launch {
+                                androidx.compose.animation.core.animate(
+                                    initialValue = dismissY,
+                                    targetValue = dir * 2400f,
+                                    animationSpec = androidx.compose.animation.core.tween(170)
+                                ) { v, _ -> dismissY = v }
+                                onClose()
+                            }
+                        } else {
+                            scope.launch {
+                                androidx.compose.animation.core.animate(
+                                    initialValue = dismissY,
+                                    targetValue = 0f,
+                                    animationSpec = androidx.compose.animation.core.spring(
+                                        dampingRatio = 0.82f,
+                                        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                                    )
+                                ) { v, _ -> dismissY = v }
+                            }
+                            scope.launch {
+                                androidx.compose.animation.core.animate(
+                                    initialValue = dismissX,
+                                    targetValue = 0f,
+                                    animationSpec = androidx.compose.animation.core.spring(
+                                        dampingRatio = 0.82f,
+                                        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                                    )
+                                ) { v, _ -> dismissX = v }
+                            }
+                        }
                     }
                 }
             }
@@ -118,10 +187,10 @@ fun MediaViewerScreen(filePath: String, onClose: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer(
-                    scaleX = targetScale,
-                    scaleY = targetScale,
-                    translationX = targetOffsetX,
-                    translationY = targetOffsetY
+                    scaleX = targetScale * (1f - 0.12f * dismissFrac),
+                    scaleY = targetScale * (1f - 0.12f * dismissFrac),
+                    translationX = targetOffsetX + dismissX,
+                    translationY = targetOffsetY + dismissY
                 )
         )
         // Close button on a subtle dark scrim circle so it stays visible

@@ -157,6 +157,7 @@ fun ChatScreen(
     // you typed in between.
     var draftLoaded by remember(chatId) { mutableStateOf(false) }
     var showAttach by remember { mutableStateOf(false) }
+    var showPollComposer by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     // Voice-note recording LOCKED (user slid the mic up): recording continues
     // after the finger lifts; trash/send buttons replace the mic.
@@ -261,6 +262,31 @@ fun ChatScreen(
             ?: TdClient.getCachedChat(chatId)?.type
         isGroupChat = t is TdApi.ChatTypeBasicGroup || t is TdApi.ChatTypeSupergroup
     }
+
+    // Secret-chat handshake gating. For a ChatTypeSecret we track the live
+    // SecretChatState so we can (a) show a "waiting for them to join" empty
+    // state and (b) lock the composer until the peer completes the key
+    // exchange — TDLib rejects every send while the chat is Pending, so
+    // letting the user type would just silently drop messages. For any
+    // non-secret chat secretChatId stays null and secretState stays null,
+    // leaving the normal composer untouched.
+    val secretChatId = remember(chatId) {
+        (TdClient.getCachedChat(chatId)?.type as? TdApi.ChatTypeSecret)?.secretChatId
+    }
+    var secretState by remember(chatId) {
+        mutableStateOf<TdApi.SecretChatState?>(null)
+    }
+    if (secretChatId != null) {
+        val sid = secretChatId
+        LaunchedEffect(chatId, sid) {
+            secretState = TdClient.getSecretChat(sid)?.state
+            TdClient.secretChatUpdates.collect { sc ->
+                if (sc.id == sid) secretState = sc.state
+            }
+        }
+    }
+    val secretPending = secretState is TdApi.SecretChatStatePending
+    val secretClosed = secretState is TdApi.SecretChatStateClosed
 
     // Online status of the other participant in a private chat. Used to
     // light up the green dot on the title-bar avatar and to render the
@@ -1194,7 +1220,30 @@ fun ChatScreen(
             }
         }
     }
-    // Edit-metadata sync: TDLib fires UpdateMessageEdited separately from
+    // Poll vote sync: UpdatePoll carries only the fresh poll (keyed by
+    // poll.id), so we find the message whose MessagePoll holds that id and
+    // swap in a new MessagePoll content (preserving description / media /
+    // can-add-option), then apply it through the SAME in-place + override +
+    // revision-bump path the content collector uses. This is what makes the
+    // vote bars and percentages update live the instant anyone votes — our
+    // own taps included, since setPollAnswer round-trips back as UpdatePoll.
+    LaunchedEffect(chatId) {
+        TdClient.pollUpdates.collect { poll ->
+            val idx = messages.indexOfFirst {
+                (it.content as? TdApi.MessagePoll)?.poll?.id == poll.id
+            }
+            if (idx >= 0) {
+                val msgId = messages[idx].id
+                val old = messages[idx].content as TdApi.MessagePoll
+                val updated = TdApi.MessagePoll(poll, old.description, old.media, old.canAddOption)
+                messages[idx].content = updated
+                run { val m = messages[idx]; messages.removeAt(idx); messages.add(idx, m) }
+                messageContentOverrides[msgId] = updated
+                interactionRevisions[msgId] =
+                    (interactionRevisions[msgId] ?: 0) + 1
+            }
+        }
+    }
     // UpdateMessageContent, carrying editDate (epoch seconds when the
     // edit happened) and the latest replyMarkup. We mutate both fields
     // in place and bump the revision counter using the same pattern as
@@ -2494,7 +2543,46 @@ fun ChatScreen(
                         }
                     }
                 }
-                // Floating "unread mentions / reactions" chips, anchored
+                // Secret-chat handshake notice. A freshly created secret chat
+                // sits in Pending until the peer's device comes online and
+                // finishes the key exchange; TDLib refuses every send until
+                // then. Rather than let the user type into a void (sends were
+                // silently swallowed before), show a centered "waiting for
+                // them to join" empty state over the still-empty list. It
+                // fades out the instant secretChatUpdates flips to Ready.
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = secretPending,
+                    enter = androidx.compose.animation.fadeIn(),
+                    exit = androidx.compose.animation.fadeOut(),
+                    modifier = Modifier.align(Alignment.Center)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 40.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.size(44.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            stringResource(R.string.secret_waiting_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            stringResource(R.string.secret_waiting_desc),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
                 // above the scroll-to-bottom FAB. Each chip is shown
                 // independently when its respective count > 0, mirrors
                 // Telegram's @N / ♥N affordances. Tapping jumps to the
@@ -2991,6 +3079,9 @@ fun ChatScreen(
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier.fillMaxWidth()
             ) {
+                if (secretPending || secretClosed) {
+                    SecretChatLockedBar(closed = secretClosed)
+                } else {
                 com.secondream.novagram.ui.components.TypingIndicator(
                     chatId = chatId,
                     showAvatars = !isPrivateOrSecret
@@ -3304,10 +3395,11 @@ fun ChatScreen(
                         }
                     }
                 },
-                showCommandsButton = botCommands.isNotEmpty(),
+                showCommandsButton = botCommands.isNotEmpty() && appearance.showBotCommandsButton,
                 onCommandsClick = { showAllCommands = !showAllCommands },
                 focusRequester = inputFocus
             )
+            }
             }
             }
         }
@@ -3329,6 +3421,31 @@ fun ChatScreen(
             onPickSticker = {
                 showAttach = false
                 showStickerPicker = true
+            },
+            onCreatePoll = if (isGroupChat) {
+                {
+                    showAttach = false
+                    showPollComposer = true
+                }
+            } else null
+        )
+    }
+
+    if (showPollComposer) {
+        PollComposerSheet(
+            onDismiss = { showPollComposer = false },
+            onSend = { question, options, anonymous, multiple ->
+                val rid = replyTarget?.id
+                showPollComposer = false
+                replyTarget = null
+                if (appearance.messageSounds) {
+                    com.secondream.novagram.util.SoundFx.playSend(context)
+                }
+                scope.launch {
+                    runCatching {
+                        TdClient.sendPoll(chatId, question, options, anonymous, multiple, rid)
+                    }
+                }
             }
         )
     }
@@ -6106,6 +6223,42 @@ private fun ProfileDetailRow(
 private fun labelMembers(count: Int, channel: Boolean = false): String =
     if (channel) "iscritti" else "membri"
 
+/**
+ * Replaces the message composer while a secret chat hasn't finished its
+ * handshake (Pending) or has been closed by either side (Closed). Shows a
+ * single centered line with a lock glyph so it reads as a deliberate state,
+ * not a broken input. The body of the chat carries the fuller explanation
+ * (see the AnimatedVisibility empty state over the message list).
+ */
+@Composable
+private fun SecretChatLockedBar(closed: Boolean) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 24.dp, vertical = 18.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            stringResource(
+                if (closed) R.string.secret_closed_composer
+                else R.string.secret_waiting_composer
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+    }
+}
+
 @Composable
 private fun InputBar(
     value: androidx.compose.ui.text.input.TextFieldValue,
@@ -6599,7 +6752,8 @@ private fun AttachSheet(
     onDismiss: () -> Unit,
     onPickPhoto: () -> Unit,
     onPickDocument: () -> Unit,
-    onPickSticker: () -> Unit
+    onPickSticker: () -> Unit,
+    onCreatePoll: (() -> Unit)? = null
 ) {
     val state = rememberModalBottomSheetState()
     // Hardcoded Ink.* tokens were dark-theme only — on light themes the
@@ -6644,6 +6798,14 @@ private fun AttachSheet(
                     onClick = onPickSticker,
                     modifier = Modifier.weight(1f)
                 )
+                if (onCreatePoll != null) {
+                    AttachTile(
+                        label = stringResource(R.string.attach_poll),
+                        icon = com.secondream.novagram.ui.icons.PhosphorIcons.List,
+                        onClick = onCreatePoll,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -6701,6 +6863,167 @@ private fun AttachTile(
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             fontWeight = FontWeight.Medium,
             maxLines = 2
+        )
+    }
+}
+
+/**
+ * Bottom sheet to compose and send a poll. Same surface/styling language as
+ * AttachSheet. A question field, 2–10 option fields (add / remove), and two
+ * switches (multiple answers, anonymous — on by default, the Telegram norm for
+ * group polls). "Crea" is enabled only once the question and at least two
+ * options are non-blank. Sends the trimmed, non-blank options upward.
+ */
+@Composable
+private fun PollComposerSheet(
+    onDismiss: () -> Unit,
+    onSend: (question: String, options: List<String>, anonymous: Boolean, multiple: Boolean) -> Unit
+) {
+    val state = rememberModalBottomSheetState()
+    var question by remember { mutableStateOf("") }
+    val options = remember { mutableStateListOf("", "") }
+    var anonymous by remember { mutableStateOf(true) }
+    var multiple by remember { mutableStateOf(false) }
+
+    val cleanOptions = options.map { it.trim() }.filter { it.isNotBlank() }
+    val canSend = question.isNotBlank() && cleanOptions.size >= 2
+    // Gate "Crea" on realtime connectivity — same rule as the chat send
+    // button. Creating a poll is a network send; offline it would silently
+    // fail, so we grey the button out until a usable network is back.
+    val online by com.secondream.novagram.connectivity
+        .ConnectivityState.isOnline.collectAsState()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = state,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 20.dp)
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                stringResource(R.string.poll_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontStyle = FontStyle.Italic,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(16.dp))
+
+            androidx.compose.material3.OutlinedTextField(
+                value = question,
+                onValueChange = { question = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text(stringResource(R.string.poll_question_hint)) },
+                shape = RoundedCornerShape(14.dp),
+                maxLines = 3
+            )
+
+            Spacer(Modifier.height(16.dp))
+            Text(
+                stringResource(R.string.poll_options_label),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+            )
+            Spacer(Modifier.height(8.dp))
+
+            options.forEachIndexed { idx, value ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = value,
+                        onValueChange = { options[idx] = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = {
+                            Text(stringResource(R.string.poll_option_hint, idx + 1))
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        singleLine = true
+                    )
+                    if (options.size > 2) {
+                        IconButton(onClick = { options.removeAt(idx) }) {
+                            Icon(
+                                com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                                contentDescription = stringResource(R.string.poll_remove_option),
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            if (options.size < 10) {
+                androidx.compose.material3.TextButton(
+                    onClick = { options.add("") }
+                ) {
+                    Icon(
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Plus,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        stringResource(R.string.poll_add_option),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            PollToggleRow(
+                label = stringResource(R.string.poll_multiple_answers),
+                checked = multiple,
+                onToggle = { multiple = it }
+            )
+            PollToggleRow(
+                label = stringResource(R.string.poll_anonymous_toggle),
+                checked = anonymous,
+                onToggle = { anonymous = it }
+            )
+
+            Spacer(Modifier.height(16.dp))
+            androidx.compose.material3.Button(
+                onClick = { if (online) onSend(question.trim(), cleanOptions, anonymous, multiple) },
+                enabled = canSend && online,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Text(stringResource(R.string.poll_create))
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun PollToggleRow(
+    label: String,
+    checked: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onToggle(!checked) }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+        androidx.compose.material3.Switch(
+            checked = checked,
+            onCheckedChange = onToggle
         )
     }
 }

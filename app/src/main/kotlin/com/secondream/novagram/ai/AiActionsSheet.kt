@@ -505,7 +505,7 @@ private fun buildPrompt(
  * our complete() call — we just know SOMETHING is happening.
  */
 @Composable
-private fun AiThinkingIndicator() {
+internal fun AiThinkingIndicator() {
     val accent = MaterialTheme.colorScheme.primary
     val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "ai-think")
     // Scale: slow breathing motion 0.85 → 1.15 over ~1.4s, ease-in-out.

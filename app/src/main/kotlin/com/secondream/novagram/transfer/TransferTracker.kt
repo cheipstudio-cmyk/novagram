@@ -93,6 +93,7 @@ object TransferTracker {
             _transfers.value = active.values.sortedBy { it.fileId }
         }
         progressStamp.remove(fileId)
+        rearmCount.remove(fileId)
         locations.remove(fileId)
     }
 
@@ -103,6 +104,17 @@ object TransferTracker {
 
     /** fileId → (lastTransferredBytes, lastChangeMs). Drives stall detection. */
     private val progressStamp = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, Long>>()
+
+    /**
+     * fileId → how many times we've re-armed a *parked* download (TDLib set
+     * isDownloadingActive=false while the file was still incomplete). Bounded
+     * so a genuinely dead file (deleted server-side, expired reference) can't
+     * loop forever — after the cap we drop the row. Cleared the moment real
+     * progress arrives, so a transfer that recovers and later stalls again
+     * gets a fresh budget.
+     */
+    private val rearmCount = java.util.concurrent.ConcurrentHashMap<Int, Int>()
+    private const val MAX_REARM = 4
 
     /**
      * Idempotent start. Called from MainActivity after TDLib has been
@@ -123,7 +135,7 @@ object TransferTracker {
         // (offset 0 / limit 0), so this nudges it forward without restarting.
         scope.launch {
             while (true) {
-                kotlinx.coroutines.delay(6_000)
+                kotlinx.coroutines.delay(4_000)
                 val now = System.currentTimeMillis()
                 val stalled = synchronized(mutex) {
                     active.values
@@ -131,7 +143,7 @@ object TransferTracker {
                         .map { it.fileId }
                 }.filter { fid ->
                     val s = progressStamp[fid]
-                    s != null && now - s.second > 9_000
+                    s != null && now - s.second > 6_000
                 }
                 for (fid in stalled) {
                     runCatching { TdClient.startDownload(fid) }
@@ -157,7 +169,12 @@ object TransferTracker {
         if (downloading || uploading) {
             val bytes = if (downloading) downloaded else uploaded
             val prev = progressStamp[file.id]
-            if (prev == null || bytes != prev.first) progressStamp[file.id] = bytes to now
+            if (prev == null || bytes != prev.first) {
+                progressStamp[file.id] = bytes to now
+                // Bytes advanced (or first sighting) → this transfer is healthy;
+                // forget any parked-download retry budget we'd accrued.
+                rearmCount.remove(file.id)
+            }
         } else {
             progressStamp.remove(file.id)
         }
@@ -187,10 +204,32 @@ object TransferTracker {
                     )
                 }
                 else -> {
-                    // Transfer completed, cancelled, or otherwise no longer
-                    // in flight — remove from the visible panel. If it was
-                    // never tracked this is a no-op.
-                    active.remove(file.id)
+                    // No longer in flight. Three sub-cases:
+                    //  • genuinely finished or cancelled → drop the row.
+                    //  • TDLib PARKED an unfinished download (isDownloadingActive
+                    //    flipped to false without completing — the silent
+                    //    "stuck at 26% on a tiny file, good connection" bug):
+                    //    re-arm the download and KEEP the row so the watchdog
+                    //    keeps an eye on it. Bounded by MAX_REARM so a dead
+                    //    file reference can't loop forever.
+                    val prevRow = active[file.id]
+                    val wasDownload = prevRow != null && !prevRow.isUpload
+                    val incomplete = total > 0 &&
+                        file.local.downloadedSize < total &&
+                        !file.local.isDownloadingCompleted
+                    val tries = rearmCount[file.id] ?: 0
+                    if (wasDownload && incomplete && tries < MAX_REARM) {
+                        rearmCount[file.id] = tries + 1
+                        scope.launch { runCatching { TdClient.startDownload(file.id) } }
+                        active[file.id] = prevRow!!.copy(
+                            transferredBytes = file.local.downloadedSize,
+                            totalBytes = total
+                        )
+                        progressStamp[file.id] = file.local.downloadedSize to now
+                    } else {
+                        active.remove(file.id)
+                        rearmCount.remove(file.id)
+                    }
                 }
             }
             _transfers.value = active.values.sortedBy { it.fileId }

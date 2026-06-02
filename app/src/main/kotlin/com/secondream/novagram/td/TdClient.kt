@@ -36,6 +36,17 @@ object TdClient {
     private val _chats = MutableStateFlow<List<ChatSummary>>(emptyList())
     val chats: StateFlow<List<ChatSummary>> = _chats.asStateFlow()
 
+    /**
+     * The signed-in user's id, cached synchronously so UI that needs to
+     * recognise the "self" chat (Saved Messages) can do so on the first
+     * composition without awaiting GetMe. Populated from the my_id
+     * UpdateOption (fires early in the session) and re-affirmed by getMe().
+     * 0 until known.
+     */
+    @Volatile
+    var cachedMyUserId: Long = 0L
+        private set
+
     private val _newMessages = MutableSharedFlow<TdApi.Message>(extraBufferCapacity = 32)
     val newMessages = _newMessages.asSharedFlow()
 
@@ -118,6 +129,27 @@ object TdClient {
      */
     private val _messageContentUpdates = MutableSharedFlow<MessageContentUpdate>(extraBufferCapacity = 32)
     val messageContentUpdates = _messageContentUpdates.asSharedFlow()
+
+    /**
+     * Emits the updated [TdApi.Poll] whenever TDLib reports its tallies
+     * changed (someone voted, the poll was closed, …). UpdatePoll is keyed
+     * by poll.id only — it carries no chat/message — so the chat screen maps
+     * it back onto the bubble that holds a MessagePoll with the same poll id.
+     */
+    private val _pollUpdates = MutableSharedFlow<TdApi.Poll>(extraBufferCapacity = 32)
+    val pollUpdates = _pollUpdates.asSharedFlow()
+
+    /**
+     * Emits the updated [TdApi.SecretChat] whenever its handshake state
+     * changes. A freshly created secret chat starts in
+     * SecretChatStatePending until the peer's device comes online and
+     * completes the key exchange; the chat screen watches this to show a
+     * "waiting for the other person" notice and to keep the composer
+     * disabled until the state flips to Ready (TDLib rejects sends before
+     * then anyway).
+     */
+    private val _secretChatUpdates = MutableSharedFlow<TdApi.SecretChat>(extraBufferCapacity = 16)
+    val secretChatUpdates = _secretChatUpdates.asSharedFlow()
 
     /**
      * Emits when TDLib reports a message's editDate / reply markup changed.
@@ -317,6 +349,18 @@ object TdClient {
     private fun onUpdate(obj: TdApi.Object) {
         when (obj) {
             is TdApi.UpdateAuthorizationState -> handleAuthState(obj.authorizationState)
+            is TdApi.UpdateOption -> {
+                // TDLib emits my_id very early in the session (well before
+                // GetMe resolves). Caching it lets the chat list pin Saved
+                // Messages to the top on the FIRST frame instead of starting
+                // it un-pinned and visibly jumping it up once GetMe returns
+                // — the "saltello al rientro" Eugenio noticed.
+                if (obj.name == "my_id") {
+                    (obj.value as? TdApi.OptionValueInteger)?.let {
+                        cachedMyUserId = it.value
+                    }
+                }
+            }
             is TdApi.UpdateNewMessage -> {
                 scope.launch { _newMessages.emit(obj.message) }
             }
@@ -614,6 +658,18 @@ object TdClient {
                         InteractionInfoUpdate(obj.chatId, obj.messageId, obj.interactionInfo)
                     )
                 }
+            }
+            is TdApi.UpdatePoll -> {
+                // A poll's votes/state changed. Forward the fresh poll; the
+                // chat screen finds the message whose MessagePoll has this
+                // poll.id and swaps in the new tallies (live vote bars).
+                scope.launch { _pollUpdates.emit(obj.poll) }
+            }
+            is TdApi.UpdateSecretChat -> {
+                // The secret chat's handshake state (or key/layer) changed.
+                // Forward it so an open ChatScreen can lift the "waiting for
+                // the peer" notice the moment the key exchange completes.
+                scope.launch { _secretChatUpdates.emit(obj.secretChat) }
             }
             is TdApi.UpdateDeleteMessages -> {
                 // isPermanent=false fires when messages slide out of cache,
@@ -1104,6 +1160,40 @@ object TdClient {
         getChatHistory(chatId, fromMessageId, 0, limit)
 
     /**
+     * Compact, plain-text digest of recent unread messages across the
+     * busiest chats — the fuel for the home "Riepilogo" AI feature. Reads
+     * everything from OUTSIDE any open chat: picks the most recent unread,
+     * non-archived chats (newest activity first) and pulls their latest few
+     * messages, dropping the user's own. Each line is "Name: preview" so the
+     * model can attribute who said what. Returns at most [maxChats] groups.
+     */
+    suspend fun recentUnreadDigest(maxChats: Int = 6, perChat: Int = 8): List<ChatUnreadDigest> {
+        val me = cachedMyUserId
+        val candidates = _chats.value
+            .filter { !it.isArchived && it.unread > 0 }
+            .sortedByDescending { it.order }
+            .take(maxChats)
+        val out = mutableListOf<ChatUnreadDigest>()
+        for (cs in candidates) {
+            val msgs = runCatching {
+                getChatHistory(cs.id, 0L, perChat).messages?.toList().orEmpty()
+            }.getOrNull().orEmpty()
+            val lines = msgs
+                .asReversed() // TDLib returns newest-first; flip to chronological
+                .filter { (it.senderId as? TdApi.MessageSenderUser)?.userId != me }
+                .takeLast(cs.unread.coerceIn(1, perChat))
+                .mapNotNull { m ->
+                    val text = buildPreview(m).trim()
+                    if (text.isBlank()) return@mapNotNull null
+                    val who = resolveSenderName(m).trim()
+                    if (who.isBlank()) text else "$who: $text"
+                }
+            if (lines.isNotEmpty()) out += ChatUnreadDigest(cs.title, lines)
+        }
+        return out
+    }
+
+    /**
      * Search messages in a chat filtered by content type. Drives the
      * media-gallery tabs in ChatInfoDialog: pass a TdApi filter (e.g.
      * SearchMessagesFilterPhoto, SearchMessagesFilterDocument,
@@ -1177,6 +1267,58 @@ object TdClient {
             send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
         }.isSuccess
         if (!ok) sendText(chatId, commandText, replyToMessageId)
+    }
+
+    /**
+     * Send a regular (non-quiz) poll. Polls only make sense in groups /
+     * channels, so the UI gates the entry point — this is never reached in a
+     * 1-on-1. [options] must hold 2..10 non-blank entries. Built with
+     * named-field assignment rather than the 15-arg positional constructor so
+     * the seven booleans can't silently end up in the wrong slots.
+     */
+    suspend fun sendPoll(
+        chatId: Long,
+        question: String,
+        options: List<String>,
+        isAnonymous: Boolean,
+        allowsMultipleAnswers: Boolean,
+        replyToMessageId: Long? = null
+    ) {
+        val inputOptions: Array<TdApi.InputPollOption> = options.map { opt ->
+            TdApi.InputPollOption().apply {
+                text = TdApi.FormattedText(opt, emptyArray())
+                media = null
+            }
+        }.toTypedArray()
+        val content = TdApi.InputMessagePoll().apply {
+            this.question = TdApi.FormattedText(question, emptyArray())
+            this.options = inputOptions
+            description = TdApi.FormattedText("", emptyArray())
+            media = null
+            this.isAnonymous = isAnonymous
+            this.allowsMultipleAnswers = allowsMultipleAnswers
+            allowsRevoting = true
+            membersOnly = false
+            countryCodes = emptyArray()
+            shuffleOptions = false
+            hideResultsUntilCloses = false
+            type = TdApi.InputPollTypeRegular(false)
+            openPeriod = 0
+            closeDate = 0
+            isClosed = false
+        }
+        send(TdApi.SendMessage(chatId, null, buildReplyTo(replyToMessageId), null, null, content))
+    }
+
+    /**
+     * Cast, change, or retract a poll vote. [optionIds] are the zero-based
+     * indices of the chosen option(s): one element for a single-answer poll,
+     * several for a multi-answer poll, or an empty array to retract. TDLib
+     * echoes the new tallies through UpdatePoll, which the chat screen maps
+     * back onto the bubble — so the bars update live without a reload.
+     */
+    suspend fun setPollAnswer(chatId: Long, messageId: Long, optionIds: IntArray) {
+        runCatching { send(TdApi.SetPollAnswer(chatId, messageId, optionIds)) }
     }
 
     /**
@@ -1581,7 +1723,7 @@ object TdClient {
     // ----- Profile -----
 
     /** Returns the currently signed-in user. */
-    suspend fun getMe(): TdApi.User = send(TdApi.GetMe())
+    suspend fun getMe(): TdApi.User = send(TdApi.GetMe()).also { cachedMyUserId = it.id }
 
     /** Returns a specific user by id. */
     suspend fun getUser(userId: Long): TdApi.User = send(TdApi.GetUser(userId))
@@ -2704,6 +2846,17 @@ object TdClient {
     }
 
     /**
+     * Fetch the current [TdApi.SecretChat] (handshake state, key hash,
+     * protocol layer) for a secret chat id. Returns null if TDLib can't
+     * resolve it yet. The chat screen calls this on open to decide whether
+     * to show the "waiting for the other person" notice; live changes
+     * thereafter arrive via [secretChatUpdates].
+     */
+    suspend fun getSecretChat(secretChatId: Int): TdApi.SecretChat? {
+        return runCatching { send(TdApi.GetSecretChat(secretChatId)) }.getOrNull()
+    }
+
+    /**
      * Set the auto-delete timer on a chat. `ttlSeconds = 0` turns the
      * timer off; positive values mean every message in the chat will
      * disappear that many seconds after being read. Works for both
@@ -2800,6 +2953,9 @@ data class BotCommandItem(
     val botUserId: Long,
     val botUsername: String?
 )
+
+/** One chat's worth of recent unread message lines, for the AI digest. */
+data class ChatUnreadDigest(val title: String, val lines: List<String>)
 
 data class ChatSummary(
     val id: Long,

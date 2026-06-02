@@ -131,7 +131,15 @@ data class AppearancePrefs(
      * message and a "ding" when one arrives while the chat is open and
      * foregrounded. Default true. Purely client-side, never sent to TDLib.
      */
-    val messageSounds: Boolean = true
+    val messageSounds: Boolean = true,
+    /**
+     * When true (default), the bot-commands button (the list/menu icon left
+     * of the attach button) shows in chats that expose a bot command menu,
+     * letting the user open the slash-command list with a tap. When false the
+     * button is hidden everywhere — the slash menu is still reachable by
+     * typing "/". Purely client-side.
+     */
+    val showBotCommandsButton: Boolean = true
 )
 
 /**
@@ -185,6 +193,7 @@ object AppSettings {
     private val SWAP_SWIPE_REPLY = androidx.datastore.preferences.core.booleanPreferencesKey("swap_swipe_reply")
     private val SEND_TYPING_STATUS = androidx.datastore.preferences.core.booleanPreferencesKey("send_typing_status")
     private val MESSAGE_SOUNDS = androidx.datastore.preferences.core.booleanPreferencesKey("message_sounds")
+    private val SHOW_BOT_COMMANDS_BUTTON = androidx.datastore.preferences.core.booleanPreferencesKey("show_bot_commands_button")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -223,16 +232,19 @@ object AppSettings {
                 customBgArgb = prefs[CUSTOM_BG],
                 customInputBarArgb = prefs[CUSTOM_INPUT_BAR],
                 activeSavedThemeId = prefs[ACTIVE_SAVED_THEME_ID],
-                textScale = (prefs[TEXT_SCALE] ?: 1.0f).coerceIn(0.85f, 1.35f),
+                textScale = (prefs[TEXT_SCALE] ?: 1.0f).coerceIn(0.70f, 1.60f),
                 autoDownloadMedia = prefs[AUTO_DOWNLOAD_MEDIA] ?: true,
-                anthropicApiKey = prefs[ANTHROPIC_API_KEY]?.takeIf { it.isNotBlank() },
+                anthropicApiKey = prefs[ANTHROPIC_API_KEY]
+                    ?.let { com.secondream.novagram.security.SecretCrypto.decrypt(it) }
+                    ?.takeIf { it.isNotBlank() },
                 showArchivedTab = prefs[SHOW_ARCHIVED_TAB] ?: false,
                 showAllTab = prefs[SHOW_ALL_TAB] ?: true,
                 lockSavedToTop = prefs[LOCK_SAVED_TOP] ?: true,
                 swapSwipeReply = prefs[SWAP_SWIPE_REPLY] ?: true,
                 showLastSeen = prefs[SHOW_LAST_SEEN] ?: true,
                 sendTypingStatus = prefs[SEND_TYPING_STATUS] ?: true,
-                messageSounds = prefs[MESSAGE_SOUNDS] ?: true
+                messageSounds = prefs[MESSAGE_SOUNDS] ?: true,
+                showBotCommandsButton = prefs[SHOW_BOT_COMMANDS_BUTTON] ?: true
             )
         }
 
@@ -260,6 +272,10 @@ object AppSettings {
         appContext.dataStore.edit { it[MESSAGE_SOUNDS] = enabled }
     }
 
+    suspend fun setShowBotCommandsButton(enabled: Boolean) {
+        appContext.dataStore.edit { it[SHOW_BOT_COMMANDS_BUTTON] = enabled }
+    }
+
     suspend fun setShowLastSeen(enabled: Boolean) {
         appContext.dataStore.edit { it[SHOW_LAST_SEEN] = enabled }
         // Forward the same boolean to TDLib as a privacy rule so the
@@ -282,7 +298,8 @@ object AppSettings {
     suspend fun setAnthropicApiKey(key: String) {
         appContext.dataStore.edit { e ->
             if (key.isBlank()) e.remove(ANTHROPIC_API_KEY)
-            else e[ANTHROPIC_API_KEY] = key.trim()
+            else e[ANTHROPIC_API_KEY] =
+                com.secondream.novagram.security.SecretCrypto.encrypt(key.trim())
         }
     }
 
@@ -497,7 +514,7 @@ object AppSettings {
      * theme level so every Text/Material composable honors it.
      */
     suspend fun setTextScale(scale: Float) {
-        val clamped = scale.coerceIn(0.85f, 1.35f)
+        val clamped = scale.coerceIn(0.70f, 1.60f)
         appContext.dataStore.edit { it[TEXT_SCALE] = clamped }
     }
 
