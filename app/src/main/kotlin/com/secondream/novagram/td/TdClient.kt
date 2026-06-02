@@ -1815,16 +1815,62 @@ object TdClient {
      * Restrict a single member to the given permissions (granular per-user,
      * the "Permessi utente" screen). isMember stays true so they remain in the
      * group; untilDate 0 means forever.
+     *
+     * IMPORTANT: if the new permissions give the member back everything the
+     * group's default allows (i.e. they're no longer denied anything), set
+     * plain Member status instead of a Restricted-with-full-permissions.
+     * TDLib does NOT auto-collapse a Restricted status whose permissions match
+     * the default back to Member, so without this the "Limitato" label stuck
+     * forever after re-enabling a permission (Eugenio: re-adding media didn't
+     * clear "Limitato"). Mirrors how [unmuteGroupUser] returns to Member.
      */
     suspend fun restrictMember(
         chatId: Long,
         userId: Long,
         permissions: TdApi.ChatPermissions
     ) {
-        send(TdApi.SetChatMemberStatus(
-            chatId, TdApi.MessageSenderUser(userId),
+        val def = getCachedChat(chatId)?.permissions
+        val noLongerRestricted = def != null && permissionsCoverDefault(permissions, def)
+        val status: TdApi.ChatMemberStatus = if (noLongerRestricted) {
+            TdApi.ChatMemberStatusMember(0)
+        } else {
             TdApi.ChatMemberStatusRestricted(true, 0, permissions)
+        }
+        send(TdApi.SetChatMemberStatus(
+            chatId, TdApi.MessageSenderUser(userId), status
         ))
+    }
+
+    /**
+     * True when [p] is not more restrictive than the group default [def] on any
+     * permission the per-member editor can control — i.e. the member isn't
+     * denied anything regular members are allowed, so they count as
+     * unrestricted. can_create_topics is excluded because the member-permission
+     * dialog never grants it (it isn't a toggle there), so it must not by
+     * itself keep a member flagged as restricted.
+     */
+    private fun permissionsCoverDefault(
+        p: TdApi.ChatPermissions,
+        def: TdApi.ChatPermissions
+    ): Boolean {
+        // For each field: a denial only counts if the default GRANTS it but the
+        // member does NOT (default true && member false). Otherwise fine.
+        fun ok(member: Boolean, default: Boolean) = !default || member
+        return ok(p.canSendBasicMessages, def.canSendBasicMessages) &&
+            ok(p.canSendAudios, def.canSendAudios) &&
+            ok(p.canSendDocuments, def.canSendDocuments) &&
+            ok(p.canSendPhotos, def.canSendPhotos) &&
+            ok(p.canSendVideos, def.canSendVideos) &&
+            ok(p.canSendVideoNotes, def.canSendVideoNotes) &&
+            ok(p.canSendVoiceNotes, def.canSendVoiceNotes) &&
+            ok(p.canSendPolls, def.canSendPolls) &&
+            ok(p.canSendOtherMessages, def.canSendOtherMessages) &&
+            ok(p.canAddLinkPreviews, def.canAddLinkPreviews) &&
+            ok(p.canReactToMessages, def.canReactToMessages) &&
+            ok(p.canEditTag, def.canEditTag) &&
+            ok(p.canChangeInfo, def.canChangeInfo) &&
+            ok(p.canInviteUsers, def.canInviteUsers) &&
+            ok(p.canPinMessages, def.canPinMessages)
     }
 
     /**
