@@ -854,7 +854,16 @@ fun ChatScreen(
                                 val item = listState.layoutInfo.visibleItemsInfo
                                     .find { it.index == firstUnreadIdx }
                                 if (vp > 0 && item != null) {
-                                    val precise = (vp - item.size - 80).coerceAtLeast(0)
+                                    // The first-unread item carries the "non letti"
+                                    // separator at its TOP, so we want the ITEM's top
+                                    // (= the separator) pinned right under the viewport
+                                    // top. Offset math (reverseLayout): top lands at
+                                    // vp-(K+size) ⇒ K = vp-size-margin. A small 4px
+                                    // margin (was 80) means the separator sits at the
+                                    // very top with no already-read content showing
+                                    // above it — Eugenio's "ci porta un pochino più
+                                    // sopra rispetto al separatore" was those 80px.
+                                    val precise = (vp - item.size - 4).coerceAtLeast(0)
                                     runCatching { listState.scrollToItem(firstUnreadIdx, precise) }
                                     return@repeat
                                 }
@@ -962,7 +971,12 @@ fun ChatScreen(
                         val item = listState.layoutInfo.visibleItemsInfo
                             .find { it.index == idx }
                         if (vp > 0 && item != null) {
-                            val precise = (vp - item.size - 80).coerceAtLeast(0)
+                            // Pin the first-unread item's TOP (which carries the
+                            // "non letti" separator) right under the viewport top.
+                            // Was 80px, which showed read content above the
+                            // separator and made the user land "un pochino sopra";
+                            // a 4px margin puts the separator at the top edge.
+                            val precise = (vp - item.size - 4).coerceAtLeast(0)
                             runCatching { listState.scrollToItem(idx, precise) }
                             return@repeat
                         }
@@ -1020,11 +1034,22 @@ fun ChatScreen(
     // them and then fires UpdateChatReadInbox, which our handler
     // applies to the chatCache → chat-list badge drops in real time.
     LaunchedEffect(chatId) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
+        snapshotFlow {
+            // Key on the IDs of the visible messages, NOT just their index
+            // numbers. When a new message arrives while we're pinned at the
+            // bottom, the visible index range stays the same ([0,1,2,…]) but the
+            // content at those positions shifts — keying on indices alone made
+            // distinctUntilChanged swallow that emission, so an incoming
+            // @-mention (or reaction) that landed while you were already sitting
+            // at the bottom didn't clear until you nudged the scroll. IDs change
+            // with content, so the read fires immediately.
+            listState.layoutInfo.visibleItemsInfo.mapNotNull { messages.getOrNull(it.index)?.id }
+        }
             .distinctUntilChanged()
-            .collect { indices ->
-                if (indices.isEmpty()) return@collect
-                val visible = indices.mapNotNull { idx -> messages.getOrNull(idx) }
+            .collect { visibleIds ->
+                if (visibleIds.isEmpty()) return@collect
+                val idSet = visibleIds.toHashSet()
+                val visible = messages.filter { it.id in idSet }
                 val ids = visible.mapNotNull { m -> if (!m.isOutgoing) m.id else null }.toLongArray()
                 if (ids.isNotEmpty()) {
                     runCatching { TdClient.viewMessages(chatId, ids) }

@@ -1530,11 +1530,16 @@ private fun ChatRow(
                     // Muted chats get a neutral badge; only un-muted chats keep
                     // the accent colour, so a glance down the list shows which
                     // conversations actually pinged you (same language official
-                    // Telegram uses). Pill shape with a min size grows cleanly
-                    // for 2–3 digit counts instead of cramming "99+" into a dot.
-                    val badgeBg = if (muted) MaterialTheme.colorScheme.surfaceVariant
+                    // Telegram uses). Derive the neutral from onSurface (with low
+                    // alpha) rather than surfaceVariant: custom themes — notably
+                    // the pure-black one — set surfaceVariant to near-black
+                    // (#0A0A0A), making the badge invisible on a black bg. An
+                    // onSurface tint always contrasts with the background because
+                    // onSurface is, by definition, the readable-on-background
+                    // colour. Works in light themes too (dark tint on light bg).
+                    val badgeBg = if (muted) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
                                   else MaterialTheme.colorScheme.primary
-                    val badgeFg = if (muted) MaterialTheme.colorScheme.onSurfaceVariant
+                    val badgeFg = if (muted) MaterialTheme.colorScheme.onSurface
                                   else MaterialTheme.colorScheme.onPrimary
                     Box(
                         modifier = Modifier
@@ -1557,7 +1562,7 @@ private fun ChatRow(
                     // user still sees the unread affordance even though
                     // there's nothing to count. Mirrors Telegram exactly.
                     Spacer(Modifier.width(8.dp))
-                    val dotBg = if (muted) MaterialTheme.colorScheme.surfaceVariant
+                    val dotBg = if (muted) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
                                 else MaterialTheme.colorScheme.primary
                     Box(
                         modifier = Modifier
