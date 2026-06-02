@@ -222,6 +222,11 @@ fun ChatScreen(
     // Last non-null pinned message — kept so the banner's collapse animation
     // renders its content through the exit instead of blanking instantly.
     var lastPinnedBanner by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
+    // Message awaiting the group pin confirmation (with the notify-all toggle).
+    var pinNotifyTarget by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
+    // User just banned via a message's admin menu, awaiting the "also delete
+    // all their messages?" prompt.
+    var banDeleteAllUid by remember(chatId) { mutableStateOf<Long?>(null) }
     val appearance by com.secondream.novagram.settings.AppSettings.appearance
         .collectAsState(initial = com.secondream.novagram.settings.AppearancePrefs())
     // Cached list of chat members for the @-mention picker. Loaded lazily
@@ -3820,22 +3825,40 @@ fun ChatScreen(
             onTogglePin = if (canPinHere) {
                 {
                     val wasPinned = msg.id == pinnedMessageId
-                    scope.launch {
-                        runCatching {
-                            if (wasPinned) TdClient.unpinChatMessage(chatId, msg.id)
-                            else TdClient.pinChatMessage(chatId, msg.id)
-                        }.onSuccess {
-                            com.secondream.novagram.ui.components.NovaSnackbar.show(
-                                if (wasPinned) R.string.snack_message_unpinned
-                                else R.string.snack_message_pinned,
-                                com.secondream.novagram.ui.icons.PhosphorIcons.PushPin
-                            )
+                    when {
+                        wasPinned -> {
+                            // Unpin: no prompt, just do it.
+                            scope.launch {
+                                runCatching { TdClient.unpinChatMessage(chatId, msg.id) }
+                                    .onSuccess {
+                                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                            R.string.snack_message_unpinned,
+                                            com.secondream.novagram.ui.icons.PhosphorIcons.PushPin
+                                        )
+                                    }
+                            }
+                            pinnedMessageId = 0L
+                            pinned = null
+                        }
+                        isGroupChat -> {
+                            // Group: ask whether to notify all members first.
+                            pinNotifyTarget = msg
+                        }
+                        else -> {
+                            // Private chat: pin straight away (notifies the peer).
+                            scope.launch {
+                                runCatching { TdClient.pinChatMessage(chatId, msg.id) }
+                                    .onSuccess {
+                                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                            R.string.snack_message_pinned,
+                                            com.secondream.novagram.ui.icons.PhosphorIcons.PushPin
+                                        )
+                                    }
+                            }
+                            pinnedMessageId = msg.id
+                            pinned = msg
                         }
                     }
-                    pinnedMessageId = if (wasPinned) 0L else msg.id
-                    // Update the banner immediately — don't wait for a
-                    // server round trip or a chat reload.
-                    pinned = if (wasPinned) null else msg
                     deleteTarget = null
                 }
             } else null,
@@ -3918,6 +3941,10 @@ fun ChatScreen(
                             runCatching {
                                 if (kick) TdClient.kickGroupUser(chatId, senderUserId)
                                 else TdClient.unbanGroupUser(chatId, senderUserId)
+                            }.onSuccess {
+                                // After a successful ban, offer to wipe the
+                                // user's messages (Telegram-style).
+                                if (kick) banDeleteAllUid = senderUserId
                             }
                         } finally {
                             pendingActionLabel = null
@@ -3926,6 +3953,50 @@ fun ChatScreen(
                 }
                 deleteTarget = null
             }
+        )
+    }
+
+    // Group pin confirmation with the "notify all members" toggle.
+    pinNotifyTarget?.let { msg ->
+        PinNotifyDialog(
+            onPin = { notify ->
+                scope.launch {
+                    runCatching {
+                        TdClient.pinChatMessage(
+                            chatId, msg.id, disableNotification = !notify
+                        )
+                    }.onSuccess {
+                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                            R.string.snack_message_pinned,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.PushPin
+                        )
+                    }
+                }
+                pinnedMessageId = msg.id
+                pinned = msg
+                pinNotifyTarget = null
+            },
+            onDismiss = { pinNotifyTarget = null }
+        )
+    }
+
+    // Post-ban "also delete all their messages?" prompt.
+    banDeleteAllUid?.let { uid ->
+        BanDeleteAllDialog(
+            memberName = null,
+            onConfirm = {
+                scope.launch {
+                    runCatching { TdClient.deleteChatMessagesBySender(chatId, uid) }
+                        .onSuccess {
+                            com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                R.string.ban_delete_all_done,
+                                com.secondream.novagram.ui.icons.PhosphorIcons.Trash
+                            )
+                        }
+                }
+                banDeleteAllUid = null
+            },
+            onDismiss = { banDeleteAllUid = null }
         )
     }
 
@@ -4343,6 +4414,9 @@ internal fun ChatInfoDialog(
     }
     var selectedMediaMessage by remember(chatId) { mutableStateOf<TdApi.Message?>(null) }
     var selectedMember by remember(chatId) { mutableStateOf<TdApi.ChatMember?>(null) }
+    // User just banned from the member sheet, awaiting the "delete all their
+    // messages?" prompt.
+    var memberBanDeleteUid by remember(chatId) { mutableStateOf<Long?>(null) }
     // Bumped after a member action so the Membri list reloads in place (the
     // action already lands server-side; this gives immediate visual feedback).
     var membersRefresh by remember(chatId) { mutableStateOf(0) }
@@ -4654,7 +4728,29 @@ internal fun ChatInfoDialog(
                 actionScope = infoScope,
                 selfIsOwner = selfIsCreator,
                 onDismiss = { selectedMember = null },
-                onChanged = { membersRefresh++ }
+                onChanged = { membersRefresh++ },
+                onBanned = { uid -> memberBanDeleteUid = uid }
+            )
+        }
+        // After banning from the member sheet: offer to also delete all of
+        // that user's messages (Telegram-style).
+        memberBanDeleteUid?.let { uid ->
+            BanDeleteAllDialog(
+                memberName = null,
+                onConfirm = {
+                    infoScope.launch {
+                        runCatching { TdClient.deleteChatMessagesBySender(chatId, uid) }
+                            .onSuccess {
+                                com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                    R.string.ban_delete_all_done,
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.Trash
+                                )
+                            }
+                        membersRefresh++
+                    }
+                    memberBanDeleteUid = null
+                },
+                onDismiss = { memberBanDeleteUid = null }
             )
         }
         // Group editing now lives inline in the Info tab (GroupInfoEditor).
@@ -5416,6 +5512,116 @@ private fun PermissionRow(
 }
 
 /**
+ * Confirmation shown right after an admin bans a member: offer to also wipe
+ * every message that user ever sent in the group (Telegram's "delete all
+ * messages from this user"). Destructive accent on the confirm action.
+ */
+@Composable
+private fun BanDeleteAllDialog(
+    memberName: String?,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
+                Text(
+                    stringResource(R.string.ban_delete_all_title),
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (memberName.isNullOrBlank())
+                        stringResource(R.string.ban_delete_all_body)
+                    else stringResource(R.string.ban_delete_all_body_named, memberName),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(20.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.ban_delete_all_keep))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    TextButton(onClick = onConfirm) {
+                        Text(
+                            stringResource(R.string.ban_delete_all_confirm),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Pin confirmation for groups, mirroring Telegram: a single "Fissa" action
+ * with a "notify all members" toggle on top (ON by default). Pinning silent
+ * (toggle off) sets disableNotification=true so members aren't pinged.
+ */
+@Composable
+private fun PinNotifyDialog(
+    onPin: (notify: Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var notify by remember { mutableStateOf(true) }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
+                Text(
+                    stringResource(R.string.pin_dialog_title),
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { notify = !notify }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        stringResource(R.string.pin_notify_all),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    androidx.compose.material3.Switch(
+                        checked = notify,
+                        onCheckedChange = { notify = it }
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    TextButton(onClick = { onPin(notify) }) {
+                        Text(stringResource(R.string.pin_dialog_confirm))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
  * Shared permissions editor for BOTH the group default permissions (global,
  * setChatPermissions) and a single member's restrictions (per-user,
  * restrictMember). The 5 toggles map to the full ChatPermissions.
@@ -5619,7 +5825,8 @@ private fun MemberActionSheet(
     actionScope: kotlinx.coroutines.CoroutineScope,
     selfIsOwner: Boolean,
     onDismiss: () -> Unit,
-    onChanged: () -> Unit = {}
+    onChanged: () -> Unit = {},
+    onBanned: (userId: Long) -> Unit = {}
 ) {
     // Actions run on a scope owned by the caller (the info view), NOT a
     // sheet-local rememberCoroutineScope — otherwise dismissing the sheet
@@ -5738,6 +5945,7 @@ private fun MemberActionSheet(
                             com.secondream.novagram.ui.components.NovaSnackbar.show(
                                 R.string.snack_member_banned, phos.UserMinus
                             )
+                            onBanned(uid)
                         }
                         onChanged()
                     }

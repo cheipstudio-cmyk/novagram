@@ -523,4 +523,13 @@
     <string name="clear_app_data_desc">Speicher freigeben: Downloads und Cache</string>
     <string name="clear_app_data_cleaning">Wird bereinigt… %1$s</string>
     <string name="clear_app_data_done">%1$s freigegeben</string>
+    <string name="ban_delete_all_title">Nachrichten löschen?</string>
+    <string name="ban_delete_all_body">Auch alle Nachrichten löschen, die diese Person in der Gruppe gesendet hat?</string>
+    <string name="ban_delete_all_body_named">Auch alle Nachrichten löschen, die %1$s in der Gruppe gesendet hat?</string>
+    <string name="ban_delete_all_keep">Behalten</string>
+    <string name="ban_delete_all_confirm">Alle löschen</string>
+    <string name="ban_delete_all_done">Nachrichten gelöscht</string>
+    <string name="pin_dialog_title">Nachricht anpinnen?</string>
+    <string name="pin_notify_all">Alle benachrichtigen</string>
+    <string name="pin_dialog_confirm">Anpinnen</string>
 </resources>

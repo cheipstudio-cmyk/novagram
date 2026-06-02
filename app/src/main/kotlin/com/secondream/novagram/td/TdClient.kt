@@ -1943,6 +1943,16 @@ object TdClient {
     }
 
     /**
+     * Delete every message a given user has sent in a supergroup — the
+     * "delete all messages from this user" action Telegram offers right
+     * after you ban someone. No-op on chat types where TDLib doesn't
+     * support it (basic groups, private chats).
+     */
+    suspend fun deleteChatMessagesBySender(chatId: Long, userId: Long) {
+        send(TdApi.DeleteChatMessagesBySender(chatId, TdApi.MessageSenderUser(userId)))
+    }
+
+    /**
      * Reverse of [kickGroupUser]. Restore the user to plain member status
      * (no admin rights, no restrictions). Called by the admin action sheet
      * when the user is already banned — same tap, opposite direction —

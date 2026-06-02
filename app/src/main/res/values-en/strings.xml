@@ -523,4 +523,13 @@
     <string name="clear_app_data_desc">Free up space: downloads and cache</string>
     <string name="clear_app_data_cleaning">Cleaning… %1$s</string>
     <string name="clear_app_data_done">Freed %1$s</string>
+    <string name="ban_delete_all_title">Delete messages?</string>
+    <string name="ban_delete_all_body">Also delete all messages this person sent in the group?</string>
+    <string name="ban_delete_all_body_named">Also delete all messages %1$s sent in the group?</string>
+    <string name="ban_delete_all_keep">Keep</string>
+    <string name="ban_delete_all_confirm">Delete all</string>
+    <string name="ban_delete_all_done">Messages deleted</string>
+    <string name="pin_dialog_title">Pin message?</string>
+    <string name="pin_notify_all">Notify all members</string>
+    <string name="pin_dialog_confirm">Pin</string>
 </resources>

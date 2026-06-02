@@ -537,4 +537,13 @@
     <string name="clear_app_data_desc">Libera spazio: download e cache</string>
     <string name="clear_app_data_cleaning">Pulizia in corso… %1$s</string>
     <string name="clear_app_data_done">Liberati %1$s</string>
+    <string name="ban_delete_all_title">Eliminare i messaggi?</string>
+    <string name="ban_delete_all_body">Vuoi eliminare anche tutti i messaggi inviati da questa persona nel gruppo?</string>
+    <string name="ban_delete_all_body_named">Vuoi eliminare anche tutti i messaggi inviati da %1$s nel gruppo?</string>
+    <string name="ban_delete_all_keep">Mantieni</string>
+    <string name="ban_delete_all_confirm">Elimina tutto</string>
+    <string name="ban_delete_all_done">Messaggi eliminati</string>
+    <string name="pin_dialog_title">Fissare il messaggio?</string>
+    <string name="pin_notify_all">Invia notifica a tutti</string>
+    <string name="pin_dialog_confirm">Fissa</string>
 </resources>

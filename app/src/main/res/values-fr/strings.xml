@@ -523,4 +523,13 @@
     <string name="clear_app_data_desc">Libérer de l\'espace : téléchargements et cache</string>
     <string name="clear_app_data_cleaning">Nettoyage… %1$s</string>
     <string name="clear_app_data_done">%1$s libérés</string>
+    <string name="ban_delete_all_title">Supprimer les messages ?</string>
+    <string name="ban_delete_all_body">Supprimer aussi tous les messages envoyés par cette personne dans le groupe ?</string>
+    <string name="ban_delete_all_body_named">Supprimer aussi tous les messages envoyés par %1$s dans le groupe ?</string>
+    <string name="ban_delete_all_keep">Conserver</string>
+    <string name="ban_delete_all_confirm">Tout supprimer</string>
+    <string name="ban_delete_all_done">Messages supprimés</string>
+    <string name="pin_dialog_title">Épingler le message ?</string>
+    <string name="pin_notify_all">Notifier tout le monde</string>
+    <string name="pin_dialog_confirm">Épingler</string>
 </resources>
