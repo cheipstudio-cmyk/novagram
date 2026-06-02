@@ -63,7 +63,7 @@
     <string name="mic_permission_body">Microphone permission is required to record voice notes.</string>
     <string name="attach_title">Attach</string>
     <string name="attach_photo_or_video">Photo or video</string>
-    <string name="attach_document_or_file">Document or file</string>
+    <string name="attach_document_or_file">File</string>
     <string name="delete_title">Delete message</string>
     <string name="delete_for_me">Delete for me</string>
     <string name="delete_for_everyone">Delete for everyone</string>

@@ -75,7 +75,7 @@
     <string name="mic_permission_body">Servono i permessi del microfono per registrare note vocali.</string>
     <string name="attach_title">Allega</string>
     <string name="attach_photo_or_video">Foto o video</string>
-    <string name="attach_document_or_file">Documento o file</string>
+    <string name="attach_document_or_file">File</string>
     <string name="delete_title">Elimina messaggio</string>
     <string name="delete_for_me">Elimina per me</string>
     <string name="delete_for_everyone">Elimina per tutti</string>

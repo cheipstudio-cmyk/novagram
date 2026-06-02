@@ -63,7 +63,7 @@
     <string name="mic_permission_body">Mikrofonberechtigung wird benötigt, um Sprachnotizen aufzunehmen.</string>
     <string name="attach_title">Anhängen</string>
     <string name="attach_photo_or_video">Foto oder Video</string>
-    <string name="attach_document_or_file">Dokument oder Datei</string>
+    <string name="attach_document_or_file">Datei</string>
     <string name="delete_title">Nachricht löschen</string>
     <string name="delete_for_me">Für mich löschen</string>
     <string name="delete_for_everyone">Für alle löschen</string>

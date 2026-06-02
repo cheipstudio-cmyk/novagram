@@ -63,7 +63,7 @@
     <string name="mic_permission_body">L\'accès au microphone est requis pour enregistrer des notes vocales.</string>
     <string name="attach_title">Joindre</string>
     <string name="attach_photo_or_video">Photo ou vidéo</string>
-    <string name="attach_document_or_file">Document ou fichier</string>
+    <string name="attach_document_or_file">Fichier</string>
     <string name="delete_title">Supprimer le message</string>
     <string name="delete_for_me">Supprimer pour moi</string>
     <string name="delete_for_everyone">Supprimer pour tous</string>

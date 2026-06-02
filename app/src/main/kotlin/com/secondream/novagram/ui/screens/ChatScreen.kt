@@ -1949,12 +1949,34 @@ fun ChatScreen(
     // read so the Composable observes it).
     var cachedChatPulse by remember(chatId) { mutableStateOf(0) }
     LaunchedEffect(chatId) {
-        TdClient.chatUpdates.collect { cid ->
-            if (cid == chatId) cachedChatPulse++
-        }
+        // Debounced: cachedChatLive feeds the header (photo / type), which
+        // changes rarely. Bumping it on EVERY chatUpdate meant a busy group
+        // (especially with online=true streaming read receipts) recomposed
+        // ChatScreen on every single update — janky during scroll. Debounce
+        // coalesces a burst into one refresh ~100ms after activity settles.
+        TdClient.chatUpdates
+            .filter { it == chatId }
+            .debounce(100)
+            .collect { cachedChatPulse++ }
     }
     val cachedChatLive = remember(chatId, cachedChatPulse) {
         TdClient.getCachedChat(chatId)
+    }
+    // Read-receipt tick (✓✓) source, DECOUPLED from cachedChatPulse so the
+    // message list recomposes ONLY when the peer's read position actually
+    // advances — not on every unrelated chat update. The "assign on change"
+    // guard is what keeps scrolling smooth: scrolling fires viewMessages →
+    // read-INBOX echoes, which would otherwise storm a shared pulse.
+    var readOutboxMax by remember(chatId) {
+        mutableStateOf(TdClient.getCachedChat(chatId)?.lastReadOutboxMessageId ?: 0L)
+    }
+    LaunchedEffect(chatId) {
+        TdClient.chatUpdates.collect { cid ->
+            if (cid == chatId) {
+                val v = TdClient.getCachedChat(chatId)?.lastReadOutboxMessageId ?: 0L
+                if (v != readOutboxMax) readOutboxMax = v
+            }
+        }
     }
     // Live mute state: subscribes to chatUpdates so toggling mute from
     // the action sheet (or from the chat-list swipe action, or from
@@ -2487,9 +2509,9 @@ fun ChatScreen(
                                 showSender = isGroupChat,
                                 // Reactive read marker — flips the ✓✓ on my
                                 // private-chat messages the moment the peer
-                                // reads (cachedChatLive re-resolves on every
-                                // UpdateChatReadOutbox via chatUpdates).
-                                readOutboxMaxId = cachedChatLive?.lastReadOutboxMessageId ?: 0L,
+                                // reads (readOutboxMax advances only when the
+                                // peer's read position actually moves).
+                                readOutboxMaxId = readOutboxMax,
                                 adminLabel = (msg.senderId as? TdApi.MessageSenderUser)
                                     ?.userId?.let { adminLabels[it] },
                                 onLongPress = { deleteTarget = it },

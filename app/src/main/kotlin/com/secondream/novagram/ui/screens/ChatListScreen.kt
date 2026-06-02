@@ -319,30 +319,38 @@ fun ChatListScreen(
                 label = "fabScale"
             )
             // Stack a smaller AI (Sparkle) FAB above the primary + button.
-            // The AI FAB is gated on realtime connectivity — same logic as the
-            // chat send button — so when offline it greys out and ignores taps
-            // (a summary needs a network round-trip to Anthropic + TDLib).
+            // It only EXISTS once the user has added their Anthropic key — the
+            // summary is useless without it. When offline it dims + ignores
+            // taps (a summary needs a round-trip to Anthropic + TDLib).
             val online by com.secondream.novagram.connectivity
                 .ConnectivityState.isOnline.collectAsState()
+            val aiKeySet = !appearance.anthropicApiKey.isNullOrBlank()
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                androidx.compose.material3.SmallFloatingActionButton(
-                    onClick = { if (online) showAiSummary = true },
-                    containerColor = if (online)
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                    else
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-                    contentColor = if (online)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                ) {
-                    Icon(
-                        com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
-                        contentDescription = stringResource(R.string.ai_summary_fab_cd)
-                    )
+                if (aiKeySet) {
+                    androidx.compose.material3.SmallFloatingActionButton(
+                        onClick = { if (online) showAiSummary = true },
+                        // Solid container + zero elevation: the old translucent
+                        // fill let the FAB shadow bleed through and looked
+                        // glitchy over the moving chat list. Flat + solid reads
+                        // clean on any background.
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            .copy(alpha = if (online) 1f else 0.45f),
+                        elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(
+                            defaultElevation = 0.dp,
+                            pressedElevation = 0.dp,
+                            focusedElevation = 0.dp,
+                            hoveredElevation = 0.dp
+                        )
+                    ) {
+                        Icon(
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
+                            contentDescription = stringResource(R.string.ai_summary_fab_cd)
+                        )
+                    }
                 }
                 FloatingActionButton(
                     onClick = onNewChat,

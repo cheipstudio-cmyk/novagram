@@ -63,7 +63,7 @@
     <string name="mic_permission_body">Se necesita permiso de micrófono para grabar notas de voz.</string>
     <string name="attach_title">Adjuntar</string>
     <string name="attach_photo_or_video">Foto o vídeo</string>
-    <string name="attach_document_or_file">Documento o archivo</string>
+    <string name="attach_document_or_file">Archivo</string>
     <string name="delete_title">Eliminar mensaje</string>
     <string name="delete_for_me">Eliminar para mí</string>
     <string name="delete_for_everyone">Eliminar para todos</string>

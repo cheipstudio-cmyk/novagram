@@ -85,6 +85,9 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
     var builderTheme by remember { mutableStateOf<com.secondream.novagram.settings.SavedTheme?>(null) }
     // Theme the user is sharing into a chat (drives the in-app chat picker).
     var shareThemeTarget by remember { mutableStateOf<com.secondream.novagram.settings.SavedTheme?>(null) }
+    // Accordion: at most one section open at a time. null = all collapsed,
+    // which is the default on entry.
+    var expandedSection by remember { mutableStateOf<String?>(null) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         runCatching { showReadDate = TdClient.getReadDatePrivacy() }
     }
@@ -128,7 +131,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             // up when no custom theme is active — a custom theme already
             // owns its own accent so showing the global one would be
             // ambiguous.
-            CollapsibleSection(stringResource(R.string.settings_section_appearance)) {
+            CollapsibleSection(stringResource(R.string.settings_section_appearance), expanded = expandedSection == "appearance", onToggle = { expandedSection = if (expandedSection == "appearance") null else "appearance" }) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         stringResource(R.string.settings_theme),
@@ -269,10 +272,10 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                 )
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(4.dp))
 
             // TEXT SIZE — global multiplier for every Text in the app.
-            CollapsibleSection(stringResource(R.string.settings_section_text_size)) {
+            CollapsibleSection(stringResource(R.string.settings_section_text_size), expanded = expandedSection == "textsize", onToggle = { expandedSection = if (expandedSection == "textsize") null else "textsize" }) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -305,10 +308,10 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(4.dp))
 
             // LANGUAGE
-            CollapsibleSection(stringResource(R.string.settings_section_language)) {
+            CollapsibleSection(stringResource(R.string.settings_section_language), expanded = expandedSection == "language", onToggle = { expandedSection = if (expandedSection == "language") null else "language" }) {
                 LanguageRow(
                     current = appearance.languageTag,
                     onPick = { tag ->
@@ -331,7 +334,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                 )
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(4.dp))
 
             // (Bubble color picker removed — bubbles now derive
             // automatically from the active theme + accent preset to keep
@@ -345,13 +348,13 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             // null means a base mode row is selected, non-null means a
             // saved-theme row is.)
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(4.dp))
 
             // MEDIA — controls how aggressively TDLib pulls media files
             // while the user scrolls a chat. Off = nothing downloads
             // until the user taps the placeholder; useful on metered
             // networks and for "just skimming" workflows.
-            CollapsibleSection(stringResource(R.string.settings_section_media)) {
+            CollapsibleSection(stringResource(R.string.settings_section_media), expanded = expandedSection == "misc", onToggle = { expandedSection = if (expandedSection == "misc") null else "misc" }) {
                 PrivacyToggleRow(
                     label = stringResource(R.string.settings_media_autodownload),
                     description = stringResource(R.string.settings_media_autodownload_desc),
@@ -397,14 +400,22 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                         scope.launch { AppSettings.setLockSavedToTop(enabled) }
                     }
                 )
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_bot_commands),
+                    description = stringResource(R.string.settings_bot_commands_desc),
+                    checked = appearance.showBotCommandsButton,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setShowBotCommandsButton(enabled) }
+                    }
+                )
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(4.dp))
 
             // AI — the user pastes their Anthropic API key here. Without
             // one the AI tile in the message actions sheet stays hidden.
             // Key is stored locally and only ever sent to api.anthropic.com.
-            CollapsibleSection(stringResource(R.string.settings_section_ai)) {
+            CollapsibleSection(stringResource(R.string.settings_section_ai), expanded = expandedSection == "ai", onToggle = { expandedSection = if (expandedSection == "ai") null else "ai" }) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     // Header: sparkle icon in an accent circle + title +
                     // a status chip showing whether a key is configured.
@@ -523,10 +534,10 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(4.dp))
 
             // PRIVACY
-            CollapsibleSection(stringResource(R.string.settings_section_privacy)) {
+            CollapsibleSection(stringResource(R.string.settings_section_privacy), expanded = expandedSection == "privacy", onToggle = { expandedSection = if (expandedSection == "privacy") null else "privacy" }) {
                 PrivacyToggleRow(
                     label = stringResource(R.string.settings_privacy_read_receipts),
                     description = stringResource(R.string.settings_privacy_read_receipts_desc),
@@ -566,15 +577,6 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                     }
                 )
                 Divider()
-                PrivacyToggleRow(
-                    label = stringResource(R.string.settings_bot_commands),
-                    description = stringResource(R.string.settings_bot_commands_desc),
-                    checked = appearance.showBotCommandsButton,
-                    onToggle = { enabled ->
-                        scope.launch { AppSettings.setShowBotCommandsButton(enabled) }
-                    }
-                )
-                Divider()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -596,10 +598,10 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(4.dp))
 
             // INFO
-            CollapsibleSection(stringResource(R.string.settings_section_info)) {
+            CollapsibleSection(stringResource(R.string.settings_section_info), expanded = expandedSection == "info", onToggle = { expandedSection = if (expandedSection == "info") null else "info" }) {
                 InfoRow(
                     label = stringResource(R.string.settings_version),
                     value = BuildConfig.VERSION_NAME
@@ -611,7 +613,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                 )
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(4.dp))
 
             // CREDITS
             CreditsBlock()
@@ -845,54 +847,67 @@ private fun BlockedUserRow(user: org.drinkless.tdlib.TdApi.User, onUnblocked: ()
 @Composable
 private fun CollapsibleSection(
     title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
     content: @Composable () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(true) }
+    val cs = MaterialTheme.colorScheme
     val rotation by androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = androidx.compose.animation.core.tween(300),
+        animationSpec = androidx.compose.animation.core.tween(240),
         label = "sectionCaret"
     )
+    // Accent when open is the click affordance — replaces the grey ripple
+    // (which read as a "glitch" over the cream background).
+    val headerColor = if (expanded) cs.primary else cs.onSurface
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .clickable { expanded = !expanded }
-                .padding(start = 16.dp, end = 10.dp, top = 4.dp, bottom = 10.dp),
+                .clip(RoundedCornerShape(14.dp))
+                .clickable(
+                    interactionSource = remember {
+                        androidx.compose.foundation.interaction.MutableInteractionSource()
+                    },
+                    indication = null,
+                    onClick = onToggle
+                )
+                .padding(horizontal = 6.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                title.uppercase(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                title,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                letterSpacing = 1.2.sp,
+                color = headerColor,
                 modifier = Modifier.weight(1f)
             )
             Icon(
                 com.secondream.novagram.ui.icons.PhosphorIcons.CaretDown,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = headerColor,
                 modifier = Modifier
-                    .size(18.dp)
+                    .size(20.dp)
                     .rotate(rotation)
             )
         }
         androidx.compose.animation.AnimatedVisibility(
             visible = expanded,
             enter = androidx.compose.animation.expandVertically(
-                animationSpec = androidx.compose.animation.core.tween(300)
+                animationSpec = androidx.compose.animation.core.tween(240)
             ) + androidx.compose.animation.fadeIn(
-                animationSpec = androidx.compose.animation.core.tween(300)
+                animationSpec = androidx.compose.animation.core.tween(240)
             ),
             exit = androidx.compose.animation.shrinkVertically(
-                animationSpec = androidx.compose.animation.core.tween(220)
+                animationSpec = androidx.compose.animation.core.tween(200)
             ) + androidx.compose.animation.fadeOut(
-                animationSpec = androidx.compose.animation.core.tween(160)
+                animationSpec = androidx.compose.animation.core.tween(140)
             )
         ) {
-            SectionCard { content() }
+            Column {
+                Spacer(Modifier.height(2.dp))
+                SectionCard { content() }
+            }
         }
     }
 }
