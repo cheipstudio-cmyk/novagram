@@ -376,6 +376,13 @@ object TdClient {
                 chatCache[obj.chatId]?.title = obj.title
                 refreshChats()
             }
+            is TdApi.UpdateChatPermissions -> {
+                // Keep cached default permissions fresh so the group "Permessi"
+                // dialog shows the real values right after a save (previously it
+                // only updated on app restart).
+                chatCache[obj.chatId]?.permissions = obj.permissions
+                scope.launch { _chatUpdates.emit(obj.chatId) }
+            }
             is TdApi.UpdateChatReadInbox -> {
                 chatCache[obj.chatId]?.unreadCount = obj.unreadCount
                 refreshChats()
@@ -1890,7 +1897,25 @@ object TdClient {
         return chat.id
     }
 
-    /** Cached supergroup object (carries usernames → public/private state). */
+    /**
+     * Create a broadcast channel (a supergroup with isChannel = true). Optional
+     * description is set at creation; a non-blank [username] makes it public
+     * (t.me/<username>), otherwise it's private. Returns the new chat id.
+     */
+    suspend fun createChannel(
+        title: String,
+        description: String,
+        username: String
+    ): Long? {
+        val chat = runCatching {
+            send(TdApi.CreateNewSupergroupChat(title, false, true, description, null, 0, false))
+        }.getOrNull() as? TdApi.Chat ?: return null
+        val sgId = (chat.type as? TdApi.ChatTypeSupergroup)?.supergroupId
+        if (sgId != null && username.isNotBlank()) {
+            runCatching { send(TdApi.SetSupergroupUsername(sgId, username)) }
+        }
+        return chat.id
+    }
     suspend fun getSupergroup(supergroupId: Long): TdApi.Supergroup? =
         runCatching { send(TdApi.GetSupergroup(supergroupId)) }.getOrNull() as? TdApi.Supergroup
 
@@ -2516,6 +2541,25 @@ object TdClient {
         val c = chatCache[chatId] ?: return
         if (c.unreadReactionCount > 0) {
             c.unreadReactionCount = c.unreadReactionCount - 1
+            scope.launch { _chatUpdates.emit(chatId) }
+            refreshChats()
+        }
+    }
+
+    /**
+     * Reaction-side companion of [clearChatMentionCountLocal]. Optimistically
+     * zeroes the unread reaction count so the in-chat "♥" chip vanishes the
+     * instant the reacted message is read — whether by tapping the chip or by
+     * scrolling it into view. readAllChatReactions clears them server-side, but
+     * its UpdateChatUnreadReactionCount echo lags / is sometimes never
+     * delivered, which left the badge stuck on scroll even after reading the
+     * whole chat (exactly the mention bug). The later echo tops up to whatever
+     * the server reports if we were wrong.
+     */
+    fun clearChatReactionCountLocal(chatId: Long) {
+        val c = chatCache[chatId] ?: return
+        if (c.unreadReactionCount != 0) {
+            c.unreadReactionCount = 0
             scope.launch { _chatUpdates.emit(chatId) }
             refreshChats()
         }

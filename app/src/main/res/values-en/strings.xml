@@ -442,6 +442,8 @@
     <string name="info_tab_members">Members</string>
     <string name="two_pane_select_chat">Select a chat</string>
     <string name="new_group_title">New group</string>
+    <string name="new_channel_title">New channel</string>
+    <string name="new_channel_name">Channel name</string>
     <string name="new_group_create">Create</string>
     <string name="new_group_name">Group name</string>
     <string name="new_group_selected">%1$d selected</string>
@@ -482,4 +484,5 @@
     <string name="perm_pin_messages">Pin messages</string>
     <string name="perm_change_info">Change info</string>
     <string name="perm_saved">Permissions updated</string>
+    <string name="unread_messages_separator">Unread messages</string>
 </resources>

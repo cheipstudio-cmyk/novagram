@@ -219,8 +219,11 @@ fun NewChatScreen(
                     title = {
                         Text(
                             stringResource(
-                                if (selectedTab == 1) R.string.new_group_title
-                                else R.string.new_chat_title
+                                when (selectedTab) {
+                                    1 -> R.string.new_group_title
+                                    2 -> R.string.new_channel_title
+                                    else -> R.string.new_chat_title
+                                }
                             ),
                             style = MaterialTheme.typography.headlineSmall,
                             fontStyle = FontStyle.Italic
@@ -269,11 +272,13 @@ fun NewChatScreen(
                     PillTabs(
                         icons = listOf(
                             com.secondream.novagram.ui.icons.PhosphorIcons.User,
-                            com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree
+                            com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree,
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Megaphone
                         ),
                         contentDescriptions = listOf(
                             stringResource(R.string.new_chat_tab_contacts),
-                            stringResource(R.string.new_group_title)
+                            stringResource(R.string.new_group_title),
+                            stringResource(R.string.new_channel_title)
                         ),
                         selected = selectedTab,
                         onSelect = { selectedTab = it }
@@ -284,7 +289,7 @@ fun NewChatScreen(
     ) { padding ->
         val pagerState = androidx.compose.foundation.pager.rememberPagerState(
             initialPage = selectedTab,
-            pageCount = { 2 }
+            pageCount = { 3 }
         )
         LaunchedEffect(selectedTab) {
             if (pagerState.currentPage != selectedTab && pagerState.targetPage != selectedTab) {
@@ -327,6 +332,7 @@ fun NewChatScreen(
                     }
                 )
                 1 -> NewGroupContent(query = query, onOpenChat = onOpenChat)
+                2 -> NewChannelContent(onOpenChat = onOpenChat)
             }
         }
     }

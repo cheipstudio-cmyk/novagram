@@ -542,3 +542,197 @@ fun NewGroupContent(
         }
     }
 }
+
+/**
+ * "Nuovo canale" tab body — a broadcast channel (supergroup with isChannel).
+ * Same visual language as the group tab (photo + name, public/private with a
+ * live-checked t.me username) but with a description field instead of member
+ * selection and no member-permission tile (in a channel only admins post).
+ * Subscribers are added afterwards via the invite link in the channel's info.
+ */
+@Composable
+fun NewChannelContent(onOpenChat: (Long) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var name by remember { mutableStateOf("") }
+    var description by remember { mutableStateOf("") }
+    var isPublic by remember { mutableStateOf(false) }
+    var username by remember { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
+    var available by remember { mutableStateOf<Boolean?>(null) }
+    var statusRes by remember { mutableStateOf(0) }
+    var creating by remember { mutableStateOf(false) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var photoUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var photoPath by remember { mutableStateOf<String?>(null) }
+    val photoPicker = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            photoUri = uri
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                photoPath = com.secondream.novagram.util.FileUtils
+                    .copyUriToCache(ctx, uri)?.absolutePath
+            }
+        }
+    }
+    LaunchedEffect(username, isPublic) {
+        if (!isPublic) { available = null; statusRes = 0; checking = false; return@LaunchedEffect }
+        val u = username.trim()
+        if (u.isEmpty()) { available = null; statusRes = 0; checking = false; return@LaunchedEffect }
+        if (u.length < 5) { available = false; statusRes = R.string.group_username_short; checking = false; return@LaunchedEffect }
+        checking = true; statusRes = 0
+        delay(450)
+        val res = runCatching { TdClient.checkChatUsername(0, u) }.getOrNull()
+        checking = false
+        when (res) {
+            is TdApi.CheckChatUsernameResultOk -> { available = true; statusRes = R.string.group_username_ok }
+            is TdApi.CheckChatUsernameResultUsernameOccupied -> { available = false; statusRes = R.string.group_username_taken }
+            is TdApi.CheckChatUsernameResultUsernameInvalid -> { available = false; statusRes = R.string.group_username_invalid }
+            null -> { available = null; statusRes = 0 }
+            else -> { available = false; statusRes = R.string.group_username_unavailable }
+        }
+    }
+    val canCreate = name.isNotBlank() && !creating && (!isPublic || available == true)
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { photoPicker.launch("image/*") },
+                contentAlignment = Alignment.Center
+            ) {
+                if (photoUri != null) {
+                    AsyncImage(
+                        model = photoUri,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                    )
+                } else {
+                    Icon(
+                        PhosphorIcons.Camera,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                label = { Text(stringResource(R.string.new_channel_name)) },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.weight(1f)
+            )
+        }
+        OutlinedTextField(
+            value = description,
+            onValueChange = { description = it },
+            label = { Text(stringResource(R.string.admin_group_bio)) },
+            shape = RoundedCornerShape(14.dp),
+            minLines = 2,
+            maxLines = 4,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = !isPublic,
+                onClick = { isPublic = false },
+                label = { Text(stringResource(R.string.group_type_private)) },
+                colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                )
+            )
+            FilterChip(
+                selected = isPublic,
+                onClick = { isPublic = true },
+                label = { Text(stringResource(R.string.group_type_public)) },
+                colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                )
+            )
+        }
+        AnimatedVisibility(visible = isPublic) {
+            Column {
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { v -> username = v.filter { it.isLetterOrDigit() || it == '_' } },
+                    label = { Text(stringResource(R.string.group_username_label)) },
+                    prefix = { Text("t.me/") },
+                    singleLine = true,
+                    isError = available == false,
+                    shape = RoundedCornerShape(14.dp),
+                    trailingIcon = {
+                        when {
+                            checking -> CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp), strokeWidth = 2.dp
+                            )
+                            available == true -> Icon(
+                                PhosphorIcons.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            else -> {}
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+                if (statusRes != 0) {
+                    Text(
+                        stringResource(statusRes),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (available == true) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 20.dp)
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Button(
+            enabled = canCreate,
+            onClick = {
+                creating = true
+                scope.launch {
+                    val chatId = TdClient.createChannel(
+                        name.trim(),
+                        description.trim(),
+                        if (isPublic) username.trim() else ""
+                    )
+                    if (chatId != null) {
+                        photoPath?.let { p -> runCatching { TdClient.setChatPhoto(chatId, p) } }
+                        creating = false
+                        NovaSnackbar.show(R.string.snack_group_created, PhosphorIcons.Check)
+                        onOpenChat(chatId)
+                    } else {
+                        creating = false
+                    }
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(stringResource(R.string.new_group_create))
+        }
+    }
+}

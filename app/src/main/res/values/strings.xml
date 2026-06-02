@@ -398,8 +398,8 @@
     <string name="user_fallback">Utente</string>
     <string name="member_unban">Sbanna</string>
     <string name="member_ban">Banna</string>
-    <string name="member_unmute">Smuta</string>
-    <string name="member_mute">Muta</string>
+    <string name="member_unmute">Riattiva</string>
+    <string name="member_mute">Silenzia</string>
     <string name="member_remove_admin">Rimuovi amministratore</string>
     <string name="member_make_admin">Rendi amministratore</string>
     <string name="member_manage_title">Gestisci membro</string>
@@ -456,6 +456,8 @@
     <string name="info_tab_members">Membri</string>
     <string name="two_pane_select_chat">Seleziona una chat</string>
     <string name="new_group_title">Nuovo gruppo</string>
+    <string name="new_channel_title">Nuovo canale</string>
+    <string name="new_channel_name">Nome del canale</string>
     <string name="new_group_create">Crea</string>
     <string name="new_group_name">Nome del gruppo</string>
     <string name="new_group_selected">%1$d selezionati</string>
@@ -496,4 +498,5 @@
     <string name="perm_pin_messages">Fissare i messaggi</string>
     <string name="perm_change_info">Cambiare le info</string>
     <string name="perm_saved">Permessi aggiornati</string>
+    <string name="unread_messages_separator">Messaggi non letti</string>
 </resources>

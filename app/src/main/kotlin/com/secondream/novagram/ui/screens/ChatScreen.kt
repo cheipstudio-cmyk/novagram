@@ -737,6 +737,14 @@ fun ChatScreen(
     // open. Drives the FAB accent + the "mark all read" behaviour when
     // the user reaches the bottom either by FAB or by manual scroll.
     var unreadModeActive by remember(chatId) { mutableStateOf(false) }
+    // Id of the first unread INCOMING message at the moment the chat is
+    // opened. Drives the "Messaggi non letti" divider rendered above that
+    // bubble in the list. Snapshotted ONCE per chat open (remember keyed on
+    // chatId) and deliberately NOT recomputed as messages get read — like
+    // Telegram, the separator stays anchored where it was on open and only
+    // disappears when you leave and re-enter the chat with nothing unread.
+    // 0L = no separator (chat was fully read on open).
+    var unreadSeparatorId by remember(chatId) { mutableStateOf(0L) }
 
     // Initial history load.
     // TDLib's getChatHistory first call returns only what's already in the
@@ -796,11 +804,12 @@ fun ChatScreen(
                     // lastReadInboxMessageId among incoming messages
                     // currently in our window. Land the user there so
                     // already-read context sits above, unread below.
-                    val firstUnreadIdx = messages
+                    val firstUnreadEntry = messages
                         .withIndex()
                         .filter { (_, m) -> !m.isOutgoing && m.id > freshLastReadId }
                         .minByOrNull { it.value.id }
-                        ?.index
+                    val firstUnreadIdx = firstUnreadEntry?.index
+                    unreadSeparatorId = firstUnreadEntry?.value?.id ?: 0L
                     if (firstUnreadIdx != null) {
                         // Two-phase precise positioning: rough scroll
                         // to bring the first-unread into the visible
@@ -931,6 +940,7 @@ fun ChatScreen(
                 val firstUnread = messages
                     .filter { !it.isOutgoing && it.id > lastReadId }
                     .minByOrNull { it.id }
+                unreadSeparatorId = firstUnread?.id ?: 0L
                 val idx = firstUnread?.let { tgt ->
                     messages.indexOfFirst { it.id == tgt.id }
                 } ?: -1
@@ -1019,17 +1029,30 @@ fun ChatScreen(
                 if (ids.isNotEmpty()) {
                     runCatching { TdClient.viewMessages(chatId, ids) }
                 }
-                // Mentions: plain viewMessages / openMessageContent did NOT
-                // reliably clear unread_mention_count in this TDLib build, so
-                // reading a mention by scrolling to it left the @ badge stuck.
-                // When a visible message still carries an unread mention and
-                // the chat still has a positive count, clear them all via the
-                // dedicated readAllChatMentions. The count guard self-limits:
-                // once the echo zeroes the cache, this stops firing.
+                // Mentions: reading a mention by scrolling it into view must
+                // clear the @ badge. readAllChatMentions tells the server, but
+                // its UpdateChatUnreadMentionCount echo lags / is sometimes
+                // never delivered in this TDLib build — so on its own the badge
+                // stayed stuck even after scrolling the whole chat (only the
+                // TAP cleared it, because tap ALSO zeroes the count locally).
+                // Mirror that here: fire the server read AND zero the cached
+                // count locally (clearChatMentionCountLocal emits chatUpdates →
+                // chip hides immediately). The count guard + the local zero make
+                // this fire exactly once.
                 if (visible.any { it.containsUnreadMention } &&
                     (TdClient.getCachedChat(chatId)?.unreadMentionCount ?: 0) > 0
                 ) {
                     runCatching { TdClient.readAllChatMentions(chatId) }
+                    TdClient.clearChatMentionCountLocal(chatId)
+                }
+                // Reactions: identical story and identical fix — server read
+                // plus a local zero so the ♥ badge disappears on read, not only
+                // on tap.
+                if (visible.any { m -> m.unreadReactions?.isNotEmpty() == true } &&
+                    (TdClient.getCachedChat(chatId)?.unreadReactionCount ?: 0) > 0
+                ) {
+                    runCatching { TdClient.readAllChatReactions(chatId) }
+                    TdClient.clearChatReactionCountLocal(chatId)
                 }
             }
     }
@@ -2350,30 +2373,32 @@ fun ChatScreen(
                         messageContentOverrides[msg.id]?.let { fresh ->
                             if (msg.content !== fresh) msg.content = fresh
                         }
-                        androidx.compose.foundation.layout.Box(
-                            // animateItem(): default would fade new bubbles
-                            // in from alpha 0 over 220ms, which reads as a
-                            // flash when a new message lands or when the
-                            // list paginates older history mid-scroll. We
-                            // nuke the fade specs entirely AND drop the
-                            // bouncy ratio in favour of critically-damped
-                            // (NoBouncy) so the bubble slides into place
-                            // without overshoot — the overshoot was the
-                            // remaining "flash" the user kept seeing after
-                            // we'd already removed the fade. StiffnessMedium
-                            // (not MediumLow) tightens the timing so the
-                            // animation completes in ~250ms instead of
-                            // ~400, matching the perceptual rhythm of the
-                            // official client.
-                            modifier = Modifier.animateItem(
-                                fadeInSpec = null,
-                                fadeOutSpec = null,
-                                placementSpec = androidx.compose.animation.core.spring(
-                                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
-                                    stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                // animateItem(): default would fade new bubbles
+                                // in from alpha 0 over 220ms, which reads as a
+                                // flash when a new message lands or when the
+                                // list paginates older history mid-scroll. We
+                                // nuke the fade specs entirely AND drop the
+                                // bouncy ratio in favour of critically-damped
+                                // (NoBouncy) so the bubble slides into place
+                                // without overshoot. Hoisted onto the Column so
+                                // the optional unread separator above the bubble
+                                // travels with it as one animated unit.
+                                .animateItem(
+                                    fadeInSpec = null,
+                                    fadeOutSpec = null,
+                                    placementSpec = androidx.compose.animation.core.spring(
+                                        dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                                        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+                                    )
                                 )
-                            )
                         ) {
+                            if (unreadSeparatorId != 0L && msg.id == unreadSeparatorId) {
+                                UnreadMessagesSeparator()
+                            }
+                            androidx.compose.foundation.layout.Box {
                             MessageBubble(
                                 message = msg,
                                 showSender = isGroupChat,
@@ -2440,6 +2465,7 @@ fun ChatScreen(
                                 },
                                 pendingInlineButtonKey = pendingInlineButtonKeys[msg.id]
                             )
+                            }
                         }
                     }
                 }
@@ -4071,6 +4097,9 @@ internal fun ChatInfoDialog(
     val isGroup = (supergroupId != null && !isChannel) || basicGroupId != null
     var myUserId by remember(chatId) { mutableStateOf(0L) }
     var isSelfAdmin by remember(chatId) { mutableStateOf(false) }
+    var selfIsCreator by remember(chatId) { mutableStateOf(false) }
+    var selfCanChangeInfo by remember(chatId) { mutableStateOf(false) }
+    var selfCanRestrict by remember(chatId) { mutableStateOf(false) }
 
     LaunchedEffect(chatId) {
         val c = chat ?: return@LaunchedEffect
@@ -4105,6 +4134,17 @@ internal fun ChatInfoDialog(
         val status = TdClient.getChatMemberStatus(chatId, me)
         isSelfAdmin = status is TdApi.ChatMemberStatusCreator ||
             status is TdApi.ChatMemberStatusAdministrator
+        selfIsCreator = status is TdApi.ChatMemberStatusCreator
+        selfCanChangeInfo = when (status) {
+            is TdApi.ChatMemberStatusCreator -> true
+            is TdApi.ChatMemberStatusAdministrator -> status.rights.canChangeInfo
+            else -> false
+        }
+        selfCanRestrict = when (status) {
+            is TdApi.ChatMemberStatusCreator -> true
+            is TdApi.ChatMemberStatusAdministrator -> status.rights.canRestrictMembers
+            else -> false
+        }
     }
 
     val showMembers = isGroup && isSelfAdmin
@@ -4180,7 +4220,11 @@ internal fun ChatInfoDialog(
             }
         }
     }
-    val canEditGroup = isSelfAdmin && isGroup
+    val canEditGroup = (isGroup || isChannel) &&
+        (selfIsCreator || (isSelfAdmin && selfCanChangeInfo))
+    // Member-permission tile only makes sense in groups, and only for someone
+    // who can actually restrict members (owner, or admin with that right).
+    val editorShowPerms = isGroup && (selfIsCreator || selfCanRestrict)
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -4387,6 +4431,7 @@ internal fun ChatInfoDialog(
                                 chatId = chatId,
                                 currentTitle = title,
                                 currentBio = description ?: "",
+                                showPermissions = editorShowPerms,
                                 onSaved = onDismiss
                             )
                         } else {
@@ -4446,18 +4491,11 @@ internal fun ChatInfoDialog(
                 },
                 onOpenViaIntent = { path, mime ->
                     selectedMediaMessage = null
-                    runCatching {
-                        val file = java.io.File(path)
-                        val uri = androidx.core.content.FileProvider.getUriForFile(
-                            ctx,
-                            ctx.packageName + ".fileprovider",
-                            file
-                        )
-                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
-                            .setDataAndType(uri, mime)
-                            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        ctx.startActivity(intent)
-                    }
+                    // Route through FileUtils.openDocument so APK detection,
+                    // the NEW_TASK flag and the no-handler toast all live in
+                    // one place (was a bespoke intent here that skipped the
+                    // apk-mime fix and showed the chooser).
+                    com.secondream.novagram.util.FileUtils.openDocument(ctx, path, mime)
                 }
             )
         }
@@ -4467,6 +4505,8 @@ internal fun ChatInfoDialog(
             MemberActionSheet(
                 chatId = chatId,
                 member = member,
+                actionScope = infoScope,
+                selfIsOwner = selfIsCreator,
                 onDismiss = { selectedMember = null },
                 onChanged = { membersRefresh++ }
             )
@@ -4622,6 +4662,41 @@ private fun GroupTypeEditor(
 }
 
 /**
+ * Thin "unread messages" divider shown in the chat list directly above the
+ * first message that was unread when the chat was opened — Telegram's classic
+ * separator. Anchored once on open (see unreadSeparatorId); it deliberately
+ * does NOT move or vanish as messages get read, only when leaving and
+ * re-entering the chat with nothing unread.
+ */
+@Composable
+private fun UnreadMessagesSeparator() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        androidx.compose.material3.HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+        )
+        Text(
+            text = stringResource(R.string.unread_messages_separator),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
+        androidx.compose.material3.HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+        )
+    }
+}
+
+/**
  * Inline group editor rendered directly inside the chat-info "Info" tab for
  * admins/owners (everyone else sees the read-only bio). Mirrors the Profile
  * screen's grouped field cards. The group PHOTO is edited by tapping the info
@@ -4634,6 +4709,7 @@ private fun GroupInfoEditor(
     chatId: Long,
     currentTitle: String,
     currentBio: String,
+    showPermissions: Boolean = true,
     onSaved: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -4657,6 +4733,8 @@ private fun GroupInfoEditor(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 8.dp)
+            .navigationBarsPadding()
+            .imePadding()
     ) {
         Column(
             modifier = Modifier
@@ -4688,15 +4766,17 @@ private fun GroupInfoEditor(
                 maxLines = 4
             )
         }
-        Spacer(Modifier.height(14.dp))
-        com.secondream.novagram.ui.components.ActionTileButton(
-            tile = com.secondream.novagram.ui.components.ActionTile(
-                label = stringResource(R.string.perm_group_title),
-                icon = com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
-                onClick = { permsOpen = true }
-            ),
-            modifier = Modifier.fillMaxWidth()
-        )
+        if (showPermissions) {
+            Spacer(Modifier.height(14.dp))
+            com.secondream.novagram.ui.components.ActionTileButton(
+                tile = com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.perm_group_title),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
+                    onClick = { permsOpen = true }
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         Spacer(Modifier.height(14.dp))
         Column(
             modifier = Modifier
@@ -5350,10 +5430,16 @@ private fun AdminRightsDialog(
 private fun MemberActionSheet(
     chatId: Long,
     member: TdApi.ChatMember,
+    actionScope: kotlinx.coroutines.CoroutineScope,
+    selfIsOwner: Boolean,
     onDismiss: () -> Unit,
     onChanged: () -> Unit = {}
 ) {
-    val scope = rememberCoroutineScope()
+    // Actions run on a scope owned by the caller (the info view), NOT a
+    // sheet-local rememberCoroutineScope — otherwise dismissing the sheet
+    // cancels the coroutine and the post-action refresh (onChanged) never
+    // fires, leaving the member list stale until you reopen the view.
+    val scope = actionScope
     val uid = (member.memberId as? TdApi.MessageSenderUser)?.userId ?: return
     val status = member.status
     val phos = com.secondream.novagram.ui.icons.PhosphorIcons
@@ -5498,26 +5584,31 @@ private fun MemberActionSheet(
         }
         if (!isCreator) {
             if (isAdmin) {
-                add(com.secondream.novagram.ui.components.ActionTile(
-                    label = stringResource(R.string.member_remove_admin),
-                    icon = phos.UserMinus,
-                    onClick = {
-                        onDismiss()
-                        scope.launch {
-                            runCatching { TdClient.demoteFromAdmin(chatId, uid) }.onSuccess {
-                                com.secondream.novagram.ui.components.NovaSnackbar.show(
-                                    R.string.snack_admin_revoked, phos.UserMinus
-                                )
+                // Only the group owner can manage existing admins (demote /
+                // edit their rights). A regular admin viewing another admin
+                // gets no admin-management tiles.
+                if (selfIsOwner) {
+                    add(com.secondream.novagram.ui.components.ActionTile(
+                        label = stringResource(R.string.member_remove_admin),
+                        icon = phos.UserMinus,
+                        onClick = {
+                            onDismiss()
+                            scope.launch {
+                                runCatching { TdClient.demoteFromAdmin(chatId, uid) }.onSuccess {
+                                    com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                        R.string.snack_admin_revoked, phos.UserMinus
+                                    )
+                                }
+                                onChanged()
                             }
-                            onChanged()
                         }
-                    }
-                ))
-                add(com.secondream.novagram.ui.components.ActionTile(
-                    label = stringResource(R.string.admin_rights_title),
-                    icon = phos.Lock,
-                    onClick = { showAdminRights = true }
-                ))
+                    ))
+                    add(com.secondream.novagram.ui.components.ActionTile(
+                        label = stringResource(R.string.admin_rights_title),
+                        icon = phos.Lock,
+                        onClick = { showAdminRights = true }
+                    ))
+                }
             } else if (!isBanned) {
                 add(com.secondream.novagram.ui.components.ActionTile(
                     label = stringResource(R.string.member_make_admin),

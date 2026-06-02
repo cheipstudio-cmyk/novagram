@@ -442,6 +442,8 @@
     <string name="info_tab_members">Membres</string>
     <string name="two_pane_select_chat">Sélectionne une conversation</string>
     <string name="new_group_title">Nouveau groupe</string>
+    <string name="new_channel_title">Nouvelle chaîne</string>
+    <string name="new_channel_name">Nom de la chaîne</string>
     <string name="new_group_create">Créer</string>
     <string name="new_group_name">Nom du groupe</string>
     <string name="new_group_selected">%1$d sélectionnés</string>
@@ -482,4 +484,5 @@
     <string name="perm_pin_messages">Épingler des messages</string>
     <string name="perm_change_info">Modifier les infos</string>
     <string name="perm_saved">Autorisations mises à jour</string>
+    <string name="unread_messages_separator">Messages non lus</string>
 </resources>

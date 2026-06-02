@@ -58,7 +58,23 @@ object FileUtils {
         val uri = runCatching {
             FileProvider.getUriForFile(context, authority, file)
         }.getOrElse { return false }
-        val effectiveMime = mimeType?.takeIf { it.isNotBlank() } ?: "*/*"
+        // APKs: force the package-archive MIME. TDLib often labels an .apk as
+        // application/octet-stream (or leaves it blank), and a generic/empty
+        // type makes Android show the "Open with" chooser instead of routing
+        // to the package installer — which is why installing an update from
+        // inside Novagram didn't behave like the official Telegram. Detect by
+        // extension (display name first, else the file name) OR by an explicit
+        // package-archive mime, and pin the correct type so the OS opens the
+        // installer directly. Needs the REQUEST_INSTALL_PACKAGES manifest
+        // permission (declared) to be eligible.
+        val nameForExt = (displayName ?: file.name).lowercase()
+        val isApk = nameForExt.endsWith(".apk") ||
+            mimeType?.lowercase() == "application/vnd.android.package-archive"
+        val effectiveMime = when {
+            isApk -> "application/vnd.android.package-archive"
+            !mimeType.isNullOrBlank() -> mimeType
+            else -> "*/*"
+        }
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, effectiveMime)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
