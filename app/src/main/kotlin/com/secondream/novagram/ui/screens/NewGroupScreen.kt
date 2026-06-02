@@ -345,7 +345,6 @@ private fun CreationAvatarHeader(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NewGroupContent(
-    query: String,
     onOpenChat: (Long) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -361,6 +360,7 @@ fun NewGroupContent(
     var statusRes by remember { mutableStateOf(0) }
     var permsOpen by remember { mutableStateOf(false) }
     var defaultPerms by remember { mutableStateOf<TdApi.ChatPermissions?>(null) }
+    var memberQuery by remember { mutableStateOf("") }
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var photoUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var photoPath by remember { mutableStateOf<String?>(null) }
@@ -413,11 +413,11 @@ fun NewGroupContent(
     }
 
     val filtered = contacts.filter { u ->
-        if (query.isBlank()) true
+        if (memberQuery.isBlank()) true
         else {
             val nm = "${u.firstName} ${u.lastName}".trim()
             val un = u.usernames?.activeUsernames?.firstOrNull() ?: ""
-            nm.contains(query, ignoreCase = true) || un.contains(query, ignoreCase = true)
+            nm.contains(memberQuery, ignoreCase = true) || un.contains(memberQuery, ignoreCase = true)
         }
     }
     val canCreate = groupName.isNotBlank() && selected.isNotEmpty() && !creating &&
@@ -523,6 +523,31 @@ fun NewGroupContent(
                 else stringResource(R.string.new_group_default_perms),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+        // Member search slides in UNDER the default-permissions tile once
+        // contacts have loaded — the group-tab counterpart of the Contatti
+        // tab's search-under-nav.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !loading,
+            enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut()
+        ) {
+            OutlinedTextField(
+                value = memberQuery,
+                onValueChange = { memberQuery = it },
+                singleLine = true,
+                placeholder = { Text(stringResource(R.string.new_chat_search_placeholder)) },
+                leadingIcon = {
+                    Icon(
+                        PhosphorIcons.MagnifyingGlass,
+                        contentDescription = null
+                    )
+                },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
             )
         }
         if (selected.isNotEmpty()) {

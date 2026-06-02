@@ -241,9 +241,6 @@ fun NewChatScreen(
                         containerColor = MaterialTheme.colorScheme.background
                     )
                 )
-                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                    SearchInline(value = query, onValueChange = { query = it })
-                }
                 Box(
                     modifier = Modifier
                         .clipToBounds()
@@ -283,6 +280,18 @@ fun NewChatScreen(
                         selected = selectedTab,
                         onSelect = { selectedTab = it }
                     )
+                }
+                // Search slides in UNDER the tab nav, and only on the
+                // Contatti tab. On Gruppo it lives inside the group form
+                // (under the permissions tile); on Canale it's absent.
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = selectedTab == 0,
+                    enter = androidx.compose.animation.expandVertically() + fadeIn(),
+                    exit = androidx.compose.animation.shrinkVertically() + fadeOut()
+                ) {
+                    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                        SearchInline(value = query, onValueChange = { query = it })
+                    }
                 }
             }
         }
@@ -331,7 +340,7 @@ fun NewChatScreen(
                         }
                     }
                 )
-                1 -> NewGroupContent(query = query, onOpenChat = onOpenChat)
+                1 -> NewGroupContent(onOpenChat = onOpenChat)
                 2 -> NewChannelContent(onOpenChat = onOpenChat)
             }
         }

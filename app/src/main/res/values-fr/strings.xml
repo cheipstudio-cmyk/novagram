@@ -532,4 +532,20 @@
     <string name="pin_dialog_title">Épingler le message ?</string>
     <string name="pin_notify_all">Notifier tout le monde</string>
     <string name="pin_dialog_confirm">Épingler</string>
+    <string name="ban_confirm_title">Bannir l\'utilisateur ?</string>
+    <string name="ban_confirm_title_named">Bannir %1$s ?</string>
+    <string name="ban_confirm_body">Choisissez si vous voulez aussi supprimer tous ses messages dans le groupe.</string>
+    <string name="ban_confirm_keep">Garder les messages</string>
+    <string name="ban_confirm_delete">Tout supprimer</string>
+    <string name="ban_deleting_title">Suppression des messages</string>
+    <string name="ban_deleting_body">Suppression…</string>
+    <string name="ban_deleted_count">%1$d messages supprimés</string>
+    <string name="bot_label">Bot</string>
+    <string name="bot_action_start_chat">Démarrer le chat</string>
+    <string name="bot_action_add_group">Ajouter au groupe</string>
+    <string name="bot_add_group_picker_title">Ajouter à un groupe</string>
+    <string name="action_add_sticker_pack">Ajouter le pack</string>
+    <string name="snack_sticker_pack_added">Pack ajouté</string>
+    <string name="sticker_tab_packs">Mes packs</string>
+    <string name="sticker_pack_count">stickers</string>
 </resources>

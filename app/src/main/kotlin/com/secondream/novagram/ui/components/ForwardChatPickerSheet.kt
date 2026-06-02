@@ -126,14 +126,16 @@ fun ForwardChatPickerSheet(
 fun ShareChatPickerSheet(
     title: String,
     onDismiss: () -> Unit,
-    onPick: (chatId: Long) -> Unit
+    onPick: (chatId: Long) -> Unit,
+    filter: (ChatSummary) -> Boolean = { true }
 ) {
     val allChats by TdClient.chats.collectAsState()
     var query by remember { mutableStateOf("") }
     val filtered = remember(allChats, query) {
         val q = query.trim()
-        if (q.isBlank()) allChats
-        else allChats.filter { it.title.contains(q, ignoreCase = true) }
+        allChats.filter {
+            filter(it) && (q.isBlank() || it.title.contains(q, ignoreCase = true))
+        }
     }
     ModalBottomSheet(
         onDismissRequest = onDismiss,

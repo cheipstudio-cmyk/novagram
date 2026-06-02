@@ -1077,6 +1077,14 @@ fun ChatScreen(
             listState.layoutInfo.visibleItemsInfo.mapNotNull { messages.getOrNull(it.index)?.id }
         }
             .distinctUntilChanged()
+            // Debounced: while you're actively scrolling, marking every
+            // transiently-visible message read fired a ViewMessages PER FRAME.
+            // With online=true the server echoes UpdateChatReadInbox back
+            // immediately, so each frame triggered a chatUpdates storm that
+            // recomposed the unread/mention/reaction badges — that's what made
+            // fast scroll lag. Waiting for the scroll to settle (150ms) marks
+            // read what you actually dwell on and fires ONE batch, not dozens.
+            .debounce(150)
             .collect { visibleIds ->
                 if (visibleIds.isEmpty()) return@collect
                 val idSet = visibleIds.toHashSet()
@@ -1656,8 +1664,23 @@ fun ChatScreen(
                     // no-op. The flash no longer waits on this loop (it's lit
                     // up front), and a newer jump cancels this whole job, so a
                     // shorter window is enough — no churn, no fighting.
+                    // SUSTAINED ANCHOR — re-pin the target to CENTER every frame
+                    // until its measured height stops changing, so media /
+                    // attachments / bot-button rows that finish DOWNLOADING late
+                    // (their bubble grows from a placeholder height to the real
+                    // one) can't leave the target off-mark. This is exactly why
+                    // the FIRST jump to a media-heavy spot used to miss while
+                    // repeat jumps were precise: the second time the media is
+                    // already cached, so the height is right immediately. We
+                    // re-resolve the target BY ID each frame (a reindex can never
+                    // scroll us to the wrong bubble), bail the instant the user
+                    // scrolls, and exit early once the height has been stable for
+                    // ~10 frames. Hard cap ~2.5s so we never spin forever on a
+                    // perpetually-loading item.
                     var f2 = 0
-                    while (f2 < 60) {
+                    var lastSize = -1
+                    var stableSize = 0
+                    while (f2 < 150) {
                         kotlinx.coroutines.delay(16)
                         if (listState.isScrollInProgress) break
                         val li = messages.indexOfFirst { it.id == targetId }
@@ -1670,6 +1693,13 @@ fun ChatScreen(
                                 li,
                                 (vpNow * (1f - CENTER) - item.size / 2f).toInt().coerceAtLeast(0)
                             )
+                        }
+                        if (item.size == lastSize) {
+                            stableSize++
+                            if (stableSize >= 10) break
+                        } else {
+                            stableSize = 0
+                            lastSize = item.size
                         }
                         f2++
                     }
@@ -3953,27 +3983,27 @@ fun ChatScreen(
             },
             onKickAuthor = { kick ->
                 if (senderUserId != null) {
-                    val label = context.getString(
-                        if (kick) R.string.action_in_progress_banning
-                        else R.string.action_in_progress_unbanning
-                    )
-                    scope.launch {
-                        pendingActionLabel = label
-                        try {
-                            runCatching {
-                                if (kick) TdClient.kickGroupUser(chatId, senderUserId)
-                                else TdClient.unbanGroupUser(chatId, senderUserId)
-                            }.onSuccess {
-                                // After a successful ban, offer to wipe the
-                                // user's messages (Telegram-style).
-                                if (kick) banDeleteAllUid = senderUserId
+                    if (kick) {
+                        // Ban → open the pre-ban confirm (keep/delete) first;
+                        // the dialog performs the actual ban on confirm.
+                        deleteTarget = null
+                        banDeleteAllUid = senderUserId
+                    } else {
+                        // Unban is immediate, no confirmation needed.
+                        val label = context.getString(R.string.action_in_progress_unbanning)
+                        scope.launch {
+                            pendingActionLabel = label
+                            try {
+                                runCatching { TdClient.unbanGroupUser(chatId, senderUserId) }
+                            } finally {
+                                pendingActionLabel = null
                             }
-                        } finally {
-                            pendingActionLabel = null
                         }
+                        deleteTarget = null
                     }
+                } else {
+                    deleteTarget = null
                 }
-                deleteTarget = null
             }
         )
     }
@@ -4002,22 +4032,15 @@ fun ChatScreen(
         )
     }
 
-    // Post-ban "also delete all their messages?" prompt.
+    // Pre-ban confirmation (keep / delete-all) for banning from a message's
+    // admin menu. The dialog performs the ban itself on confirm.
     banDeleteAllUid?.let { uid ->
-        BanDeleteAllDialog(
+        BanConfirmDialog(
+            chatId = chatId,
+            userId = uid,
             memberName = null,
-            onConfirm = {
-                scope.launch {
-                    runCatching { TdClient.deleteChatMessagesBySender(chatId, uid) }
-                        .onSuccess {
-                            com.secondream.novagram.ui.components.NovaSnackbar.show(
-                                R.string.ban_delete_all_done,
-                                com.secondream.novagram.ui.icons.PhosphorIcons.Trash
-                            )
-                        }
-                }
-                banDeleteAllUid = null
-            },
+            scope = scope,
+            onDone = { },
             onDismiss = { banDeleteAllUid = null }
         )
     }
@@ -4754,24 +4777,16 @@ internal fun ChatInfoDialog(
                 onBanned = { uid -> memberBanDeleteUid = uid }
             )
         }
-        // After banning from the member sheet: offer to also delete all of
-        // that user's messages (Telegram-style).
+        // Pre-ban confirmation from the member sheet: ban only fires once the
+        // user picks keep / delete. onDone bumps the refresh so the member and
+        // banned lists update in real time.
         memberBanDeleteUid?.let { uid ->
-            BanDeleteAllDialog(
+            BanConfirmDialog(
+                chatId = chatId,
+                userId = uid,
                 memberName = null,
-                onConfirm = {
-                    infoScope.launch {
-                        runCatching { TdClient.deleteChatMessagesBySender(chatId, uid) }
-                            .onSuccess {
-                                com.secondream.novagram.ui.components.NovaSnackbar.show(
-                                    R.string.ban_delete_all_done,
-                                    com.secondream.novagram.ui.icons.PhosphorIcons.Trash
-                                )
-                            }
-                        membersRefresh++
-                    }
-                    memberBanDeleteUid = null
-                },
+                scope = infoScope,
+                onDone = { membersRefresh++ },
                 onDismiss = { memberBanDeleteUid = null }
             )
         }
@@ -5534,48 +5549,127 @@ private fun PermissionRow(
 }
 
 /**
- * Confirmation shown right after an admin bans a member: offer to also wipe
- * every message that user ever sent in the group (Telegram's "delete all
- * messages from this user"). Destructive accent on the confirm action.
+ * Pre-ban confirmation (Telegram-style): tapping "ban" opens THIS first, the
+ * actual ban only fires once the user chooses. Three outcomes:
+ *  • Annulla — nothing happens.
+ *  • Mantieni i messaggi — ban only.
+ *  • Elimina tutto — ban, then wipe the user's messages, showing a progress
+ *    bar with the deleted-message count, then a snackbar.
+ * onDone fires after the ban lands so the caller can refresh member lists.
  */
 @Composable
-private fun BanDeleteAllDialog(
+private fun BanConfirmDialog(
+    chatId: Long,
+    userId: Long,
     memberName: String?,
-    onConfirm: () -> Unit,
+    scope: kotlinx.coroutines.CoroutineScope,
+    onDone: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+    // confirm → deleting → done
+    var phase by remember { mutableStateOf("confirm") }
+    var count by remember { mutableStateOf(0) }
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = { if (phase == "confirm") onDismiss() }
+    ) {
         androidx.compose.material3.Surface(
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 2.dp
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
-                Text(
-                    stringResource(R.string.ban_delete_all_title),
-                    style = MaterialTheme.typography.titleLarge
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    if (memberName.isNullOrBlank())
-                        stringResource(R.string.ban_delete_all_body)
-                    else stringResource(R.string.ban_delete_all_body_named, memberName),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(20.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text(stringResource(R.string.ban_delete_all_keep))
+                if (phase == "confirm") {
+                    Text(
+                        if (memberName.isNullOrBlank())
+                            stringResource(R.string.ban_confirm_title)
+                        else stringResource(R.string.ban_confirm_title_named, memberName),
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        stringResource(R.string.ban_confirm_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = onDismiss) {
+                            Text(stringResource(R.string.action_cancel))
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        TextButton(onClick = {
+                            // Keep messages → ban only.
+                            scope.launch {
+                                runCatching { TdClient.kickGroupUser(chatId, userId) }
+                                    .onSuccess {
+                                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                            R.string.snack_member_banned,
+                                            com.secondream.novagram.ui.icons.PhosphorIcons.UserMinus
+                                        )
+                                    }
+                                onDone()
+                            }
+                            onDismiss()
+                        }) {
+                            Text(stringResource(R.string.ban_confirm_keep))
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        TextButton(onClick = {
+                            phase = "deleting"
+                            scope.launch {
+                                runCatching { TdClient.kickGroupUser(chatId, userId) }
+                                count = TdClient.countChatMessagesBySender(chatId, userId)
+                                runCatching {
+                                    TdClient.deleteChatMessagesBySender(chatId, userId)
+                                }
+                                phase = "done"
+                                onDone()
+                                com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                    R.string.ban_delete_all_done,
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.Trash
+                                )
+                                kotlinx.coroutines.delay(1100)
+                                onDismiss()
+                            }
+                        }) {
+                            Text(
+                                stringResource(R.string.ban_confirm_delete),
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
-                    Spacer(Modifier.width(4.dp))
-                    TextButton(onClick = onConfirm) {
+                } else {
+                    Text(
+                        stringResource(R.string.ban_deleting_title),
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    if (phase == "done") {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { 1f },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(12.dp))
                         Text(
-                            stringResource(R.string.ban_delete_all_confirm),
-                            color = MaterialTheme.colorScheme.error
+                            stringResource(R.string.ban_deleted_count, count),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            stringResource(R.string.ban_deleting_body),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -5955,22 +6049,17 @@ private fun MemberActionSheet(
                     }
                 }
             ))
-        } else if (!isCreator) {
+        } else if (!isCreator && !isAdmin) {
+            // Admins (and the creator) can't be banned directly — Telegram
+            // requires demoting them first. The owner-only demote tile below
+            // handles that; after demotion the member reopens as bannable.
             add(com.secondream.novagram.ui.components.ActionTile(
                 label = stringResource(R.string.member_ban),
                 icon = phos.UserMinus,
                 destructive = true,
                 onClick = {
                     onDismiss()
-                    scope.launch {
-                        runCatching { TdClient.kickGroupUser(chatId, uid) }.onSuccess {
-                            com.secondream.novagram.ui.components.NovaSnackbar.show(
-                                R.string.snack_member_banned, phos.UserMinus
-                            )
-                            onBanned(uid)
-                        }
-                        onChanged()
-                    }
+                    onBanned(uid)
                 }
             ))
         }
@@ -7657,6 +7746,7 @@ private fun MessageActionsSheet(
             Spacer(Modifier.height(16.dp))
 
             // ── Action tile grid (3 columns) ──────────────────────────
+            val stickerScope = androidx.compose.runtime.rememberCoroutineScope()
             // Eugenio asked for a tile grid instead of the linear list of
             // rows — faster to scan, more visual, fewer taps to think
             // about. Each tile is an icon + label in a soft-coloured
@@ -7664,6 +7754,9 @@ private fun MessageActionsSheet(
             // the error tint so they read as separate from neutral ops.
             val tiles = buildList<ActionTile> {
                 val editAllowed = canEditFromServer ?: message.isOutgoing
+                // A sticker carries its owning pack id; offer to install that
+                // pack right from the long-press menu (idempotent).
+                val stickerSetId = (message.content as? TdApi.MessageSticker)?.sticker?.setId ?: 0L
                 // AI sits first so it's the most prominent tile when
                 // configured — the feature we want users to discover.
                 if (onAi != null) {
@@ -7674,6 +7767,22 @@ private fun MessageActionsSheet(
                     ))
                 }
                 add(ActionTile(stringResource(R.string.action_reply), com.secondream.novagram.ui.icons.PhosphorIcons.Reply, onReply))
+                if (stickerSetId != 0L) {
+                    add(ActionTile(
+                        stringResource(R.string.action_add_sticker_pack),
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Smiley,
+                        {
+                            onDismiss()
+                            stickerScope.launch {
+                                TdClient.installStickerSet(stickerSetId)
+                                com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                    R.string.snack_sticker_pack_added,
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.Smiley
+                                )
+                            }
+                        }
+                    ))
+                }
                 if (onTogglePin != null) {
                     add(ActionTile(
                         stringResource(if (isPinned) R.string.action_unpin else R.string.action_pin),

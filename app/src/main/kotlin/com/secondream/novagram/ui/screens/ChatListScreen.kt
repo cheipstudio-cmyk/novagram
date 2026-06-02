@@ -188,6 +188,11 @@ fun ChatListScreen(
     // local-filtered list when the search bar is open.
     var publicResults by remember { mutableStateOf<List<org.drinkless.tdlib.TdApi.Chat>>(emptyList()) }
     var publicSearching by remember { mutableStateOf(false) }
+    // Bot tapped in public search → show a small action sheet ("Inizia chat" /
+    // "Aggiungi a gruppo") instead of opening the chat straight away.
+    var botActionChat by remember { mutableStateOf<org.drinkless.tdlib.TdApi.Chat?>(null) }
+    // Set to the bot's user id while the group picker for "add to group" is up.
+    var botAddToGroupId by remember { mutableStateOf<Long?>(null) }
     var chatActionTarget by remember { mutableStateOf<ChatSummary?>(null) }
     var deleteConfirmTarget by remember { mutableStateOf<ChatSummary?>(null) }
     var leaveConfirmTarget by remember { mutableStateOf<ChatSummary?>(null) }
@@ -332,12 +337,11 @@ fun ChatListScreen(
                 if (aiKeySet) {
                     androidx.compose.material3.SmallFloatingActionButton(
                         onClick = { if (online) showAiSummary = true },
-                        // Solid container + zero elevation: the old translucent
-                        // fill let the FAB shadow bleed through and looked
-                        // glitchy over the moving chat list. Flat + solid reads
-                        // clean on any background.
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        // Same palette as the primary + FAB below (solid
+                        // accent container, onPrimary icon) so they read as a
+                        // matching pair. Flat (no elevation) keeps it clean.
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
                             .copy(alpha = if (online) 1f else 0.45f),
                         elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(
                             defaultElevation = 0.dp,
@@ -710,7 +714,14 @@ fun ChatListScreen(
                             items(publicResults, key = { "public_${it.id}" }) { chat ->
                                 PublicResultRow(
                                     chat = chat,
-                                    onOpen = { onChatClick(chat.id, null) },
+                                    onOpen = {
+                                        val t = chat.type
+                                        val botUid = if (t is org.drinkless.tdlib.TdApi.ChatTypePrivate &&
+                                            TdClient.getCachedUser(t.userId)?.type is org.drinkless.tdlib.TdApi.UserTypeBot
+                                        ) t.userId else 0L
+                                        if (botUid != 0L) botActionChat = chat
+                                        else onChatClick(chat.id, null)
+                                    },
                                     onJoin = {
                                         scope.launch {
                                             runCatching { TdClient.joinChat(chat.id) }
@@ -827,6 +838,53 @@ fun ChatListScreen(
 
     if (showAiSummary) {
         com.secondream.novagram.ai.AiSummarySheet(onDismiss = { showAiSummary = false })
+    }
+
+    // Bot tapped in public search: choose what to do with it rather than just
+    // opening the chat. "Inizia chat" opens the 1:1; "Aggiungi a gruppo" hands
+    // off to a group picker that adds the bot to the chosen group.
+    botActionChat?.let { chat ->
+        val t = chat.type
+        val botUid = if (t is org.drinkless.tdlib.TdApi.ChatTypePrivate) t.userId else 0L
+        com.secondream.novagram.ui.components.ActionBottomSheet(
+            title = chat.title.ifBlank { stringResource(R.string.unknown_chat) },
+            description = stringResource(R.string.bot_label),
+            onDismiss = { botActionChat = null },
+            tiles = listOf(
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.bot_action_start_chat),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.ChatCircle,
+                    onClick = {
+                        val cid = chat.id
+                        botActionChat = null
+                        onChatClick(cid, null)
+                    }
+                ),
+                com.secondream.novagram.ui.components.ActionTile(
+                    label = stringResource(R.string.bot_action_add_group),
+                    icon = com.secondream.novagram.ui.icons.PhosphorIcons.UsersThree,
+                    onClick = {
+                        botActionChat = null
+                        if (botUid != 0L) botAddToGroupId = botUid
+                    }
+                )
+            )
+        )
+    }
+
+    botAddToGroupId?.let { botUid ->
+        com.secondream.novagram.ui.components.ShareChatPickerSheet(
+            title = stringResource(R.string.bot_add_group_picker_title),
+            onDismiss = { botAddToGroupId = null },
+            onPick = { groupId ->
+                botAddToGroupId = null
+                scope.launch {
+                    runCatching { TdClient.addChatMembers(groupId, listOf(botUid)) }
+                    onChatClick(groupId, null)
+                }
+            },
+            filter = { it.kind == ChatKind.Group }
+        )
     }
 
     leaveConfirmTarget?.let { target ->

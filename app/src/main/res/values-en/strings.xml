@@ -532,4 +532,20 @@
     <string name="pin_dialog_title">Pin message?</string>
     <string name="pin_notify_all">Notify all members</string>
     <string name="pin_dialog_confirm">Pin</string>
+    <string name="ban_confirm_title">Ban this user?</string>
+    <string name="ban_confirm_title_named">Ban %1$s?</string>
+    <string name="ban_confirm_body">Choose whether to also delete all their messages in the group.</string>
+    <string name="ban_confirm_keep">Keep messages</string>
+    <string name="ban_confirm_delete">Delete all</string>
+    <string name="ban_deleting_title">Deleting messages</string>
+    <string name="ban_deleting_body">Deleting…</string>
+    <string name="ban_deleted_count">%1$d messages deleted</string>
+    <string name="bot_label">Bot</string>
+    <string name="bot_action_start_chat">Start chat</string>
+    <string name="bot_action_add_group">Add to group</string>
+    <string name="bot_add_group_picker_title">Add to a group</string>
+    <string name="action_add_sticker_pack">Add pack</string>
+    <string name="snack_sticker_pack_added">Pack added</string>
+    <string name="sticker_tab_packs">My packs</string>
+    <string name="sticker_pack_count">stickers</string>
 </resources>

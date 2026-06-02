@@ -1712,6 +1712,22 @@ object TdClient {
         send(TdApi.GetStickerSet(setId))
 
     /**
+     * Install (add to the user's installed sets) a sticker set by id.
+     * Idempotent — calling it on an already-installed set is harmless.
+     * Used by the chat long-press "Aggiungi" action on a sticker.
+     */
+    suspend fun installStickerSet(setId: Long) {
+        runCatching { send<TdApi.Ok>(TdApi.ChangeStickerSet(setId, true, false)) }
+    }
+
+    /** True if the given set id is among the user's installed regular sets. */
+    suspend fun isStickerSetInstalled(setId: Long): Boolean {
+        if (setId == 0L) return false
+        val sets = runCatching { getInstalledStickerSets() }.getOrNull() ?: return false
+        return sets.sets.any { it.id == setId }
+    }
+
+    /**
      * Send a sticker the user already has in their stickers list. We pass
      * the sticker's existing file id via InputFileId; width/height/emoji
      * come straight from the TdApi.Sticker we picked.
@@ -1951,6 +1967,20 @@ object TdClient {
     suspend fun deleteChatMessagesBySender(chatId: Long, userId: Long) {
         send(TdApi.DeleteChatMessagesBySender(chatId, TdApi.MessageSenderUser(userId)))
     }
+
+    /**
+     * How many messages a user has sent in this chat — used to show the
+     * count in the "delete all" progress UI. Returns 0 on any failure.
+     */
+    suspend fun countChatMessagesBySender(chatId: Long, userId: Long): Int =
+        runCatching {
+            send<TdApi.FoundChatMessages>(
+                TdApi.SearchChatMessages(
+                    chatId, null, "", TdApi.MessageSenderUser(userId),
+                    0L, 0, 1, null
+                )
+            ).totalCount
+        }.getOrDefault(0)
 
     /**
      * Reverse of [kickGroupUser]. Restore the user to plain member status

@@ -532,4 +532,20 @@
     <string name="pin_dialog_title">Nachricht anpinnen?</string>
     <string name="pin_notify_all">Alle benachrichtigen</string>
     <string name="pin_dialog_confirm">Anpinnen</string>
+    <string name="ban_confirm_title">Nutzer bannen?</string>
+    <string name="ban_confirm_title_named">%1$s bannen?</string>
+    <string name="ban_confirm_body">Wähle, ob auch alle Nachrichten dieser Person in der Gruppe gelöscht werden sollen.</string>
+    <string name="ban_confirm_keep">Nachrichten behalten</string>
+    <string name="ban_confirm_delete">Alle löschen</string>
+    <string name="ban_deleting_title">Nachrichten werden gelöscht</string>
+    <string name="ban_deleting_body">Wird gelöscht…</string>
+    <string name="ban_deleted_count">%1$d Nachrichten gelöscht</string>
+    <string name="bot_label">Bot</string>
+    <string name="bot_action_start_chat">Chat starten</string>
+    <string name="bot_action_add_group">Zur Gruppe hinzufügen</string>
+    <string name="bot_add_group_picker_title">Zu einer Gruppe hinzufügen</string>
+    <string name="action_add_sticker_pack">Paket hinzufügen</string>
+    <string name="snack_sticker_pack_added">Paket hinzugefügt</string>
+    <string name="sticker_tab_packs">Meine Pakete</string>
+    <string name="sticker_pack_count">Sticker</string>
 </resources>

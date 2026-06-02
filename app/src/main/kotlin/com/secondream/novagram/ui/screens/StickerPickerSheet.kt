@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.animation.togetherWith
@@ -86,6 +87,11 @@ fun StickerPickerSheet(
         // so the grid populates progressively rather than after one giant
         // round trip.
         var allInstalled by remember { mutableStateOf<List<TdApi.Sticker>?>(null) }
+        // "I miei pack": the list of installed sets (headers only). Tapping a
+        // pack expands its full sticker grid in-place with a back arrow.
+        var packs by remember { mutableStateOf<List<TdApi.StickerSetInfo>?>(null) }
+        var expandedPack by remember { mutableStateOf<TdApi.StickerSetInfo?>(null) }
+        var expandedPackStickers by remember { mutableStateOf<List<TdApi.Sticker>?>(null) }
 
         // Search state: query is what the TextField shows; debounced is what
         // we actually pass to TdClient. The 300ms debounce keeps us from
@@ -119,6 +125,19 @@ fun StickerPickerSheet(
                 allInstalled = flat.toList()
             }
             if (allInstalled == null) allInstalled = emptyList()
+        }
+        // Pack headers for the "I miei pack" tab (index 3).
+        LaunchedEffect(selectedTab) {
+            if (selectedTab != 3 || packs != null) return@LaunchedEffect
+            packs = runCatching { TdClient.getInstalledStickerSets().sets.toList() }
+                .getOrDefault(emptyList())
+        }
+        // Full sticker list for the pack the user expanded.
+        LaunchedEffect(expandedPack) {
+            val info = expandedPack ?: run { expandedPackStickers = null; return@LaunchedEffect }
+            expandedPackStickers = null
+            expandedPackStickers = runCatching { TdClient.getStickerSet(info.id).stickers.toList() }
+                .getOrDefault(emptyList())
         }
         LaunchedEffect(query) {
             val q = query.trim()
@@ -180,16 +199,40 @@ fun StickerPickerSheet(
 
             val isSearching = query.isNotBlank()
             if (!isSearching) {
-                // Pill tabs matching the rest of the app (chat list + new chat).
-                StickerTabs(
-                    titles = listOf(
-                        stringResourceSafe(R.string.sticker_tab_favorites),
-                        stringResourceSafe(R.string.sticker_tab_recents),
-                        stringResourceSafe(R.string.sticker_tab_all)
-                    ),
-                    selected = selectedTab,
-                    onSelect = { selectedTab = it }
-                )
+                if (selectedTab == 3 && expandedPack != null) {
+                    // Inside an expanded pack: back arrow + pack title replace
+                    // the tab row, so the arrow returns to the 4 tabs.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        androidx.compose.material3.IconButton(onClick = { expandedPack = null }) {
+                            androidx.compose.material3.Icon(
+                                com.secondream.novagram.ui.icons.PhosphorIcons.CaretLeft,
+                                contentDescription = stringResourceSafe(R.string.action_back)
+                            )
+                        }
+                        Text(
+                            expandedPack?.title.orEmpty(),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                } else {
+                    // Pill tabs matching the rest of the app (chat list + new chat).
+                    StickerTabs(
+                        titles = listOf(
+                            stringResourceSafe(R.string.sticker_tab_favorites),
+                            stringResourceSafe(R.string.sticker_tab_recents),
+                            stringResourceSafe(R.string.sticker_tab_all),
+                            stringResourceSafe(R.string.sticker_tab_packs)
+                        ),
+                        selected = selectedTab,
+                        onSelect = { selectedTab = it }
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
             }
 
@@ -220,33 +263,80 @@ fun StickerPickerSheet(
                     .height(360.dp),
                 label = "sticker-view"
             ) { state ->
-                val list: List<TdApi.Sticker>? = when (state) {
-                    -1 -> searchResults
-                    0 -> favorites
-                    1 -> recents
-                    else -> allInstalled
-                }
-                val loading = if (state == -1) (searchInFlight || searchResults == null)
-                              else list == null
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    when {
-                        loading -> CircularProgressIndicator()
-                        list.isNullOrEmpty() -> Text(
-                            stringResourceSafe(R.string.sticker_picker_empty),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        else -> LazyVerticalGrid(
-                            columns = GridCells.Fixed(4),
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            items(list, key = { it.sticker.id }) { st ->
-                                StickerCell(sticker = st, onClick = { onPick(st) })
+                if (state == 3) {
+                    // ── "I miei pack": pack list, or one expanded pack's grid ──
+                    val info = expandedPack
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        if (info == null) {
+                            val p = packs
+                            when {
+                                p == null -> CircularProgressIndicator()
+                                p.isEmpty() -> Text(
+                                    stringResourceSafe(R.string.sticker_picker_empty),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                else -> LazyVerticalGrid(
+                                    columns = GridCells.Fixed(1),
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(vertical = 4.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(p, key = { it.id }) { pack ->
+                                        PackRow(pack = pack, onClick = { expandedPack = pack })
+                                    }
+                                }
+                            }
+                        } else {
+                            val st = expandedPackStickers
+                            when {
+                                st == null -> CircularProgressIndicator()
+                                st.isEmpty() -> Text(
+                                    stringResourceSafe(R.string.sticker_picker_empty),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                else -> LazyVerticalGrid(
+                                    columns = GridCells.Fixed(4),
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    items(st, key = { it.sticker.id }) { s ->
+                                        StickerCell(sticker = s, onClick = { onPick(s) })
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    val list: List<TdApi.Sticker>? = when (state) {
+                        -1 -> searchResults
+                        0 -> favorites
+                        1 -> recents
+                        else -> allInstalled
+                    }
+                    val loading = if (state == -1) (searchInFlight || searchResults == null)
+                                  else list == null
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
+                            loading -> CircularProgressIndicator()
+                            list.isNullOrEmpty() -> Text(
+                                stringResourceSafe(R.string.sticker_picker_empty),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            else -> LazyVerticalGrid(
+                                columns = GridCells.Fixed(4),
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                items(list, key = { it.sticker.id }) { st ->
+                                    StickerCell(sticker = st, onClick = { onPick(st) })
+                                }
                             }
                         }
                     }
@@ -355,6 +445,71 @@ private fun StickerCell(sticker: TdApi.Sticker, onClick: () -> Unit) {
             Text(
                 sticker.emoji.ifBlank { "🖼" },
                 style = MaterialTheme.typography.titleLarge
+            )
+        }
+    }
+}
+
+/**
+ * One installed pack in the "I miei pack" tab. Tapping anywhere on the
+ * row expands the pack into its full sticker grid (handled by the host).
+ * The cover reuses StickerCell so its thumbnail download + fade-in is
+ * identical to the grid; the rest of the row shows title and count.
+ */
+@Composable
+private fun PackRow(pack: TdApi.StickerSetInfo, onClick: () -> Unit) {
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (pressed) 0.97f else 1f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = 0.6f,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+        ),
+        label = "pack-row-press"
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .scale(pressScale)
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(46.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surface),
+            contentAlignment = Alignment.Center
+        ) {
+            val cover = pack.covers.firstOrNull()
+            if (cover != null) {
+                StickerCell(sticker = cover, onClick = onClick)
+            } else {
+                Text("\uD83D\uDDC2", style = MaterialTheme.typography.titleMedium)
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                pack.title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "${pack.size} " + stringResourceSafe(R.string.sticker_pack_count),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }

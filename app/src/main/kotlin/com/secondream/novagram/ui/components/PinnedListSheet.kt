@@ -3,6 +3,7 @@
 package com.secondream.novagram.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -130,9 +131,7 @@ fun PinnedListSheet(
                             PinnedRow(message = m, onClick = {
                                 onJumpToMessage(m.id)
                             })
-                            HorizontalDivider(
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
-                            )
+                            Spacer(Modifier.height(8.dp))
                         }
                     }
                 }
@@ -146,7 +145,7 @@ fun PinnedListSheet(
 private fun PinnedRow(message: TdApi.Message, onClick: () -> Unit) {
     val preview = remember(message.id) {
         when (val c = message.content) {
-            is TdApi.MessageText -> c.text.text.take(160)
+            is TdApi.MessageText -> c.text.text.take(280)
             is TdApi.MessagePhoto -> "📷 Foto" +
                 (c.caption.text.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
             is TdApi.MessageVideo -> "🎬 Video"
@@ -172,14 +171,21 @@ private fun PinnedRow(message: TdApi.Message, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .border(
+                width = 0.5.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
+                shape = RoundedCornerShape(16.dp)
+            )
             .clickable(onClick = onClick)
-            .padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(14.dp),
+        verticalAlignment = Alignment.Top
     ) {
         Box(
             modifier = Modifier
                 .width(3.dp)
-                .height(40.dp)
+                .height(44.dp)
                 .clip(RoundedCornerShape(2.dp))
                 .background(MaterialTheme.colorScheme.primary)
         )
@@ -193,13 +199,23 @@ private fun PinnedRow(message: TdApi.Message, onClick: () -> Unit) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            Spacer(Modifier.height(3.dp))
             Text(
                 preview,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
+                maxLines = 4,
                 overflow = TextOverflow.Ellipsis
             )
         }
+        Spacer(Modifier.width(10.dp))
+        Icon(
+            com.secondream.novagram.ui.icons.PhosphorIcons.PushPin,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier
+                .width(16.dp)
+                .height(16.dp)
+        )
     }
 }

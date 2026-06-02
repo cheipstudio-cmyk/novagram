@@ -532,4 +532,20 @@
     <string name="pin_dialog_title">¿Fijar mensaje?</string>
     <string name="pin_notify_all">Notificar a todos</string>
     <string name="pin_dialog_confirm">Fijar</string>
+    <string name="ban_confirm_title">¿Bloquear al usuario?</string>
+    <string name="ban_confirm_title_named">¿Bloquear a %1$s?</string>
+    <string name="ban_confirm_body">Elige si eliminar también todos sus mensajes del grupo.</string>
+    <string name="ban_confirm_keep">Conservar mensajes</string>
+    <string name="ban_confirm_delete">Eliminar todo</string>
+    <string name="ban_deleting_title">Eliminando mensajes</string>
+    <string name="ban_deleting_body">Eliminando…</string>
+    <string name="ban_deleted_count">%1$d mensajes eliminados</string>
+    <string name="bot_label">Bot</string>
+    <string name="bot_action_start_chat">Iniciar chat</string>
+    <string name="bot_action_add_group">Añadir al grupo</string>
+    <string name="bot_add_group_picker_title">Añadir a un grupo</string>
+    <string name="action_add_sticker_pack">Añadir paquete</string>
+    <string name="snack_sticker_pack_added">Paquete añadido</string>
+    <string name="sticker_tab_packs">Mis paquetes</string>
+    <string name="sticker_pack_count">stickers</string>
 </resources>
