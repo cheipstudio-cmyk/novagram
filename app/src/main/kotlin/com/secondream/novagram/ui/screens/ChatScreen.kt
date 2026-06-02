@@ -3762,9 +3762,19 @@ fun ChatScreen(
             // forgot during a restart). Filesystem-truth wins.
             fun TdApi.File.availableLocally(): Boolean {
                 val p = local?.path
-                return !p.isNullOrBlank() && runCatching {
+                if (p.isNullOrBlank()) return false
+                return runCatching {
                     val f = java.io.File(p)
-                    f.exists() && f.length() > 0
+                    if (!f.exists()) return@runCatching false
+                    // Must be the COMPLETE file, not a partial download —
+                    // otherwise "Salva" copied the half-fetched bytes (e.g.
+                    // 100 MB of a 1 GB file). When TDLib knows the expected
+                    // size, require the on-disk length to cover it; only when
+                    // the size is genuinely unknown do we defer to TDLib's
+                    // completed flag.
+                    val expected = if (size > 0L) size else expectedSize
+                    if (expected > 0L) f.length() >= expected
+                    else (local?.isDownloadingCompleted == true && f.length() > 0L)
                 }.getOrDefault(false)
             }
             // Prefer the live file (refreshed via getFile + fileUpdates)
@@ -4469,21 +4479,27 @@ internal fun ChatInfoDialog(
     // image, copies it off the content:// URI into cache, and pushes it via
     // setChatPhoto. The editor itself now lives inline in the Info tab.
     val infoCtx = LocalContext.current
+    var groupCropUri by remember(chatId) { mutableStateOf<android.net.Uri?>(null) }
     val groupPhotoPicker = rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.GetContent()
     ) { uri ->
-        if (uri != null) {
-            infoScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                val file = com.secondream.novagram.util.FileUtils.copyUriToCache(infoCtx, uri)
-                if (file != null) {
-                    runCatching { TdClient.setChatPhoto(chatId, file.absolutePath) }
+        if (uri != null) groupCropUri = uri
+    }
+    groupCropUri?.let { uri ->
+        com.secondream.novagram.ui.components.ImageCropDialog(
+            imageUri = uri,
+            onDismiss = { groupCropUri = null },
+            onCropped = { path ->
+                groupCropUri = null
+                infoScope.launch {
+                    runCatching { TdClient.setChatPhoto(chatId, path) }
                     com.secondream.novagram.ui.components.NovaSnackbar.show(
                         R.string.admin_group_photo_updated,
                         com.secondream.novagram.ui.icons.PhosphorIcons.Check
                     )
                 }
             }
-        }
+        )
     }
     val canEditGroup = (isGroup || isChannel) &&
         (selfIsCreator || (isSelfAdmin && selfCanChangeInfo))
@@ -5641,32 +5657,10 @@ private fun BanConfirmDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(20.dp))
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalAlignment = Alignment.End
                     ) {
-                        TextButton(onClick = onDismiss) {
-                            Text(stringResource(R.string.action_cancel))
-                        }
-                        Spacer(Modifier.width(4.dp))
-                        TextButton(onClick = {
-                            // Keep messages → ban only.
-                            scope.launch {
-                                runCatching { TdClient.kickGroupUser(chatId, userId) }
-                                    .onSuccess {
-                                        com.secondream.novagram.ui.components.NovaSnackbar.show(
-                                            R.string.snack_member_banned,
-                                            com.secondream.novagram.ui.icons.PhosphorIcons.UserMinus
-                                        )
-                                    }
-                                onDone()
-                            }
-                            onDismiss()
-                        }) {
-                            Text(stringResource(R.string.ban_confirm_keep))
-                        }
-                        Spacer(Modifier.width(4.dp))
                         TextButton(onClick = {
                             phase = "deleting"
                             scope.launch {
@@ -5687,8 +5681,28 @@ private fun BanConfirmDialog(
                         }) {
                             Text(
                                 stringResource(R.string.ban_confirm_delete),
-                                color = MaterialTheme.colorScheme.error
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 1
                             )
+                        }
+                        TextButton(onClick = {
+                            // Keep messages → ban only.
+                            scope.launch {
+                                runCatching { TdClient.kickGroupUser(chatId, userId) }
+                                    .onSuccess {
+                                        com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                            R.string.snack_member_banned,
+                                            com.secondream.novagram.ui.icons.PhosphorIcons.UserMinus
+                                        )
+                                    }
+                                onDone()
+                            }
+                            onDismiss()
+                        }) {
+                            Text(stringResource(R.string.ban_confirm_keep), maxLines = 1)
+                        }
+                        TextButton(onClick = onDismiss) {
+                            Text(stringResource(R.string.action_cancel), maxLines = 1)
                         }
                     }
                 } else {

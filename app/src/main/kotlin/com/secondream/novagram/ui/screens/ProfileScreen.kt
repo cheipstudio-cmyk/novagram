@@ -109,27 +109,48 @@ fun ProfileScreen(onBack: () -> Unit) {
             if (updated.id == pf.id) photoFile = updated
         }
     }
+    // When TDLib pushes a fresh copy of MY user record — e.g. once a newly
+    // set profile photo finishes uploading server-side — swap in the new
+    // avatar and trigger its big-variant download so it actually renders.
+    // The picker callback can't do this synchronously: SetProfilePhoto
+    // returns Ok before the upload completes, so an immediate getMe() still
+    // sees the OLD photo. This is the reliable signal.
+    LaunchedEffect(Unit) {
+        TdClient.userUpdates.collect { u ->
+            val cur = me
+            if (cur != null && u.id == cur.id) {
+                me = u
+                val big = u.profilePhoto?.big
+                photoFile = big
+                if (big != null && !big.local.isDownloadingCompleted && !big.local.isDownloadingActive) {
+                    runCatching { TdClient.downloadFile(big.id) }
+                }
+            }
+        }
+    }
 
+    var profileCropUri by remember { mutableStateOf<android.net.Uri?>(null) }
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            saving = true
-            val local = withContext(Dispatchers.IO) { FileUtils.copyUriToCache(context, uri) }
-            if (local != null) {
-                runCatching { TdClient.setProfilePhoto(local.absolutePath, isPublic = true) }
-                    .onSuccess {
-                        // Refresh me to get the new chatPhoto.
-                        val u = runCatching { TdClient.getMe() }.getOrNull()
-                        if (u != null) {
-                            me = u
-                            photoFile = u.profilePhoto?.big
-                        }
-                    }
+        // Route the picked image through the circular cropper first.
+        if (uri != null) profileCropUri = uri
+    }
+    profileCropUri?.let { uri ->
+        com.secondream.novagram.ui.components.ImageCropDialog(
+            imageUri = uri,
+            onDismiss = { profileCropUri = null },
+            onCropped = { path ->
+                profileCropUri = null
+                saving = true
+                scope.launch {
+                    // SetProfilePhoto is async; the userUpdates collector above
+                    // swaps in (and downloads) the new avatar when TDLib pushes it.
+                    runCatching { TdClient.setProfilePhoto(path, isPublic = true) }
+                    saving = false
+                }
             }
-            saving = false
-        }
+        )
     }
 
     val errUsernameTaken = stringResource(R.string.profile_username_taken)

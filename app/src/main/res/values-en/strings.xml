@@ -550,4 +550,15 @@
     <string name="sticker_pack_count">stickers</string>
     <string name="group_protected_title">Protected group</string>
     <string name="group_protected_desc">Blocks forwarding, saving and screenshots of the chat</string>
+    <string name="crop_title">Crop</string>
+    <string name="crop_hint">Drag and pinch to frame</string>
+    <string name="crop_load_failed">Couldn\'t load the image</string>
+    <string name="settings_section_appearance_sub">Theme, colors and appearance</string>
+    <string name="settings_section_text_size_sub">Text size</string>
+    <string name="settings_section_language_sub">Interface language</string>
+    <string name="settings_section_media_sub">Miscellaneous options and behavior</string>
+    <string name="settings_section_ai_sub">API key and AI features</string>
+    <string name="settings_section_privacy_sub">Privacy, security and blocks</string>
+    <string name="settings_section_info_sub">Version, links and app</string>
+    <string name="settings_privacy_policy">Privacy Policy</string>
 </resources>

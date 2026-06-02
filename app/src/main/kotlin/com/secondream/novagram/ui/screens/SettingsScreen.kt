@@ -132,13 +132,35 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             // up when no custom theme is active — a custom theme already
             // owns its own accent so showing the global one would be
             // ambiguous.
-            CollapsibleSection(stringResource(R.string.settings_section_appearance), icon = phos.Image, expanded = expandedSection == "appearance", onToggle = { expandedSection = if (expandedSection == "appearance") null else "appearance" }) {
+            CollapsibleSection(stringResource(R.string.settings_section_appearance), subtitle = stringResource(R.string.settings_section_appearance_sub), icon = phos.Image, expanded = expandedSection == "appearance", onToggle = { expandedSection = if (expandedSection == "appearance") null else "appearance" }) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        stringResource(R.string.settings_theme),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            stringResource(R.string.settings_theme),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        // "Nuovo tema": accent badge + plus, right next to the title.
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .clickable {
+                                    builderTheme = null
+                                    showThemeBuilder = true
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                phos.Plus,
+                                contentDescription = stringResource(R.string.theme_create_new),
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(12.dp))
                     val activeCustomId = appearance.activeSavedThemeId
                     // Base modes — selected only when no custom is active.
@@ -195,61 +217,6 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                             }
                         }
                     }
-                    // Create / Paste actions live INSIDE this card now, at
-                    // the bottom of the unified list — Eugenio asked for
-                    // the creation card to sit "sotto la lista".
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ThemeActionButton(
-                            label = stringResource(R.string.theme_create_new),
-                            onClick = {
-                                // upsertSavedTheme auto-activates the new
-                                // theme, so by the time the builder commits
-                                // it's already the selected row in the list.
-                                builderTheme = null
-                                showThemeBuilder = true
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                        ThemeActionButton(
-                            label = stringResource(R.string.theme_paste),
-                            onClick = {
-                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-                                    as? android.content.ClipboardManager
-                                val raw = cm?.primaryClip
-                                    ?.takeIf { it.itemCount > 0 }
-                                    ?.getItemAt(0)
-                                    ?.coerceToText(context)
-                                    ?.toString()
-                                val parsed = raw?.let { parseThemeJson(it) }
-                                if (parsed != null) {
-                                    // Single canonical import path — see
-                                    // AppSettings.importAppearanceAsSavedTheme.
-                                    // Appends to the saved list with a
-                                    // timestamped name; doesn't activate.
-                                    scope.launch {
-                                        AppSettings.importAppearanceAsSavedTheme(
-                                            appearance = parsed,
-                                            baseName = context.getString(R.string.theme_imported_default_name)
-                                        )
-                                    }
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        context.getString(R.string.theme_paste_success),
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                } else {
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        context.getString(R.string.theme_paste_error),
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                            outline = true
-                        )
-                    }
                 }
                 // Accent picker only when a base mode is active. A custom
                 // theme already carries its own accentArgb so exposing the
@@ -276,7 +243,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             Spacer(Modifier.height(10.dp))
 
             // TEXT SIZE — global multiplier for every Text in the app.
-            CollapsibleSection(stringResource(R.string.settings_section_text_size), icon = phos.FileText, expanded = expandedSection == "textsize", onToggle = { expandedSection = if (expandedSection == "textsize") null else "textsize" }) {
+            CollapsibleSection(stringResource(R.string.settings_section_text_size), subtitle = stringResource(R.string.settings_section_text_size_sub), icon = phos.FileText, expanded = expandedSection == "textsize", onToggle = { expandedSection = if (expandedSection == "textsize") null else "textsize" }) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -312,7 +279,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             Spacer(Modifier.height(10.dp))
 
             // LANGUAGE
-            CollapsibleSection(stringResource(R.string.settings_section_language), icon = phos.Translate, expanded = expandedSection == "language", onToggle = { expandedSection = if (expandedSection == "language") null else "language" }) {
+            CollapsibleSection(stringResource(R.string.settings_section_language), subtitle = stringResource(R.string.settings_section_language_sub), icon = phos.Translate, expanded = expandedSection == "language", onToggle = { expandedSection = if (expandedSection == "language") null else "language" }) {
                 LanguageRow(
                     current = appearance.languageTag,
                     onPick = { tag ->
@@ -355,7 +322,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             // while the user scrolls a chat. Off = nothing downloads
             // until the user taps the placeholder; useful on metered
             // networks and for "just skimming" workflows.
-            CollapsibleSection(stringResource(R.string.settings_section_media), icon = phos.Gear, expanded = expandedSection == "misc", onToggle = { expandedSection = if (expandedSection == "misc") null else "misc" }) {
+            CollapsibleSection(stringResource(R.string.settings_section_media), subtitle = stringResource(R.string.settings_section_media_sub), icon = phos.Gear, expanded = expandedSection == "misc", onToggle = { expandedSection = if (expandedSection == "misc") null else "misc" }) {
                 PrivacyToggleRow(
                     label = stringResource(R.string.settings_media_autodownload),
                     description = stringResource(R.string.settings_media_autodownload_desc),
@@ -416,7 +383,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             // AI — the user pastes their Anthropic API key here. Without
             // one the AI tile in the message actions sheet stays hidden.
             // Key is stored locally and only ever sent to api.anthropic.com.
-            CollapsibleSection(stringResource(R.string.settings_section_ai), icon = phos.Sparkle, expanded = expandedSection == "ai", onToggle = { expandedSection = if (expandedSection == "ai") null else "ai" }) {
+            CollapsibleSection(stringResource(R.string.settings_section_ai), subtitle = stringResource(R.string.settings_section_ai_sub), icon = phos.Sparkle, expanded = expandedSection == "ai", onToggle = { expandedSection = if (expandedSection == "ai") null else "ai" }) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     // Header: sparkle icon in an accent circle + title +
                     // a status chip showing whether a key is configured.
@@ -538,7 +505,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             Spacer(Modifier.height(10.dp))
 
             // PRIVACY
-            CollapsibleSection(stringResource(R.string.settings_section_privacy), icon = phos.Lock, expanded = expandedSection == "privacy", onToggle = { expandedSection = if (expandedSection == "privacy") null else "privacy" }) {
+            CollapsibleSection(stringResource(R.string.settings_section_privacy), subtitle = stringResource(R.string.settings_section_privacy_sub), icon = phos.Lock, expanded = expandedSection == "privacy", onToggle = { expandedSection = if (expandedSection == "privacy") null else "privacy" }) {
                 PrivacyToggleRow(
                     label = stringResource(R.string.settings_privacy_read_receipts),
                     description = stringResource(R.string.settings_privacy_read_receipts_desc),
@@ -602,7 +569,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             Spacer(Modifier.height(10.dp))
 
             // INFO
-            CollapsibleSection(stringResource(R.string.settings_section_info), icon = phos.Info, expanded = expandedSection == "info", onToggle = { expandedSection = if (expandedSection == "info") null else "info" }) {
+            CollapsibleSection(stringResource(R.string.settings_section_info), subtitle = stringResource(R.string.settings_section_info_sub), icon = phos.Info, expanded = expandedSection == "info", onToggle = { expandedSection = if (expandedSection == "info") null else "info" }) {
                 InfoRow(
                     label = stringResource(R.string.settings_version),
                     value = BuildConfig.VERSION_NAME
@@ -848,6 +815,7 @@ private fun BlockedUserRow(user: org.drinkless.tdlib.TdApi.User, onUnblocked: ()
 @Composable
 private fun CollapsibleSection(
     title: String,
+    subtitle: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     expanded: Boolean,
     onToggle: () -> Unit,
@@ -898,13 +866,20 @@ private fun CollapsibleSection(
                 )
             }
             Spacer(Modifier.width(14.dp))
-            Text(
-                title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = cs.onSurface,
-                modifier = Modifier.weight(1f)
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = cs.onSurface
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = cs.onSurfaceVariant
+                )
+            }
             Icon(
                 com.secondream.novagram.ui.icons.PhosphorIcons.CaretDown,
                 contentDescription = null,
@@ -1614,6 +1589,23 @@ private fun CreditsBlock() {
                 }
             }
         }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            stringResource(R.string.settings_privacy_policy),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+            modifier = Modifier.clickable {
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://novagram.netlify.app/#privacy")
+                        )
+                    )
+                }
+            }
+        )
     }
 }
 

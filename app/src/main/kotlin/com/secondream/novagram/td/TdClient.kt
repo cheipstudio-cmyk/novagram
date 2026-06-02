@@ -190,6 +190,12 @@ object TdClient {
     private val _interactionInfoUpdates = MutableSharedFlow<InteractionInfoUpdate>(extraBufferCapacity = 32)
     val interactionInfoUpdates = _interactionInfoUpdates.asSharedFlow()
 
+    // Emitted whenever TDLib pushes an UpdateUser (profile photo, name, bio).
+    // The Profile screen observes this for the current user so a freshly-set
+    // avatar shows the moment the async upload finishes server-side.
+    private val _userUpdates = MutableSharedFlow<TdApi.User>(extraBufferCapacity = 16)
+    val userUpdates = _userUpdates.asSharedFlow()
+
     private val chatCache = mutableMapOf<Long, TdApi.Chat>()
     private val userCache = mutableMapOf<Long, TdApi.User>()
     private val supergroupCache = mutableMapOf<Long, TdApi.Supergroup>()
@@ -601,6 +607,7 @@ object TdClient {
                         scope.launch { runCatching { downloadFile(f.id) } }
                     }
                 }
+                scope.launch { _userUpdates.emit(obj.user) }
             }
             is TdApi.UpdateUserStatus -> {
                 // Keep the cached user's status fresh AND maintain the online
@@ -2817,9 +2824,11 @@ object TdClient {
     }
 
     /**
-     * Delete every downloaded media/cache file TDLib is holding, WITHOUT
-     * touching the account or session (no logout). All limits set to 0 and
-     * immunity_delay 0 means "nothing is spared". return_deleted_file_statistics
+     * Free disk space by deleting the bulky downloaded media bodies (photos,
+     * videos, audio, documents, stickers, wallpapers) WITHOUT touching the
+     * account or session (no logout). Avatars (fileTypeProfilePhoto) and
+     * thumbnails are deliberately SPARED so the chat list and message
+     * previews stay warm and scroll stays fluid. return_deleted_file_statistics
      * = true makes the returned StorageStatistics describe the DELETED files, so
      * .size is the number of bytes actually freed.
      */
@@ -2831,7 +2840,28 @@ object TdClient {
                     0,             // ttl
                     0,             // count
                     0,             // immunity_delay: nothing immune
-                    emptyArray(),  // file_types: all
+                    arrayOf<TdApi.FileType>(
+                        // Bulky bodies only. We deliberately SPARE
+                        // fileTypeProfilePhoto (chat-list + sender avatars)
+                        // and fileTypeThumbnail/SecretThumbnail (video/doc
+                        // previews): those are tiny but scroll-critical, and
+                        // nuking them forced a re-download of every avatar +
+                        // thumbnail on the next scroll — the lag after tapping
+                        // this. Freeing the media bodies still reclaims the
+                        // real space; they re-download on demand when opened.
+                        TdApi.FileTypeAnimation(),
+                        TdApi.FileTypeAudio(),
+                        TdApi.FileTypeDocument(),
+                        TdApi.FileTypeLivePhotoVideo(),
+                        TdApi.FileTypePhoto(),
+                        TdApi.FileTypePhotoStory(),
+                        TdApi.FileTypeSticker(),
+                        TdApi.FileTypeVideo(),
+                        TdApi.FileTypeVideoNote(),
+                        TdApi.FileTypeVideoStory(),
+                        TdApi.FileTypeVoiceNote(),
+                        TdApi.FileTypeWallpaper()
+                    ),             // file_types: bulk media (avatars/thumbs spared)
                     longArrayOf(), // chat_ids: all
                     longArrayOf(), // exclude_chat_ids
                     true,          // return_deleted_file_statistics

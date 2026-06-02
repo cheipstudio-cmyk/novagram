@@ -564,4 +564,15 @@
     <string name="sticker_pack_count">sticker</string>
     <string name="group_protected_title">Gruppo protetto</string>
     <string name="group_protected_desc">Blocca inoltro, salvataggio e screenshot della chat</string>
+    <string name="crop_title">Ritaglia</string>
+    <string name="crop_hint">Trascina e pizzica per inquadrare</string>
+    <string name="crop_load_failed">Impossibile caricare l\'immagine</string>
+    <string name="settings_section_appearance_sub">Tema, colori e aspetto</string>
+    <string name="settings_section_text_size_sub">Dimensione del testo</string>
+    <string name="settings_section_language_sub">Lingua dell\'interfaccia</string>
+    <string name="settings_section_media_sub">Opzioni varie e comportamento</string>
+    <string name="settings_section_ai_sub">Chiave API e funzioni AI</string>
+    <string name="settings_section_privacy_sub">Privacy, sicurezza e blocchi</string>
+    <string name="settings_section_info_sub">Versione, link e app</string>
+    <string name="settings_privacy_policy">Privacy Policy</string>
 </resources>

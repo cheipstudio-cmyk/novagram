@@ -408,7 +408,7 @@ fun MessageBubble(
                                     val latest = runCatching { TdClient.getFile(biggest.id) }
                                         .getOrNull() ?: biggest
                                     val path = latest.local?.path
-                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { java.io.File(path).exists() }.getOrDefault(false))) {
+                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { val df = java.io.File(path); val exp = if (latest.size > 0L) latest.size else latest.expectedSize; df.exists() && exp > 0L && df.length() >= exp }.getOrDefault(false))) {
                                         com.secondream.novagram.ui.screens.MediaViewerHolder.isVideo = false
                                         onMediaTap(path)
                                     } else {
@@ -428,7 +428,7 @@ fun MessageBubble(
                                     val latest = runCatching { TdClient.getFile(f.id) }
                                         .getOrNull() ?: f
                                     val path = latest.local?.path
-                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { java.io.File(path).exists() }.getOrDefault(false))) {
+                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { val df = java.io.File(path); val exp = if (latest.size > 0L) latest.size else latest.expectedSize; df.exists() && exp > 0L && df.length() >= exp }.getOrDefault(false))) {
                                         // Open in the embedded ExoPlayer-backed
                                         // viewer rather than firing an external
                                         // Intent — keeps the user inside the app.
@@ -451,7 +451,7 @@ fun MessageBubble(
                                     val latest = runCatching { TdClient.getFile(f.id) }
                                         .getOrNull() ?: f
                                     val path = latest.local?.path
-                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { java.io.File(path).exists() }.getOrDefault(false))) {
+                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { val df = java.io.File(path); val exp = if (latest.size > 0L) latest.size else latest.expectedSize; df.exists() && exp > 0L && df.length() >= exp }.getOrDefault(false))) {
                                         com.secondream.novagram.ui.screens.MediaViewerHolder.isVideo = true
                                         onMediaTap(path)
                                     } else {
@@ -476,7 +476,7 @@ fun MessageBubble(
                                             ctx, p, c.document.mimeType, c.document.fileName
                                         )
                                     }
-                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { java.io.File(path).exists() }.getOrDefault(false))) {
+                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { val df = java.io.File(path); val exp = if (latest.size > 0L) latest.size else latest.expectedSize; df.exists() && exp > 0L && df.length() >= exp }.getOrDefault(false))) {
                                         open(path)
                                     } else {
                                         runCatching { TdClient.downloadFile(latest.id) }
@@ -492,7 +492,7 @@ fun MessageBubble(
                                     val latest = runCatching { TdClient.getFile(f.id) }
                                         .getOrNull() ?: f
                                     val path = latest.local?.path
-                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { java.io.File(path).exists() }.getOrDefault(false))) {
+                                    if (!path.isNullOrBlank() && (latest.local.isDownloadingCompleted || runCatching { val df = java.io.File(path); val exp = if (latest.size > 0L) latest.size else latest.expectedSize; df.exists() && exp > 0L && df.length() >= exp }.getOrDefault(false))) {
                                         com.secondream.novagram.util.FileUtils.openDocument(
                                             ctx, path, c.audio.mimeType, c.audio.fileName
                                         )

@@ -364,16 +364,22 @@ fun NewGroupContent(
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var photoUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var photoPath by remember { mutableStateOf<String?>(null) }
+    var cropUri by remember { mutableStateOf<android.net.Uri?>(null) }
     val photoPicker = rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.GetContent()
     ) { uri ->
-        if (uri != null) {
-            photoUri = uri
-            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                photoPath = com.secondream.novagram.util.FileUtils
-                    .copyUriToCache(ctx, uri)?.absolutePath
+        if (uri != null) cropUri = uri
+    }
+    cropUri?.let { uri ->
+        com.secondream.novagram.ui.components.ImageCropDialog(
+            imageUri = uri,
+            onDismiss = { cropUri = null },
+            onCropped = { path ->
+                cropUri = null
+                photoPath = path
+                photoUri = android.net.Uri.fromFile(java.io.File(path))
             }
-        }
+        )
     }
 
     LaunchedEffect(Unit) {
