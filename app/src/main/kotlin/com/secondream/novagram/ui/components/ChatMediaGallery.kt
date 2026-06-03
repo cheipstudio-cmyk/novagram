@@ -20,7 +20,13 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.mutableStateListOf
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -199,16 +205,59 @@ internal fun MediaTabContent(
 ) {
     val key = filter::class.java.name
     var loading by remember(chatId, key) { mutableStateOf(true) }
-    var messages by remember(chatId, key) { mutableStateOf<List<TdApi.Message>>(emptyList()) }
+    var loadingMore by remember(chatId, key) { mutableStateOf(false) }
+    var endReached by remember(chatId, key) { mutableStateOf(false) }
+    val messages = remember(chatId, key) { mutableStateListOf<TdApi.Message>() }
+    val gridState = rememberLazyGridState()
+    val listState = rememberLazyListState()
+
+    // Initial load (and on query change). Rebuilds the accumulator from page 1.
     LaunchedEffect(chatId, key, query) {
         loading = true
+        messages.clear()
+        endReached = false
         // Debounce typing so we don't hit TDLib on every keystroke; an empty
         // query loads the whole category exactly as before.
         if (query.isNotEmpty()) kotlinx.coroutines.delay(300)
-        messages = runCatching { TdClient.searchChatMessages(chatId, filter, query.trim()) }
+        val page = runCatching { TdClient.searchChatMessages(chatId, filter, query.trim()) }
             .getOrDefault(emptyList())
+        messages.addAll(page)
+        if (page.size < 100) endReached = true
         loading = false
     }
+
+    // Forward pagination. searchChatMessages returns only ~100 at a time;
+    // without this the gallery showed just the first page and dead-ended
+    // mid-scroll on chats with lots of media/files. When the last loaded cell
+    // nears the viewport we fetch the next older page (from the oldest loaded
+    // id) and append, dedup-guarded, until a page comes back empty.
+    LaunchedEffect(chatId, key, isGrid) {
+        val lastIndexFlow = if (isGrid)
+            androidx.compose.runtime.snapshotFlow {
+                gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            }
+        else
+            androidx.compose.runtime.snapshotFlow {
+                listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            }
+        lastIndexFlow.distinctUntilChanged().collect { lastIdx ->
+            if (lastIdx >= messages.size - 8 && messages.isNotEmpty() &&
+                !loading && !loadingMore && !endReached
+            ) {
+                loadingMore = true
+                val fromId = messages.lastOrNull()?.id ?: 0L
+                val page = runCatching {
+                    TdClient.searchChatMessages(chatId, filter, query.trim(), fromMessageId = fromId)
+                }.getOrDefault(emptyList())
+                val existing = messages.mapTo(HashSet()) { it.id }
+                val toAdd = page.filter { it.id !in existing }
+                if (toAdd.isNotEmpty()) messages.addAll(toAdd)
+                if (page.isEmpty() || toAdd.isEmpty()) endReached = true
+                loadingMore = false
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         when {
             loading && messages.isEmpty() -> {
@@ -226,8 +275,8 @@ internal fun MediaTabContent(
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
-            isGrid -> MediaGrid(messages = messages, onItemTap = onItemTap)
-            else -> MediaList(messages = messages, filter = filter, onItemTap = onItemTap)
+            isGrid -> MediaGrid(messages = messages, state = gridState, onItemTap = onItemTap)
+            else -> MediaList(messages = messages, state = listState, filter = filter, onItemTap = onItemTap)
         }
     }
 }
@@ -241,10 +290,12 @@ private data class MediaTab(
 @Composable
 private fun MediaGrid(
     messages: List<TdApi.Message>,
+    state: LazyGridState = rememberLazyGridState(),
     onItemTap: (TdApi.Message) -> Unit
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(3),
+        state = state,
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -365,10 +416,11 @@ private fun MediaGridCell(msg: TdApi.Message, onClick: () -> Unit) {
 @Composable
 private fun MediaList(
     messages: List<TdApi.Message>,
+    state: LazyListState = rememberLazyListState(),
     filter: TdApi.SearchMessagesFilter,
     onItemTap: (TdApi.Message) -> Unit
 ) {
-    LazyColumn(modifier = Modifier.fillMaxWidth()) {
+    LazyColumn(state = state, modifier = Modifier.fillMaxWidth()) {
         items(messages, key = { it.id }) { msg ->
             MediaListRow(msg = msg, filter = filter, onClick = { onItemTap(msg) })
         }

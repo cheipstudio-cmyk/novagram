@@ -1853,8 +1853,8 @@ object TdClient {
      * returns the most recently active members which is what we want for the
      * @-mention picker. limit capped at 200 by TDLib.
      */
-    suspend fun getSupergroupMembers(supergroupId: Long, limit: Int = 100): TdApi.ChatMembers =
-        send(TdApi.GetSupergroupMembers(supergroupId, null, 0, limit.coerceIn(1, 200)))
+    suspend fun getSupergroupMembers(supergroupId: Long, limit: Int = 100, offset: Int = 0): TdApi.ChatMembers =
+        send(TdApi.GetSupergroupMembers(supergroupId, null, offset, limit.coerceIn(1, 200)))
 
     /**
      * Filtered variant used by the chat-info "Membri" tab and the admin-label
@@ -1866,9 +1866,10 @@ object TdClient {
     suspend fun getSupergroupMembersFiltered(
         supergroupId: Long,
         filter: TdApi.SupergroupMembersFilter?,
-        limit: Int = 200
+        limit: Int = 200,
+        offset: Int = 0
     ): TdApi.ChatMembers =
-        send(TdApi.GetSupergroupMembers(supergroupId, filter, 0, limit.coerceIn(1, 200)))
+        send(TdApi.GetSupergroupMembers(supergroupId, filter, offset, limit.coerceIn(1, 200)))
 
     suspend fun downloadFile(fileId: Int): TdApi.File {
         return send(TdApi.DownloadFile(fileId, 32, 0, 0, true))

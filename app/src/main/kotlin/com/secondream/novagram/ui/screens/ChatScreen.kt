@@ -5542,6 +5542,11 @@ private fun ChatMembersTab(
     // Track the last refreshKey so we can tell an ACTION-triggered reload
     // (restrict/mute/unmute → membersRefresh++) apart from a query/tab change.
     var prevRefreshKey by remember(chatId) { mutableStateOf(refreshKey) }
+    // Pagination state for the (supergroup) roster. Basic groups return their
+    // whole member list from getBasicGroupFullInfo so they never page.
+    val membersListState = rememberLazyListState()
+    var loadingMoreMembers by remember(chatId) { mutableStateOf(false) }
+    var membersEndReached by remember(chatId) { mutableStateOf(false) }
     LaunchedEffect(chatId, query, supergroupId, basicGroupId, refreshKey, showBanned) {
         val actionTriggered = refreshKey != prevRefreshKey
         prevRefreshKey = refreshKey
@@ -5588,6 +5593,48 @@ private fun ChatMembersTab(
             members = loadMembers()
             loading = false
         }
+        // A full first page means there may be more — let the scroll-end loader
+        // pull the next offset. A short page (or any basic group) means the
+        // whole roster is already loaded.
+        membersEndReached = if (supergroupId != null) members.size < 200 else true
+    }
+
+    // Forward pagination for large supergroup/channel rosters. The initial
+    // load only pulls the first 200; without this the "Membri" list showed a
+    // truncated roster that dead-ended mid-scroll. When the last visible row
+    // nears the end we fetch the next page at offset = members.size and append
+    // (dedup-guarded by sender id), until a page comes back empty.
+    LaunchedEffect(membersListState, supergroupId, query, showBanned) {
+        val sg = supergroupId ?: return@LaunchedEffect
+        snapshotFlow { membersListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+            .distinctUntilChanged()
+            .collect { lastIdx ->
+                if (lastIdx >= members.size - 8 && members.isNotEmpty() &&
+                    !loading && !loadingMoreMembers && !membersEndReached
+                ) {
+                    loadingMoreMembers = true
+                    val filter = when {
+                        showBanned -> TdApi.SupergroupMembersFilterBanned(query)
+                        query.isBlank() -> TdApi.SupergroupMembersFilterRecent()
+                        else -> TdApi.SupergroupMembersFilterSearch(query)
+                    }
+                    val page = runCatching {
+                        TdClient.getSupergroupMembersFiltered(sg, filter, 200, members.size)
+                    }.getOrNull()?.members?.toList().orEmpty()
+                    val keyOf = { m: TdApi.ChatMember ->
+                        when (val s = m.memberId) {
+                            is TdApi.MessageSenderUser -> s.userId
+                            is TdApi.MessageSenderChat -> s.chatId
+                            else -> 0L
+                        }
+                    }
+                    val existing = members.mapTo(HashSet<Long>(), keyOf)
+                    val toAdd = page.filter { keyOf(it) !in existing }
+                    if (toAdd.isNotEmpty()) members = members + toAdd
+                    if (page.isEmpty() || toAdd.isEmpty()) membersEndReached = true
+                    loadingMoreMembers = false
+                }
+            }
     }
     Column(modifier = Modifier.fillMaxSize()) {
         if (supergroupId != null) {
@@ -5659,7 +5706,7 @@ private fun ChatMembersTab(
                 }
             }
             else -> {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(state = membersListState, modifier = Modifier.fillMaxSize()) {
                     items(members) { m ->
                         ChatMemberRow(member = m, onClick = { onMemberTap(m) })
                     }
