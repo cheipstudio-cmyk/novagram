@@ -1800,74 +1800,44 @@ fun ChatScreen(
                 // ~23% (the spot Eugenio approved). coerceAtLeast(0) so a bubble
                 // taller than 0.77*vp simply anchors to the viewport bottom.
                 suspend fun preciseRefine(animate: Boolean) {
-                    // The target lands with its CENTRE at this fraction of the
-                    // viewport, measured from the top. 0.45 = a touch above dead
-                    // centre. Earlier we placed the target's TOP near the top
-                    // (12–18%); jumping FAR UP that left it "troppo in alto"
-                    // (Eugenio) — recent messages already on screen sit lower and
-                    // he's happy with those, so we centre on that spot. Offset
-                    // math (reverseLayout, convention confirmed from the unread
-                    // code: scrollOffset = vp - itemHeight - K ⇒ top at K px):
-                    // centre at C ⇒ top at C - h/2 ⇒ offset = vp*(1-C) - h/2.
-                    // Single knob: raise CENTER to push the target DOWN, lower it
-                    // to push UP. Used by every placement below so the instant,
-                    // animated and re-pin paths always agree.
-                    // Target CENTRE lands at this fraction of the viewport from
-                    // the top. Was 0.80 (centre at 80% ⇒ target "spiaccicato in
-                    // fondo vicino alla input bar", per Eugenio). 0.62 puts it in
-                    // the lower-middle: comfortably visible with context below,
-                    // not glued to the input. Tunable.
+                    // Where the target should rest: its CENTRE at this fraction of
+                    // the viewport from the top. 0.62 = lower-middle (comfortably
+                    // visible, context below, not glued to the input bar). Tunable.
                     val CENTER = 0.62f
-                    val info0 = listState.layoutInfo
-                    val vp0 = info0.viewportSize.height
+                    val vp0 = listState.layoutInfo.viewportSize.height
                     if (vp0 <= 0) {
-                        runCatching { listState.scrollToItem(idx, 0) }
+                        val li0 = messages.indexOfFirst { it.id == targetId }
+                        if (li0 >= 0) runCatching { listState.scrollToItem(li0, 0) }
                         return
                     }
 
-                    // Already painted? Then it's a short, always-smooth hop and we
-                    // already know its real height. Otherwise teleport instantly.
-                    val visNow = info0.visibleItemsInfo
-                    val onScreen = visNow.any { it.index == idx }
-                    // If the target is ALREADY fully visible — the usual case when
-                    // you tap a reply whose quoted message sits a few bubbles up —
-                    // do NOT drag it to the FRAC mark. Forcing that scroll is what
-                    // turned a "poco più in su" message into "molto in su". Leave
-                    // it exactly where it is; the flash highlight (set by the
-                    // caller right after this returns) is enough to point it out.
-                    visNow.find { it.index == idx }?.let { vi ->
-                        // Use the REAL viewport bounds — contentPadding shifts
-                        // them, so comparing against 0..vp0 was wrong and made
-                        // it scroll on an already-visible target. Small
-                        // tolerance so a 1–2px clip doesn't force a scroll. If
-                        // it's already fully on screen, leave the list EXACTLY
-                        // where it is — the flash alone points it out.
-                        val startB = info0.viewportStartOffset
-                        val endB = info0.viewportEndOffset
-                        val tol = 12
-                        if (vi.offset >= startB - tol && vi.offset + vi.size <= endB + tol) return
-                    }
-                    val doAnimate = animate && onScreen
-
-                    if (!doAnimate) {
-                        // INSTANT path. Pre-place near the 23% mark in one shot
-                        // using the best height estimate, so the teleport lands at
-                        // roughly the final spot (no bottom-snap intermediate frame).
-                        val selfH = visNow.find { it.index == idx }?.size ?: 0
-                        val measured = visNow.filter { it.size > 0 }
-                        val avgH = if (measured.isNotEmpty())
-                            measured.sumOf { it.size } / measured.size
-                        else vp0 * 18 / 100
-                        val estH = if (selfH > 0) selfH else avgH
-                        val approx = (vp0 * (1f - CENTER) - estH / 2f).toInt().coerceAtLeast(0)
-                        runCatching { listState.scrollToItem(idx, approx) }
-                        kotlinx.coroutines.delay(16)
+                    // STEP 1 — guarantee the target is ON SCREEN and COMPOSED so we
+                    // can measure its REAL height. If it isn't currently visible
+                    // (or it was just paginated in, so the layout is fresh), jump
+                    // it to offset 0 — its bottom edge at the viewport bottom. That
+                    // placement is height-INDEPENDENT and pixel-exact, so it ALWAYS
+                    // lands on the right row: this is what kills "non mi porta al
+                    // messaggio". Instant (no fling); the short glide to CENTRE is
+                    // below. If it's already visible we skip this so a reply a few
+                    // bubbles up never flashes to the bottom first.
+                    run {
+                        val li = messages.indexOfFirst { it.id == targetId }
+                        if (li < 0) return
+                        val onScreen = animate &&
+                            listState.layoutInfo.visibleItemsInfo.any { it.index == li }
+                        if (!onScreen) {
+                            runCatching { listState.scrollToItem(li, 0) }
+                            kotlinx.coroutines.delay(16)
+                        }
                     }
 
-                    // Let the target height settle WITHOUT scrolling (nothing moves
-                    // on screen here ⇒ no jitter). Hold for 3 identical frames or
-                    // time out at ~40 frames so a slow-loading photo can't leave us
-                    // measuring its placeholder height.
+                    // STEP 2 — settle the REAL height: hold for 3 identical frames
+                    // (cap ~40) so a still-decoding photo or a reflowing quote can't
+                    // leave us measuring a placeholder. The target is guaranteed
+                    // visible now, so this reads the true height EVERY time — the old
+                    // code measured it while off-screen and fell back to a bad
+                    // estimate, which is exactly the "troppo in alto / troppo in
+                    // basso". Nothing scrolls here, so there is no jitter.
                     var lastH = -1
                     var stableFrames = 0
                     var settledH = -1
@@ -1878,10 +1848,7 @@ fun ChatScreen(
                             .find { it.index == li }?.size ?: -1
                         if (h > 0 && h == lastH) {
                             stableFrames++
-                            if (stableFrames >= 3) {
-                                settledH = h
-                                break
-                            }
+                            if (stableFrames >= 3) { settledH = h; break }
                         } else {
                             stableFrames = 0
                             lastH = h
@@ -1893,86 +1860,58 @@ fun ChatScreen(
 
                     val vp = listState.layoutInfo.viewportSize.height
                         .let { if (it > 0) it else vp0 }
-                    val exact = (vp * (1f - CENTER) - settledH / 2f).toInt().coerceAtLeast(0)
-                    // Re-resolve by ID: between capturing idx and here the list
-                    // may have re-sorted (context splice) or paginated, shifting
-                    // the target's index. Scrolling to a stale index is the
-                    // wrong bubble entirely — a big source of "inconsistente".
+                    // STEP 3 — resting offset from the REAL height. reverseLayout:
+                    // scrollToItem(idx, S) leaves S px between the item bottom and
+                    // the viewport bottom, so centre at C ⇒ S = vp*(1-C) - h/2. For
+                    // a TALL bubble (≥66% of the screen) centring drives S below 0
+                    // and slams it to the bottom ("spiaccicato in fondo"); instead
+                    // anchor its TOP ~10% down so you land on the START of the
+                    // message.
+                    val tall = settledH >= (vp * 0.66f).toInt()
+                    val exact = if (tall) {
+                        (vp - settledH - (vp * 0.10f)).toInt().coerceAtLeast(0)
+                    } else {
+                        (vp * (1f - CENTER) - settledH / 2f).toInt().coerceAtLeast(0)
+                    }
                     val lockIdx = messages.indexOfFirst { it.id == targetId }
-                        .takeIf { it >= 0 } ?: idx
+                        .takeIf { it >= 0 } ?: return
                     if (com.secondream.novagram.BuildConfig.DEBUG) android.util.Log.d(
                         "NovaScroll",
                         "jump id=$targetId lockIdx=$lockIdx vp=$vp settledH=$settledH " +
-                            "exact=$exact animate=$doAnimate total=${messages.size}"
+                            "exact=$exact tall=$tall total=${messages.size}"
                     )
-
-                    // Final placement is ALWAYS a smooth glide onto the resting
-                    // offset — the last assestamento must never read as a snap
-                    // ("uno scatto", Eugenio). On the instant path we already
-                    // teleported NEAR the target above, so this is a SHORT hop
-                    // (never a long fling through the list); on the on-screen path
-                    // it's the short hop from where the bubble already sat. Heights
-                    // are settled, so animateScrollToItem can't drift.
+                    // One smooth glide onto the mark. From the bottom edge (the
+                    // off-screen case) or from where it already sat (on-screen) this
+                    // is always a SHORT hop — never a long animated fling.
                     runCatching { listState.animateScrollToItem(lockIdx, exact) }
 
-                    // SUSTAINED ANCHOR — the real consistency fix. After the
-                    // lock the target can STILL drift off the FRAC mark for two
-                    // async reasons that finish at unpredictable times (hence
-                    // "inconsistente"): a photo/video finishes decoding and the
-                    // bubble grows, or more history paginates in and reflows the
-                    // list. So for a short window we simply re-assert the FRAC
-                    // position every frame, the target re-resolved BY ID so a
-                    // reindex can never scroll us to the wrong bubble. Re-pinning
-                    // to the spot it already occupies is a no-op, so a stable
-                    // (text) target shows zero motion; a growing image is pulled
-                    // back each frame until it stops. We BAIL the instant the
-                    // user starts scrolling (isScrollInProgress) or the target
-                    // leaves the viewport, so we never fight them.
-                    // Brief anchor (~1s) to catch a bubble BELOW the target (a
-                    // newer photo/video) finishing its decode late and pushing
-                    // the target up. Re-pinning by ID each frame pulls it back;
-                    // for a stable (text) target it re-pins to the same spot, a
-                    // no-op. The flash no longer waits on this loop (it's lit
-                    // up front), and a newer jump cancels this whole job, so a
-                    // shorter window is enough — no churn, no fighting.
-                    // SUSTAINED ANCHOR — re-pin the target to CENTER every frame
-                    // until its measured height stops changing, so media /
-                    // attachments / bot-button rows that finish DOWNLOADING late
-                    // (their bubble grows from a placeholder height to the real
-                    // one) can't leave the target off-mark. This is exactly why
-                    // the FIRST jump to a media-heavy spot used to miss while
-                    // repeat jumps were precise: the second time the media is
-                    // already cached, so the height is right immediately. We
-                    // re-resolve the target BY ID each frame (a reindex can never
-                    // scroll us to the wrong bubble), bail the instant the user
-                    // scrolls, and exit early once the height has been stable for
-                    // ~10 frames. Hard cap ~2.5s so we never spin forever on a
-                    // perpetually-loading item.
-                    var f2 = 0
-                    var lastSize = -1
-                    var stableSize = 0
-                    while (f2 < 150) {
-                        kotlinx.coroutines.delay(16)
+                    // STEP 4 — ONE-SHOT corrections for media that finishes decoding
+                    // AFTER we placed (its bubble grows and nudges the target). We
+                    // re-place ONLY when the measured height actually CHANGES, and
+                    // stop the instant it's stable — so a text target shows ZERO
+                    // extra motion (this replaces the per-frame re-pin loop that read
+                    // as "assestamenti vistosi"). Bails the moment the user grabs
+                    // the list. Re-resolved BY ID so a reindex can't pin the wrong
+                    // bubble.
+                    var corr = 0
+                    var prevSize = settledH
+                    while (corr < 6) {
+                        kotlinx.coroutines.delay(80)
                         if (listState.isScrollInProgress) break
                         val li = messages.indexOfFirst { it.id == targetId }
                         if (li < 0) break
                         val info = listState.layoutInfo
                         val item = info.visibleItemsInfo.find { it.index == li } ?: break
-                        val vpNow = info.viewportSize.height.let { if (it > 0) it else vp }
-                        runCatching {
-                            listState.scrollToItem(
-                                li,
-                                (vpNow * (1f - CENTER) - item.size / 2f).toInt().coerceAtLeast(0)
-                            )
-                        }
-                        if (item.size == lastSize) {
-                            stableSize++
-                            if (stableSize >= 10) break
+                        if (item.size == prevSize) break
+                        prevSize = item.size
+                        val vpN = info.viewportSize.height.let { if (it > 0) it else vp }
+                        val want = if (item.size >= (vpN * 0.66f).toInt()) {
+                            (vpN - item.size - (vpN * 0.10f)).toInt().coerceAtLeast(0)
                         } else {
-                            stableSize = 0
-                            lastSize = item.size
+                            (vpN * (1f - CENTER) - item.size / 2f).toInt().coerceAtLeast(0)
                         }
-                        f2++
+                        runCatching { listState.animateScrollToItem(li, want) }
+                        corr++
                     }
                 }
 
