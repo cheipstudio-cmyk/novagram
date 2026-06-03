@@ -62,6 +62,13 @@ data class AppearancePrefs(
      */
     val messageScale: Float = 1.0f,
     /**
+     * Vertical spacing multiplier for the gap BETWEEN message bubbles, applied
+     * to each bubble's top/bottom padding. 1.0 = default (3dp ⇒ ~6dp gap);
+     * smaller packs messages tighter (Telegram-style density), larger spaces
+     * them out. Floored in the bubble so rows never touch. Range 0.0–2.0.
+     */
+    val messageSpacing: Float = 1.0f,
+    /**
      * Id of the saved theme currently applied (so the row gets a checkmark in
      * Settings). null = no saved theme active, the user is on a base theme
      * mode (System/Light/Dark/Amoled) or freely tweaked customs.
@@ -213,6 +220,7 @@ object AppSettings {
     private val SAVED_THEMES_JSON = stringPreferencesKey("saved_themes_json")
     private val TEXT_SCALE = androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
     private val MESSAGE_SCALE = androidx.datastore.preferences.core.floatPreferencesKey("message_scale")
+    private val MESSAGE_SPACING = androidx.datastore.preferences.core.floatPreferencesKey("message_spacing")
     private val AUTO_DOWNLOAD_MEDIA = androidx.datastore.preferences.core.booleanPreferencesKey("auto_download_media")
     private val ANTHROPIC_API_KEY = androidx.datastore.preferences.core.stringPreferencesKey("anthropic_api_key")
     private val AI_RECAP_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("ai_recap_enabled")
@@ -266,6 +274,7 @@ object AppSettings {
                 activeSavedThemeId = prefs[ACTIVE_SAVED_THEME_ID],
                 textScale = (prefs[TEXT_SCALE] ?: 1.0f).coerceIn(0.70f, 1.60f),
                 messageScale = (prefs[MESSAGE_SCALE] ?: 1.0f).coerceIn(0.70f, 1.60f),
+                messageSpacing = (prefs[MESSAGE_SPACING] ?: 1.0f).coerceIn(0.0f, 2.0f),
                 autoDownloadMedia = prefs[AUTO_DOWNLOAD_MEDIA] ?: true,
                 anthropicApiKey = prefs[ANTHROPIC_API_KEY]
                     ?.let { com.secondream.novagram.security.SecretCrypto.decrypt(it) }
@@ -562,6 +571,12 @@ object AppSettings {
     suspend fun setMessageScale(scale: Float) {
         val clamped = scale.coerceIn(0.70f, 1.60f)
         appContext.dataStore.edit { it[MESSAGE_SCALE] = clamped }
+    }
+
+    /** Vertical spacing between message bubbles. 1.0 = default; range 0.0–2.0. */
+    suspend fun setMessageSpacing(value: Float) {
+        val clamped = value.coerceIn(0.0f, 2.0f)
+        appContext.dataStore.edit { it[MESSAGE_SPACING] = clamped }
     }
 
     suspend fun setAiRecapEnabled(enabled: Boolean) {

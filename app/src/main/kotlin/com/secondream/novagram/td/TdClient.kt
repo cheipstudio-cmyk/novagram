@@ -954,6 +954,7 @@ object TdClient {
         if (msg == null) return ""
         serviceMessageText(msg)?.let { return it }
         return when (val c = msg.content) {
+            is TdApi.MessageAnimatedEmoji -> c.emoji
             is TdApi.MessageText -> c.text.text
             is TdApi.MessagePhoto -> "📷 " + (c.caption.text.ifBlank { "Foto" })
             is TdApi.MessageVoiceNote -> "🎙 Nota vocale"

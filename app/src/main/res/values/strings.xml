@@ -580,6 +580,7 @@
     <string name="settings_section_display_sub">Testo interfaccia e messaggi</string>
     <string name="settings_display_ui">Interfaccia e lista chat</string>
     <string name="settings_display_messages">Messaggi in chat</string>
+    <string name="settings_display_spacing">Spaziatura messaggi</string>
     <string name="settings_translator_label">Traduttore nelle chat</string>
     <string name="settings_translator_soon">In arrivo — tradurrà le chat con messaggi in altre lingue</string>
     <string name="settings_ai_recap_label">Pulsante AI recap nella home</string>

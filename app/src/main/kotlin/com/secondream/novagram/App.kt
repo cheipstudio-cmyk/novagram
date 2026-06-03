@@ -94,6 +94,11 @@ class App : Application(), ImageLoaderFactory {
             }
             override fun onStop(owner: LifecycleOwner) {
                 AppForegroundState.isInForeground = false
+                // No chat is actively viewed once the app is backgrounded. The
+                // ChatScreen gate also clears this on ON_PAUSE; this is the
+                // belt-and-suspenders so a backgrounded-but-still-composed chat
+                // can never suppress its own incoming-message notification.
+                AppForegroundState.currentChatId = 0L
                 // Drop online status when backgrounded: stops us appearing
                 // permanently online to peers and lets TDLib relax the
                 // connection. Read receipts for chats we already sent will

@@ -592,10 +592,10 @@ fun ChatScreen(
 
     DisposableEffect(chatId) {
         scope.launch { runCatching { TdClient.openChat(chatId) } }
-        // Tell the global notification gate which chat is on screen so
-        // NotificationHelper can skip heads-up only for THIS chat. Other
-        // incoming chats still fire normally.
-        com.secondream.novagram.AppForegroundState.currentChatId = chatId
+        // currentChatId (the notification foreground gate) is driven by THIS
+        // screen's resume/pause lifecycle in the gate DisposableEffect below —
+        // not set here on compose — so it's non-zero only while the chat is
+        // actually on screen AND resumed.
         // Clear any pending heads-up / tray notification for THIS chat
         // the moment we land here. The user is now reading the chat,
         // so a notification still sitting in the tray is stale — same
@@ -637,11 +637,8 @@ fun ChatScreen(
             // out (the scope dies with the composition) so it never reaches
             // TDLib, leaving the chat open and its firehose persisting forever.
             TdClient.closeChatDetached(chatId)
-            // Only clear if still pointing to us — if the user nav'd to
-            // another chat the new ChatScreen has already overwritten this.
-            if (com.secondream.novagram.AppForegroundState.currentChatId == chatId) {
-                com.secondream.novagram.AppForegroundState.currentChatId = 0L
-            }
+            // (currentChatId is cleared by the gate DisposableEffect's ON_PAUSE
+            // and its onDispose below, plus App.onStop — not managed here.)
             // Flush the final draft. We use a fire-and-forget launch on the
             // process-wide application scope because the screen-scoped
             // coroutine is about to be cancelled and a launch here would die
@@ -941,24 +938,26 @@ fun ChatScreen(
                             val roughOffset = if (viewportH0 > 0)
                                 (viewportH0 - 400).coerceAtLeast(200) else 200
                             runCatching { listState.scrollToItem(firstUnreadIdx, roughOffset) }
-                            repeat(3) {
-                                kotlinx.coroutines.delay(16)
-                                val vp = listState.layoutInfo.viewportSize.height
-                                val item = listState.layoutInfo.visibleItemsInfo
-                                    .find { it.index == firstUnreadIdx }
-                                if (vp > 0 && item != null) {
-                                    // The first-unread item carries the "non letti"
-                                    // separator at its TOP, so we want the ITEM's top
-                                    // (= the separator) pinned right under the viewport
-                                    // top. Offset math (reverseLayout): top lands at
-                                    // vp-(K+size) ⇒ K = vp-size-margin. A small 4px
-                                    // margin (was 80) means the separator sits at the
-                                    // very top with no already-read content showing
-                                    // above it — Eugenio's "ci porta un pochino più
-                                    // sopra rispetto al separatore" was those 80px.
-                                    val precise = (vp - item.size - 4).coerceAtLeast(0)
-                                    runCatching { listState.scrollToItem(firstUnreadIdx, precise) }
-                                    return@repeat
+                            var pinned = false
+                            repeat(8) {
+                                if (!pinned) {
+                                    kotlinx.coroutines.delay(20)
+                                    val vp = listState.layoutInfo.viewportSize.height
+                                    val item = listState.layoutInfo.visibleItemsInfo
+                                        .find { it.index == firstUnreadIdx }
+                                    if (vp > 0 && item != null) {
+                                        // Separator (item TOP) pinned just under the
+                                        // viewport top, ONCE — no laggy re-pinning as
+                                        // heights settle. 4px margin = separator at top.
+                                        val precise = (vp - item.size - 4).coerceAtLeast(0)
+                                        runCatching { listState.scrollToItem(firstUnreadIdx, precise) }
+                                        pinned = true
+                                    } else if (vp > 0) {
+                                        // Rough scroll left it outside the window —
+                                        // pull it to the bottom edge so the next pass
+                                        // measures and pins it (fixes "un po' sopra").
+                                        runCatching { listState.scrollToItem(firstUnreadIdx, 0) }
+                                    }
                                 }
                             }
                         }
@@ -1061,24 +1060,28 @@ fun ChatScreen(
                     val viewportH0 = listState.layoutInfo.viewportSize.height
                     val roughOffset = if (viewportH0 > 0) (viewportH0 - 400).coerceAtLeast(200) else 200
                     runCatching { listState.scrollToItem(idx, roughOffset) }
+                    // Pin the first-unread item's TOP (the "non letti" separator)
+                    // just under the viewport top, ONCE. The old loop re-ran
+                    // scrollToItem on every pass as bubble heights settled (media
+                    // loading) — that was the laggy "assesta". Here we retry only
+                    // until the item is measured and pinned a single time; if the
+                    // rough scroll left it outside the window we pull it to the
+                    // bottom edge so the next pass can measure and pin it (fixes
+                    // "lands a bit above the separator").
+                    var pinned = false
                     repeat(8) {
-                        kotlinx.coroutines.delay(20)
-                        val vp = listState.layoutInfo.viewportSize.height
-                        val item = listState.layoutInfo.visibleItemsInfo
-                            .find { it.index == idx }
-                        if (vp > 0 && item != null) {
-                            // Pin the first-unread item's TOP (which carries the
-                            // "non letti" separator) right under the viewport top.
-                            // A 4px margin puts the separator at the very top edge.
-                            val precise = (vp - item.size - 4).coerceAtLeast(0)
-                            runCatching { listState.scrollToItem(idx, precise) }
-                        } else if (vp > 0) {
-                            // The rough scroll left idx outside the measured
-                            // window (tall bubbles / late layout) — that's the
-                            // "lands too far above the separator" case. Pull it
-                            // back to the bottom edge so the next pass can measure
-                            // its height and pin its top precisely.
-                            runCatching { listState.scrollToItem(idx, 0) }
+                        if (!pinned) {
+                            kotlinx.coroutines.delay(20)
+                            val vp = listState.layoutInfo.viewportSize.height
+                            val item = listState.layoutInfo.visibleItemsInfo
+                                .find { it.index == idx }
+                            if (vp > 0 && item != null) {
+                                val precise = (vp - item.size - 4).coerceAtLeast(0)
+                                runCatching { listState.scrollToItem(idx, precise) }
+                                pinned = true
+                            } else if (vp > 0) {
+                                runCatching { listState.scrollToItem(idx, 0) }
+                            }
                         }
                     }
                     unreadModeActive = true
@@ -1477,10 +1480,18 @@ fun ChatScreen(
     // never opened before (cache-miss path), bringing the activity down
     // with it. `!loadingMore` still guards against re-entry of THIS flow.
     LaunchedEffect(listState, chatId) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+        // Emit on scroll AND on scroll-settle (the isScrollInProgress half):
+        // prefetching 18 rows before the edge gives the fetch time to land
+        // before a fast fling reaches the bottom of memory, and the settle
+        // re-check tops up the instant a fling that outran the fetch stops —
+        // so it no longer dead-ends on an old message until a manual nudge.
+        snapshotFlow {
+            (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) to
+                listState.isScrollInProgress
+        }
             .distinctUntilChanged()
-            .filter {
-                it >= messages.size - 5 &&
+            .filter { (lastIdx, _) ->
+                lastIdx >= messages.size - 18 &&
                     messages.isNotEmpty() &&
                     !loading &&
                     !loadingMore &&
@@ -1491,7 +1502,7 @@ fun ChatScreen(
                 loadingMore = true
                 val oldest = messages.lastOrNull()?.id ?: 0L
                 runCatching {
-                    val res = TdClient.getChatHistory(chatId, oldest, 30)
+                    val res = TdClient.getChatHistory(chatId, oldest, 50)
                     if (res.messages.isEmpty()) noMore = true
                     else {
                         // Filter out anything already in the window — fast
@@ -1523,10 +1534,14 @@ fun ChatScreen(
     // newMessages collector resumes real-time appends). Fetching the
     // immediately-newer page keeps the slice contiguous — no burned-middle gap.
     LaunchedEffect(listState, chatId) {
-        snapshotFlow { listState.firstVisibleItemIndex }
+        // Emit on scroll AND on scroll-settle (isScrollInProgress) and prefetch
+        // 18 rows ahead, same as the load-older flow: a fast fling toward the
+        // present gets the next page in place before it reaches the head of the
+        // window, and a fling that outran the fetch tops up the moment it stops.
+        snapshotFlow { listState.firstVisibleItemIndex to listState.isScrollInProgress }
             .distinctUntilChanged()
-            .filter {
-                it <= 3 &&
+            .filter { (idx, _) ->
+                idx <= 18 &&
                     messages.isNotEmpty() &&
                     !atLatestWindow &&
                     !loading &&
@@ -2102,6 +2117,35 @@ fun ChatScreen(
         }
         viewerReturnOwner.lifecycle.addObserver(obs)
         onDispose { viewerReturnOwner.lifecycle.removeObserver(obs) }
+    }
+    // Notification foreground gate. currentChatId reflects the chat the user is
+    // ACTIVELY looking at, driven by THIS screen's resume/pause rather than the
+    // process-wide isInForeground flag — that flag could momentarily read false
+    // while the screen was plainly on top (notification-shade pull, quick app
+    // switch), which let a heads-up slip through for the chat in view (Eugenio:
+    // "in gruppo arrivavano anche se ero già in fondo"). ON_RESUME ⇒ this chat
+    // is on screen and resumed → suppress its notifications; ON_PAUSE (background,
+    // overlay, navigate away) clears it → notifications resume. addObserver
+    // replays to the current state, so entering a resumed chat sets it at once.
+    DisposableEffect(viewerReturnOwner, chatId) {
+        val gateObs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME ->
+                    com.secondream.novagram.AppForegroundState.currentChatId = chatId
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE ->
+                    if (com.secondream.novagram.AppForegroundState.currentChatId == chatId) {
+                        com.secondream.novagram.AppForegroundState.currentChatId = 0L
+                    }
+                else -> {}
+            }
+        }
+        viewerReturnOwner.lifecycle.addObserver(gateObs)
+        onDispose {
+            viewerReturnOwner.lifecycle.removeObserver(gateObs)
+            if (com.secondream.novagram.AppForegroundState.currentChatId == chatId) {
+                com.secondream.novagram.AppForegroundState.currentChatId = 0L
+            }
+        }
     }
     var deleteOpen by remember { mutableStateOf(false) }
     var leaveOpen by remember { mutableStateOf(false) }
@@ -8271,6 +8315,7 @@ private fun isImage(name: String): Boolean {
 private fun ReplyPreview(message: TdApi.Message, onCancel: () -> Unit) {
     val preview = remember(message.id) {
         when (val c = message.content) {
+            is TdApi.MessageAnimatedEmoji -> c.emoji
             is TdApi.MessageText -> c.text.text.take(80)
             is TdApi.MessagePhoto -> "📷 Foto" + (c.caption.text.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
             is TdApi.MessageVideo -> "🎬 Video"

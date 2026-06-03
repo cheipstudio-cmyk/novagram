@@ -299,6 +299,35 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                         valueRange = 0.70f..1.60f,
                         steps = 17
                     )
+                    Spacer(Modifier.height(14.dp))
+                    // Slider 3 — vertical spacing BETWEEN message bubbles
+                    // (chat density). Lower = tighter (more messages per screen,
+                    // Telegram-style); the bubble floors it at 1dp so rows never
+                    // touch. 100% = default.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            stringResource(R.string.settings_display_spacing),
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "${(appearance.messageSpacing * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.Slider(
+                        value = appearance.messageSpacing,
+                        onValueChange = { v ->
+                            scope.launch { AppSettings.setMessageSpacing(v) }
+                        },
+                        valueRange = 0.0f..2.0f,
+                        steps = 19
+                    )
                 }
             }
 

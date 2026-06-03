@@ -262,12 +262,12 @@ object NotificationHelper {
         if (message.isOutgoing) return
         // Suppress heads-up only if the user is currently viewing THIS exact
         // chat in ChatScreen — they will see the message arrive in-line and a
-        // separate notification would be redundant noise. If the app is open
-        // but they're on another chat / the chat list / settings, we DO want
-        // them to be notified so they don't miss the incoming message.
-        if (com.secondream.novagram.AppForegroundState.isInForeground &&
-            com.secondream.novagram.AppForegroundState.currentChatId == message.chatId
-        ) return
+        // separate notification would be redundant noise. currentChatId is
+        // driven by ChatScreen's resume/pause lifecycle, so it's non-zero ONLY
+        // while that chat is actually on screen and resumed; it returns to 0 on
+        // pause/background (gate ON_PAUSE + App.onStop), so a backgrounded chat
+        // — or being on another chat / the list / settings — always notifies.
+        if (com.secondream.novagram.AppForegroundState.currentChatId == message.chatId) return
         val chat = TdClient.getCachedChat(message.chatId)
         // Is this an @-mention OR a reply to one of my messages? Either
         // signal puts the notification on a different track: even if the
@@ -497,6 +497,7 @@ object NotificationHelper {
     private fun previewOf(msg: TdApi.Message): String {
         com.secondream.novagram.td.TdClient.serviceMessageText(msg)?.let { return it }
         return when (val c = msg.content) {
+            is TdApi.MessageAnimatedEmoji -> c.emoji
             is TdApi.MessageText -> c.text.text
             is TdApi.MessagePhoto -> "📷 " + c.caption.text.ifBlank { "Foto" }
             is TdApi.MessageVoiceNote -> "🎙 Nota vocale"

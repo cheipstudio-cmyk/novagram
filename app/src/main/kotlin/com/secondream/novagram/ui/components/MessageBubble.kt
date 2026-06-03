@@ -360,7 +360,14 @@ fun MessageBubble(
             modifier = Modifier
                 .fillMaxWidth()
                 .offset { androidx.compose.ui.unit.IntOffset(animatedOffset.toInt(), 0) }
-                .padding(horizontal = 12.dp, vertical = 3.dp),
+                // Vertical padding = the gap between consecutive bubbles, driven
+                // by the message-spacing slider. messageSpacing 0→1dp (tight,
+                // Telegram-style), 1→3dp (default), 2→5dp; the +1f keeps a 1dp
+                // floor so rows never visually touch.
+                .padding(
+                    horizontal = 12.dp,
+                    vertical = (1f + appearance.messageSpacing * 2f).dp
+                ),
             horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
             verticalAlignment = Alignment.Bottom
         ) {
@@ -690,6 +697,19 @@ private fun MessageContent(
     contentRevision: Int = 0
 ) {
     when (val c = message.content) {
+        is TdApi.MessageAnimatedEmoji -> {
+            // A single standard emoji sent without other text comes back from
+            // TDLib as messageAnimatedEmoji (Telegram's big-emoji feature), not
+            // messageText — without this branch it fell through to the generic
+            // "Messaggio" fallback (emoji singola mandava "Messaggio"). Render
+            // the plain emoji large, scaled by the message-text slider.
+            Text(
+                text = c.emoji,
+                fontSize = MaterialTheme.typography.displaySmall.fontSize *
+                    com.secondream.novagram.ui.theme.LocalMessageTextScale.current,
+                color = onBackground
+            )
+        }
         is TdApi.MessageText -> {
             val rawText = c.text.text
             val themePrefs = remember(rawText) {
@@ -2111,6 +2131,7 @@ private fun previewFromContentOrQuote(replyTo: TdApi.MessageReplyToMessage): Str
  * same shorthand everywhere replies and notifications appear.
  */
 private fun previewFromContent(content: TdApi.MessageContent): String = when (content) {
+    is TdApi.MessageAnimatedEmoji -> content.emoji
     is TdApi.MessageText -> content.text.text.take(120)
     is TdApi.MessagePhoto -> "📷 Foto" +
         (content.caption.text.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")

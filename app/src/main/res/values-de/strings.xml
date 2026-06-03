@@ -566,6 +566,7 @@
     <string name="settings_section_display_sub">Oberflächen- und Nachrichtentext</string>
     <string name="settings_display_ui">Oberfläche und Chatliste</string>
     <string name="settings_display_messages">Nachrichten im Chat</string>
+    <string name="settings_display_spacing">Abstand der Nachrichten</string>
     <string name="settings_translator_label">Übersetzer in Chats</string>
     <string name="settings_translator_soon">Demnächst — übersetzt Chats mit Nachrichten in anderen Sprachen</string>
     <string name="settings_ai_recap_label">KI-Zusammenfassung auf der Startseite</string>
