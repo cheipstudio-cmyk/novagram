@@ -2338,7 +2338,12 @@ fun ChatScreen(
     // edge zone, so we win the gesture before the list can claim it for
     // scrolling. Outside the edge zone (or for a clearly-vertical drag) we don't
     // claim, and the list / bubble reply-swipe behave exactly as before.
-    val backOffset = remember { androidx.compose.animation.core.Animatable(0f) }
+    // Live back-swipe offset in px, written SYNCHRONOUSLY from the gesture loop
+    // so the chat follows the finger frame-perfectly — no coroutine spawned per
+    // pointer event (that was both a stutter source and, with Animatable.snapTo,
+    // illegal inside the restricted gesture scope). Animation is used ONLY on
+    // release: a velocity-carrying glide to commit, a springy retreat to cancel.
+    var backX by remember { mutableFloatStateOf(0f) }
     val density = androidx.compose.ui.platform.LocalDensity.current
     val backTriggerPx = with(density) { 96.dp.toPx() }
     val edgeZonePx = with(density) { 28.dp.toPx() }
@@ -2349,6 +2354,9 @@ fun ChatScreen(
             .pointerInput(chatId) {
                 val slop = viewConfiguration.touchSlop
                 val initial = androidx.compose.ui.input.pointer.PointerEventPass.Initial
+                // Holds the in-flight release animation so a re-grab during the
+                // spring-back cancels it and hands off cleanly to the new drag.
+                var releaseBackJob: kotlinx.coroutines.Job? = null
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false, pass = initial)
                     // Only an edge swipe (started near the left edge) arms it.
@@ -2373,18 +2381,17 @@ fun ChatScreen(
                                 // Vertical intent wins → let the list scroll.
                                 return@awaitEachGesture
                             }
-                            if (totalX > slop) claimed = true
+                            if (totalX > slop) { claimed = true; releaseBackJob?.cancel() }
                         }
                         if (claimed) {
                             // Consume so the list never scrolls underneath us.
                             change.consume()
                             velocity.addPosition(change.uptimeMillis, change.position)
-                            val target = (backOffset.value + dx)
-                                .coerceIn(0f, size.width.toFloat())
-                            // Already inside a suspend gesture scope, so snapTo runs
-                            // inline — no coroutine spawned per pointer event (that
-                            // per-event launch made the finger-follow stutter).
-                            backOffset.snapTo(target)
+                            // Synchronous state write — legal in the restricted
+                            // gesture scope and the smoothest finger-follow there
+                            // is (lands on the very next frame, in order, no
+                            // coroutine overhead).
+                            backX = (backX + dx).coerceIn(0f, size.width.toFloat())
                         }
                     }
                     // Released.
@@ -2393,20 +2400,32 @@ fun ChatScreen(
                         val vx = runCatching { velocity.calculateVelocity().x }.getOrDefault(0f)
                         // Commit on EITHER a past-threshold drag OR a clear rightward
                         // flick, so a fast short swipe still closes the chat.
-                        if (backOffset.value > backTriggerPx || vx > 800f) {
-                            // Commit: glide the rest of the way out, then pop.
-                            scope.launch {
-                                backOffset.animateTo(
-                                    w, androidx.compose.animation.core.tween(140)
-                                )
+                        if (backX > backTriggerPx || vx > 800f) {
+                            // Commit: shoot the rest of the way out CARRYING the
+                            // flick velocity, so a fast swipe flies off naturally
+                            // instead of decelerating to a fixed-duration crawl.
+                            releaseBackJob = scope.launch {
+                                androidx.compose.animation.core.animate(
+                                    initialValue = backX,
+                                    targetValue = w,
+                                    initialVelocity = vx,
+                                    animationSpec = androidx.compose.animation.core.tween(160)
+                                ) { v, _ -> backX = v }
                                 onBack()
                             }
                         } else {
-                            // Cancel: spring back to closed.
-                            scope.launch {
-                                backOffset.animateTo(
-                                    0f, androidx.compose.animation.core.tween(190)
-                                )
+                            // Cancel: springy retreat to closed (a touch of bounce)
+                            // so it reads as alive, not a flat linear snap-back.
+                            releaseBackJob = scope.launch {
+                                androidx.compose.animation.core.animate(
+                                    initialValue = backX,
+                                    targetValue = 0f,
+                                    initialVelocity = vx,
+                                    animationSpec = androidx.compose.animation.core.spring(
+                                        dampingRatio = 0.72f,
+                                        stiffness = 420f
+                                    )
+                                ) { v, _ -> backX = v }
                             }
                         }
                     }
@@ -2418,13 +2437,14 @@ fun ChatScreen(
         // Predictive back-swipe parallax: the whole chat follows the finger to
         // the right and shrinks a touch (reads as a card being dismissed), then
         // either glides out (commit) or springs back (cancel). Driven by
-        // backOffset above.
+        // backX above.
         modifier = Modifier.graphicsLayer {
-            translationX = backOffset.value
-            val p = if (size.width > 0f) (backOffset.value / size.width).coerceIn(0f, 1f) else 0f
-            val s = 1f - 0.04f * p
+            translationX = backX
+            val p = if (size.width > 0f) (backX / size.width).coerceIn(0f, 1f) else 0f
+            val s = 1f - 0.06f * p
             scaleX = s
             scaleY = s
+            alpha = 1f - 0.10f * p
         },
         // The bottom navigation-bar inset is owned by the InputBar (and the
         // join-chat / non-member boxes), each of which applies
