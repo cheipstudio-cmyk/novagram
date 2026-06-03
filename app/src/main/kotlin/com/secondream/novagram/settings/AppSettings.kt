@@ -69,6 +69,14 @@ data class AppearancePrefs(
      */
     val messageSpacing: Float = 1.0f,
     /**
+     * Line-height multiplier for the gap BETWEEN text lines INSIDE a message
+     * bubble (the height of each "a capo"). 1.0 = default (≈1.375em, i.e. the
+     * 22sp/16sp body ratio); smaller tightens the lines, larger opens them up.
+     * Multiplies the natural body line height so it scales with the message-size
+     * slider and is font-size independent. Range 0.8–1.8.
+     */
+    val messageLineSpacing: Float = 1.0f,
+    /**
      * Id of the saved theme currently applied (so the row gets a checkmark in
      * Settings). null = no saved theme active, the user is on a base theme
      * mode (System/Light/Dark/Amoled) or freely tweaked customs.
@@ -221,6 +229,7 @@ object AppSettings {
     private val TEXT_SCALE = androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
     private val MESSAGE_SCALE = androidx.datastore.preferences.core.floatPreferencesKey("message_scale")
     private val MESSAGE_SPACING = androidx.datastore.preferences.core.floatPreferencesKey("message_spacing")
+    private val MESSAGE_LINE_SPACING = androidx.datastore.preferences.core.floatPreferencesKey("message_line_spacing")
     private val AUTO_DOWNLOAD_MEDIA = androidx.datastore.preferences.core.booleanPreferencesKey("auto_download_media")
     private val ANTHROPIC_API_KEY = androidx.datastore.preferences.core.stringPreferencesKey("anthropic_api_key")
     private val AI_RECAP_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("ai_recap_enabled")
@@ -275,6 +284,7 @@ object AppSettings {
                 textScale = (prefs[TEXT_SCALE] ?: 1.0f).coerceIn(0.70f, 1.60f),
                 messageScale = (prefs[MESSAGE_SCALE] ?: 1.0f).coerceIn(0.70f, 1.60f),
                 messageSpacing = (prefs[MESSAGE_SPACING] ?: 1.0f).coerceIn(0.0f, 2.0f),
+                messageLineSpacing = (prefs[MESSAGE_LINE_SPACING] ?: 1.0f).coerceIn(0.8f, 1.8f),
                 autoDownloadMedia = prefs[AUTO_DOWNLOAD_MEDIA] ?: true,
                 anthropicApiKey = prefs[ANTHROPIC_API_KEY]
                     ?.let { com.secondream.novagram.security.SecretCrypto.decrypt(it) }
@@ -577,6 +587,13 @@ object AppSettings {
     suspend fun setMessageSpacing(value: Float) {
         val clamped = value.coerceIn(0.0f, 2.0f)
         appContext.dataStore.edit { it[MESSAGE_SPACING] = clamped }
+    }
+
+    /** Line height inside message bubbles (height of each "a capo"). 1.0 =
+     *  default ≈1.375em; range 0.8–1.8. */
+    suspend fun setMessageLineSpacing(value: Float) {
+        val clamped = value.coerceIn(0.8f, 1.8f)
+        appContext.dataStore.edit { it[MESSAGE_LINE_SPACING] = clamped }
     }
 
     suspend fun setAiRecapEnabled(enabled: Boolean) {

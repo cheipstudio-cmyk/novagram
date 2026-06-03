@@ -328,6 +328,35 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                         valueRange = 0.0f..2.0f,
                         steps = 19
                     )
+                    Spacer(Modifier.height(14.dp))
+                    // Slider 4 — line height INSIDE a bubble (height of each
+                    // "a capo"): more or less space between the text lines of a
+                    // multi-line message. Independent of the bubble-spacing
+                    // slider above. 100% = default.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            stringResource(R.string.settings_display_line_spacing),
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "${(appearance.messageLineSpacing * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.Slider(
+                        value = appearance.messageLineSpacing,
+                        onValueChange = { v ->
+                            scope.launch { AppSettings.setMessageLineSpacing(v) }
+                        },
+                        valueRange = 0.8f..1.8f,
+                        steps = 19
+                    )
                 }
             }
 

@@ -33,6 +33,8 @@ fun NovaTheme(
     textScale: Float = 1.0f,
     /** In-chat message-body text multiplier (1.0 = default), independent of [textScale]. */
     messageScale: Float = 1.0f,
+    /** In-chat message-body line-height multiplier (1.0 = default), independent of [messageScale]. */
+    messageLineSpacing: Float = 1.0f,
     content: @Composable () -> Unit
 ) {
     val isDark = when (themeMode) {
@@ -186,6 +188,7 @@ fun NovaTheme(
     ) {
         androidx.compose.runtime.CompositionLocalProvider(
             LocalMessageTextScale provides messageScale,
+            LocalMessageLineSpacing provides messageLineSpacing,
             content = content
         )
     }

@@ -567,6 +567,7 @@
     <string name="settings_display_ui">Interfaz y lista de chats</string>
     <string name="settings_display_messages">Mensajes en el chat</string>
     <string name="settings_display_spacing">Espaciado de mensajes</string>
+    <string name="settings_display_line_spacing">Interlineado de mensajes</string>
     <string name="settings_translator_label">Traductor en los chats</string>
     <string name="settings_translator_soon">Próximamente — traducirá los chats con mensajes en otros idiomas</string>
     <string name="settings_ai_recap_label">Botón de resumen IA en inicio</string>

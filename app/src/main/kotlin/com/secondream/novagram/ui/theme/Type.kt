@@ -28,6 +28,11 @@ private fun gFamily(name: String, weight: FontWeight, style: FontStyle = FontSty
  * sliders stay independent instead of multiplying together. Default 1f.
  */
 val LocalMessageTextScale = androidx.compose.runtime.compositionLocalOf { 1f }
+/** In-chat message-body LINE-HEIGHT multiplier (1.0 = default 22/16 ≈ 1.375em),
+ *  controlled by the "Interlinea messaggi" slider. Multiplies the natural body
+ *  line height, so it scales correctly together with the message-size slider
+ *  and stays font-size independent. */
+val LocalMessageLineSpacing = androidx.compose.runtime.compositionLocalOf { 1f }
 
 val InstrumentSerif = FontFamily(
     gFamily("Instrument Serif", FontWeight.Normal),

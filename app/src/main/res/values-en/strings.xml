@@ -567,6 +567,7 @@
     <string name="settings_display_ui">Interface and chat list</string>
     <string name="settings_display_messages">Messages in chat</string>
     <string name="settings_display_spacing">Message spacing</string>
+    <string name="settings_display_line_spacing">Message line spacing</string>
     <string name="settings_translator_label">Translator in chats</string>
     <string name="settings_translator_soon">Coming soon — will translate chats with messages in other languages</string>
     <string name="settings_ai_recap_label">AI recap button on home</string>

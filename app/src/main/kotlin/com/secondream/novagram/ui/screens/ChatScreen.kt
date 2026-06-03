@@ -118,6 +118,15 @@ import com.secondream.novagram.util.VoiceRecorder
 import org.drinkless.tdlib.TdApi
 
 /**
+ * Unread-count threshold for chat-open positioning. At or below this many
+ * unread messages we treat you as "essentially caught up" and land at the
+ * bottom (newest); above it we treat it as a backlog and pull the first-unread
+ * separator to the top. Count-based so the decision never depends on a fragile
+ * layout-timing measurement. Tunable.
+ */
+private const val UNREAD_FITS_SCREEN = 8
+
+/**
  * Places the "non letti" separator (which renders at the TOP of the
  * first-unread message's item) at the very top of the chat viewport, so the
  * unread messages read downward from there — what we want when opening a chat
@@ -187,7 +196,15 @@ private suspend fun anchorFirstUnread(
 
     li = messages.indexOfFirst { it.id == targetMsgId }.takeIf { it >= 0 } ?: return
     val vp = listState.layoutInfo.viewportSize.height.let { if (it > 0) it else vp0 }
-    runCatching { listState.scrollToItem(li, (vp - settledH - topMargin).coerceAtLeast(0)) }
+    val placeOffset = (vp - settledH - topMargin).coerceAtLeast(0)
+    if (com.secondream.novagram.BuildConfig.DEBUG) android.util.Log.d(
+        "NovaScroll",
+        "anchorTop id=$targetMsgId li=$li vp=$vp settledH=$settledH offset=$placeOffset frames=$frame"
+    )
+    // Glide (not snap) onto the exact mark so the assestamento reads as smooth,
+    // never a jolt ("uno scatto", Eugenio). The rough pre-place above already
+    // sat the target near the top, so this is a SHORT, drift-free hop.
+    runCatching { listState.animateScrollToItem(li, placeOffset) }
 
     // SUSTAINED ANCHOR — re-assert the top spot every frame until the target's
     // measured height holds for ~10 frames (catches a late image decode or a
@@ -992,59 +1009,44 @@ fun ChatScreen(
 
                 if (freshUnread > 0 && freshLastReadId > 0L) {
                     // First-unread = smallest id strictly greater than
-                    // lastReadInboxMessageId among incoming messages
-                    // currently in our window. Land the user there so
-                    // already-read context sits above, unread below.
+                    // lastReadInboxMessageId among incoming messages currently in
+                    // our window. May be ABSENT (null) when TDLib already knows
+                    // "N unread" from a server sync but the message body hasn't
+                    // landed in the local DB yet.
                     val firstUnreadEntry = messages
                         .withIndex()
                         .filter { (_, m) -> !m.isOutgoing && m.id > freshLastReadId }
                         .minByOrNull { it.value.id }
                     val firstUnreadIdx = firstUnreadEntry?.index
                     unreadSeparatorId = firstUnreadEntry?.value?.id ?: 0L
-                    if (firstUnreadIdx != null) {
-                        // Two-phase precise positioning: rough scroll
-                        // to bring the first-unread into the visible
-                        // window, then refine to a height-aware offset
-                        // that puts the bubble's visual TOP at
-                        // viewportH/3 — Telegram-style upper-third
-                        // anchor, more context BELOW (unread stream
-                        // flowing downward) than ABOVE. This replaces
-                        // the previous fixed-88%-viewport offset which
-                        // clipped the TOP of tall bubbles (photos,
-                        // videos, long quoted text) above the visible
-                        // area — root cause of Eugenio's "ci mette
-                        // sempre un pochino sopra" complaint across
-                        // every jump entry point. See the long
-                        // geometry comment in jumpToMessage below for
-                        // the full rationale; in short, we pin
-                        // target's TOP edge ~80px from viewport top
-                        // via scrollOffset = (vp - targetH - 80).
-                        // Go to the BOTTOM first. If the unread region fits on
-                        // screen (the usual case — a handful of new messages),
-                        // the first-unread is already visible there and we
-                        // leave the newest pinned to the bottom: NO scrolling
-                        // up into already-read messages (that upward jump into
-                        // read content was the bug). Only when there are MORE
-                        // unread than fit do we pull the first-unread up to the
-                        // top third so the user can read downward through them.
-                        runCatching { listState.scrollToItem(0) }
-                        kotlinx.coroutines.delay(16)
-                        val firstUnreadVisible = listState.layoutInfo
-                            .visibleItemsInfo.any { it.index == firstUnreadIdx }
-                        if (!firstUnreadVisible) {
-                            // Many unread: the first-unread isn't on screen from
-                            // the bottom, so pull its "non letti" separator up to
-                            // the very top of the viewport and read downward
-                            // through the backlog. Robust settle-then-pin (see
-                            // anchorFirstUnread): the old rough+pin lost the layout
-                            // race on a freshly-populated list and left the
-                            // separator "sempre troppo sotto".
-                            anchorFirstUnread(listState, messages, unreadSeparatorId)
-                        }
-                        chatUnreadOnOpen = freshUnread
-                        unreadModeActive = true
-                        return@runCatching
+                    // DECIDE BY COUNT, never by a layout-timing race or a stale
+                    // read marker. A SMALL unread count = essentially caught up →
+                    // sit at the bottom (newest), like Telegram: instant, no race.
+                    // CRUCIAL fix: this no longer requires having LOCATED the
+                    // first-unread bubble. When TDLib reports "1 unread" but the
+                    // body is still landing locally (firstUnreadIdx == null), the
+                    // old code fell through and did NOTHING — stranding the user on
+                    // whatever sat on screen, usually their own last-sent bubble
+                    // ("mi posiziona sotto l'ultimo messaggio che ho inviato").
+                    // Going to the bottom is always right when caught up; the body
+                    // paints there the instant it arrives. Only a real backlog
+                    // (> threshold) AND a located separator pulls the "non letti"
+                    // divider to the top to read downward.
+                    val doAnchor = freshUnread > UNREAD_FITS_SCREEN && firstUnreadIdx != null
+                    if (doAnchor) {
+                        anchorFirstUnread(listState, messages, unreadSeparatorId)
+                    } else {
+                        runCatching { listState.scrollToItem(0, 0) }
                     }
+                    if (com.secondream.novagram.BuildConfig.DEBUG) android.util.Log.d(
+                        "NovaScroll",
+                        "open(cache) unread=$freshUnread lastRead=$freshLastReadId " +
+                            "firstUnreadId=$unreadSeparatorId idx=$firstUnreadIdx total=${messages.size} " +
+                            "path=" + (if (doAnchor) "ANCHOR_TOP" else "BOTTOM")
+                    )
+                    chatUnreadOnOpen = freshUnread
+                    unreadModeActive = true
+                    return@runCatching
                 }
                 if (toAdd.isNotEmpty()) {
                     // No first-unread (chat fully read on another device)
@@ -1133,14 +1135,22 @@ fun ChatScreen(
                     messages.indexOfFirst { it.id == tgt.id }
                 } ?: -1
                 if (idx >= 0) {
-                    // Pull the first-unread's "non letti" separator to the very
-                    // top of the viewport and read downward through the backlog.
-                    // Robust settle-then-pin (anchorFirstUnread): the old
-                    // rough+pin used the placeholder height on a freshly-loaded
-                    // list and left the separator "sempre troppo sotto". If the
-                    // first-unread is the newest message (you were caught up and
-                    // one new arrived) the helper just drops to the bottom.
-                    anchorFirstUnread(listState, messages, unreadSeparatorId)
+                    // Same count-based rule as the cache-hit path: a small unread
+                    // count means you were essentially caught up → land at the
+                    // bottom (newest); a real backlog pulls the "non letti"
+                    // separator to the top to read downward. Count-based so the
+                    // decision never rides on a fragile layout-timing check.
+                    if (initialUnread <= UNREAD_FITS_SCREEN) {
+                        runCatching { listState.scrollToItem(0, 0) }
+                    } else {
+                        anchorFirstUnread(listState, messages, unreadSeparatorId)
+                    }
+                    if (com.secondream.novagram.BuildConfig.DEBUG) android.util.Log.d(
+                        "NovaScroll",
+                        "open(full) unread=$initialUnread lastRead=$lastReadId " +
+                            "firstUnreadId=$unreadSeparatorId idx=$idx total=${messages.size} " +
+                            "path=" + (if (initialUnread <= UNREAD_FITS_SCREEN) "BOTTOM" else "ANCHOR_TOP")
+                    )
                     unreadModeActive = true
                 }
                 // Already-read incoming messages we DID load: those can be
@@ -1255,6 +1265,14 @@ fun ChatScreen(
         TdClient.newMessages.collect { msg ->
             if (msg.chatId == chatId) {
                 if (atLatestWindow) {
+                    // Capture BEFORE inserting: are we pinned to (or within a hair
+                    // of) the newest? In reverseLayout index 0 == the bottom. Using
+                    // <= 2 instead of a strict == 0 tolerates the brief window right
+                    // after opening where scroll-to-bottom hasn't fully applied, and
+                    // the "I sent one, another arrives" case — without it the
+                    // arrival stays hidden just below the fold under my last sent
+                    // bubble. Read before add(0, msg) shifts every index up by one.
+                    val wasAtBottom = listState.firstVisibleItemIndex <= 2
                     // On the live tail — inject at the top (adjacent, no gap).
                     // Dedupe: getChatHistory and UpdateNewMessage can race.
                     if (messages.none { it.id == msg.id }) {
@@ -1270,6 +1288,19 @@ fun ChatScreen(
                         ) {
                             com.secondream.novagram.util.SoundFx.playReceive(context)
                         }
+                    }
+                    // Follow the new message down — but ONLY if we were already
+                    // pinned to the bottom (or WE sent it). Without this, a
+                    // prepend at index 0 anchors on the previously-newest item's
+                    // key, so the arriving message lands BELOW the fold and you
+                    // stay stuck on your own last-sent bubble while the new one
+                    // is hidden (exactly the "mi posiziona sotto l'ultimo
+                    // messaggio che ho inviato" report). If you'd scrolled UP to
+                    // read history we leave you put: the go-to-bottom FAB /
+                    // unread counter signals the new message instead of yanking
+                    // you away from what you're reading.
+                    if (wasAtBottom || msg.isOutgoing) {
+                        runCatching { listState.animateScrollToItem(0) }
                     }
                 } else if (msg.isOutgoing) {
                     // The user sent a message while parked in an OLD jumped
@@ -1781,7 +1812,12 @@ fun ChatScreen(
                     // Single knob: raise CENTER to push the target DOWN, lower it
                     // to push UP. Used by every placement below so the instant,
                     // animated and re-pin paths always agree.
-                    val CENTER = 0.80f
+                    // Target CENTRE lands at this fraction of the viewport from
+                    // the top. Was 0.80 (centre at 80% ⇒ target "spiaccicato in
+                    // fondo vicino alla input bar", per Eugenio). 0.62 puts it in
+                    // the lower-middle: comfortably visible with context below,
+                    // not glued to the input. Tunable.
+                    val CENTER = 0.62f
                     val info0 = listState.layoutInfo
                     val vp0 = info0.viewportSize.height
                     if (vp0 <= 0) {
@@ -1864,15 +1900,20 @@ fun ChatScreen(
                     // wrong bubble entirely — a big source of "inconsistente".
                     val lockIdx = messages.indexOfFirst { it.id == targetId }
                         .takeIf { it >= 0 } ?: idx
+                    if (com.secondream.novagram.BuildConfig.DEBUG) android.util.Log.d(
+                        "NovaScroll",
+                        "jump id=$targetId lockIdx=$lockIdx vp=$vp settledH=$settledH " +
+                            "exact=$exact animate=$doAnimate total=${messages.size}"
+                    )
 
-                    // Short on-screen hop → glide. Because the heights are already
-                    // settled and the distance is short, animateScrollToItem can't
-                    // drift, so the lock below is a sub-pixel no-op.
-                    if (doAnimate) {
-                        runCatching { listState.animateScrollToItem(lockIdx, exact) }
-                    }
-                    // Pixel-exact resting position on every path.
-                    runCatching { listState.scrollToItem(lockIdx, exact) }
+                    // Final placement is ALWAYS a smooth glide onto the resting
+                    // offset — the last assestamento must never read as a snap
+                    // ("uno scatto", Eugenio). On the instant path we already
+                    // teleported NEAR the target above, so this is a SHORT hop
+                    // (never a long fling through the list); on the on-screen path
+                    // it's the short hop from where the bubble already sat. Heights
+                    // are settled, so animateScrollToItem can't drift.
+                    runCatching { listState.animateScrollToItem(lockIdx, exact) }
 
                     // SUSTAINED ANCHOR — the real consistency fix. After the
                     // lock the target can STILL drift off the FRAC mark for two
@@ -2286,54 +2327,105 @@ fun ChatScreen(
         }
     }
 
-    // Swipe-from-left-to-right closes the chat. Mirrors the Telegram /
-    // iOS pattern of "swipe right to pop". Uses detectHorizontalDragGestures
-    // (the same API the per-bubble reply-swipe uses) — simpler than the
-    // custom pointer-event loop we tried first, and works against the
-    // Compose version on the runner.
+    // Interactive swipe-from-left-edge to close the chat, with a predictive
+    // parallax like the Android back gesture: the chat follows your finger to
+    // the right and you control the close — drag back left to cancel, or
+    // release past the threshold to pop. The old version tracked the drag but
+    // never moved anything (no feedback) AND lost the gesture to the
+    // LazyColumn's vertical scroll, so it only fired on the input bar.
     //
-    // Activation zone:
-    //   swapSwipeReply=false → gesture must START in the leftmost 24dp
-    //     (the bubble's reply-swipe is right, so we'd fight it anywhere
-    //     else). Matches Android's edge-back gesture.
-    //   swapSwipeReply=true  → gesture can start anywhere in the chat
-    //     view. Bubble swipes are LEFT-only in swap mode, so the
-    //     parent's rightward claim doesn't steal anything user-visible.
-    var backDragAmount by remember { mutableFloatStateOf(0f) }
-    var backDragStartX by remember { mutableFloatStateOf(0f) }
+    // We intercept in the INITIAL pointer pass for drags that START in the left
+    // edge zone, so we win the gesture before the list can claim it for
+    // scrolling. Outside the edge zone (or for a clearly-vertical drag) we don't
+    // claim, and the list / bubble reply-swipe behave exactly as before.
+    val backOffset = remember { androidx.compose.animation.core.Animatable(0f) }
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val backTriggerPx = with(density) { 120.dp.toPx() }
-    val edgeZonePx = with(density) { 24.dp.toPx() }
+    val backTriggerPx = with(density) { 96.dp.toPx() }
+    val edgeZonePx = with(density) { 28.dp.toPx() }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput("back-swipe-$chatId", appearance.swapSwipeReply) {
-                val swap = appearance.swapSwipeReply
-                detectHorizontalDragGestures(
-                    onDragStart = { offset ->
-                        backDragStartX = offset.x
-                        backDragAmount = 0f
-                    },
-                    onDragEnd = {
-                        if (backDragAmount > backTriggerPx) onBack()
-                        backDragAmount = 0f
-                    },
-                    onDragCancel = { backDragAmount = 0f }
-                ) { _, dragAmount ->
-                    // Accumulate rightward drags only; left drags reset.
-                    // Edge mode (default): gesture must have started in
-                    // the leftmost 24dp. Swap mode: gesture can start
-                    // anywhere. Either way, we only count rightward.
-                    val inActivationZone = backDragStartX < edgeZonePx || swap
-                    if (inActivationZone && dragAmount > 0) {
-                        backDragAmount = (backDragAmount + dragAmount).coerceAtLeast(0f)
+            .pointerInput(chatId) {
+                val slop = viewConfiguration.touchSlop
+                val initial = androidx.compose.ui.input.pointer.PointerEventPass.Initial
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = initial)
+                    // Only an edge swipe (started near the left edge) arms it.
+                    if (down.position.x > edgeZonePx) return@awaitEachGesture
+                    var claimed = false
+                    var totalX = 0f
+                    var totalY = 0f
+                    // Track fling velocity so a quick flick commits the close even
+                    // before the distance threshold — the responsive feel of the
+                    // real predictive-back gesture.
+                    val velocity = androidx.compose.ui.input.pointer.util.VelocityTracker()
+                    while (true) {
+                        val event = awaitPointerEvent(initial)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) break // released
+                        val dx = change.position.x - change.previousPosition.x
+                        val dy = change.position.y - change.previousPosition.y
+                        totalX += dx
+                        totalY += dy
+                        if (!claimed) {
+                            if (kotlin.math.abs(totalY) > slop && kotlin.math.abs(totalY) > totalX) {
+                                // Vertical intent wins → let the list scroll.
+                                return@awaitEachGesture
+                            }
+                            if (totalX > slop) claimed = true
+                        }
+                        if (claimed) {
+                            // Consume so the list never scrolls underneath us.
+                            change.consume()
+                            velocity.addPosition(change.uptimeMillis, change.position)
+                            val target = (backOffset.value + dx)
+                                .coerceIn(0f, size.width.toFloat())
+                            // Already inside a suspend gesture scope, so snapTo runs
+                            // inline — no coroutine spawned per pointer event (that
+                            // per-event launch made the finger-follow stutter).
+                            backOffset.snapTo(target)
+                        }
+                    }
+                    // Released.
+                    if (claimed) {
+                        val w = size.width.toFloat()
+                        val vx = runCatching { velocity.calculateVelocity().x }.getOrDefault(0f)
+                        // Commit on EITHER a past-threshold drag OR a clear rightward
+                        // flick, so a fast short swipe still closes the chat.
+                        if (backOffset.value > backTriggerPx || vx > 800f) {
+                            // Commit: glide the rest of the way out, then pop.
+                            scope.launch {
+                                backOffset.animateTo(
+                                    w, androidx.compose.animation.core.tween(140)
+                                )
+                                onBack()
+                            }
+                        } else {
+                            // Cancel: spring back to closed.
+                            scope.launch {
+                                backOffset.animateTo(
+                                    0f, androidx.compose.animation.core.tween(190)
+                                )
+                            }
+                        }
                     }
                 }
             }
     ) {
 
     Scaffold(
+        // Predictive back-swipe parallax: the whole chat follows the finger to
+        // the right and shrinks a touch (reads as a card being dismissed), then
+        // either glides out (commit) or springs back (cancel). Driven by
+        // backOffset above.
+        modifier = Modifier.graphicsLayer {
+            translationX = backOffset.value
+            val p = if (size.width > 0f) (backOffset.value / size.width).coerceIn(0f, 1f) else 0f
+            val s = 1f - 0.04f * p
+            scaleX = s
+            scaleY = s
+        },
         // The bottom navigation-bar inset is owned by the InputBar (and the
         // join-chat / non-member boxes), each of which applies
         // navigationBarsPadding() itself. If we ALSO let the Scaffold add the

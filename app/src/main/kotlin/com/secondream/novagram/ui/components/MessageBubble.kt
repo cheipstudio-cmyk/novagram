@@ -60,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import coil.compose.AsyncImage
 import com.secondream.novagram.R
 import androidx.compose.ui.res.stringResource
@@ -1751,12 +1752,18 @@ private fun FormattedTextRendering(
     // one: take the unscaled base bodyLarge and apply messageScale, so it's
     // independent of the global typography scale baked in by the theme.
     val msgScale = com.secondream.novagram.ui.theme.LocalMessageTextScale.current
+    val lineSp = com.secondream.novagram.ui.theme.LocalMessageLineSpacing.current
     val baseBody = com.secondream.novagram.ui.theme.AppTypography.bodyLarge
     androidx.compose.foundation.text.ClickableText(
         text = annotated,
         style = baseBody.copy(
             color = onBackground,
-            fontSize = baseBody.fontSize * msgScale
+            fontSize = baseBody.fontSize * msgScale,
+            // Line height = natural body ratio (22/16 ≈ 1.375) scaled by the
+            // "Interlinea messaggi" slider. In em so it tracks the font size
+            // (and thus the message-size slider) automatically; at lineSp=1.0
+            // this is exactly the current look.
+            lineHeight = (1.375f * lineSp).em
         ),
         onClick = { offset ->
             // Try URL, then EMAIL, then PHONE annotation at that offset.
