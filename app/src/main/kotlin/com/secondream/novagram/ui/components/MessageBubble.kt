@@ -360,13 +360,16 @@ fun MessageBubble(
             modifier = Modifier
                 .fillMaxWidth()
                 .offset { androidx.compose.ui.unit.IntOffset(animatedOffset.toInt(), 0) }
-                // Vertical padding = the gap between consecutive bubbles, driven
-                // by the message-spacing slider. messageSpacing 0→1dp (tight,
-                // Telegram-style), 1→3dp (default), 2→5dp; the +1f keeps a 1dp
-                // floor so rows never visually touch.
+                // Vertical padding = half the gap between consecutive bubbles
+                // (the other half is the neighbour's padding), driven by the
+                // message-spacing slider. With multiplier 3.5 and a 0.5dp base
+                // the BUBBLE GAP spans ~1dp (0%, Telegram-tight) → ~8dp (100%,
+                // default) → ~15dp (200%, airy) — a wide, clearly-visible range
+                // so the slider actually changes chat density. The 0.5dp base
+                // floors it so rows never visually touch.
                 .padding(
                     horizontal = 12.dp,
-                    vertical = (1f + appearance.messageSpacing * 2f).dp
+                    vertical = (0.5f + appearance.messageSpacing * 3.5f).dp
                 ),
             horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
             verticalAlignment = Alignment.Bottom

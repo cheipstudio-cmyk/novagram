@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -115,6 +116,106 @@ import com.secondream.novagram.ui.theme.Ink
 import com.secondream.novagram.util.FileUtils
 import com.secondream.novagram.util.VoiceRecorder
 import org.drinkless.tdlib.TdApi
+
+/**
+ * Places the "non letti" separator (which renders at the TOP of the
+ * first-unread message's item) at the very top of the chat viewport, so the
+ * unread messages read downward from there — what we want when opening a chat
+ * with a backlog from a notification or the chat list.
+ *
+ * Why a dedicated routine and not an inline scrollToItem: the first frame after
+ * a freshly-populated list (or a media bubble) reports a PLACEHOLDER height, so
+ * computing the offset immediately lands the separator in the wrong spot
+ * ("sempre troppo sotto"). We mirror the proven jumpToMessage recipe: settle
+ * the target's height (3 identical frames), place once with the real height,
+ * then re-assert the spot for a short window so a late image decode or more
+ * history paginating in can't drag it off — bailing the instant the user
+ * scrolls.
+ *
+ * reverseLayout geometry (confirmed in jumpToMessage): scrollToItem(idx, S)
+ * leaves S px between the item's BOTTOM and the viewport bottom, so the item's
+ * TOP sits at vp - (S + height). To put the TOP at K px: S = vp - height - K.
+ */
+private suspend fun anchorFirstUnread(
+    listState: LazyListState,
+    messages: List<TdApi.Message>,
+    targetMsgId: Long,
+) {
+    if (targetMsgId == 0L) return
+    val topMargin = 8 // px: separator sits just inside the 8dp content padding
+    var li = messages.indexOfFirst { it.id == targetMsgId }
+    if (li < 0) return
+    // First-unread IS the newest message (you were caught up and one/a few new
+    // ones arrived): nothing newer to read below it, so just sit at the bottom
+    // — no separator-at-top dance. reverseLayout would clamp to the bottom
+    // anyway; doing it explicitly keeps it crisp and skips the settle loop.
+    if (li == 0) { runCatching { listState.scrollToItem(0, 0) }; return }
+
+    val vp0 = listState.layoutInfo.viewportSize.height
+    if (vp0 <= 0) { runCatching { listState.scrollToItem(li, 0) }; return }
+
+    // Rough pre-place near the top using the best height estimate so the target
+    // is roughly where it'll end up while the (possibly still-composing) list
+    // lays out and the heights settle.
+    run {
+        val est = listState.layoutInfo.visibleItemsInfo.find { it.index == li }?.size
+            ?: (vp0 * 18 / 100)
+        runCatching { listState.scrollToItem(li, (vp0 - est - topMargin).coerceAtLeast(0)) }
+    }
+
+    // Settle the target height: hold for 3 identical frames, cap ~40 frames so
+    // a heavy first layout or a slow-loading photo can't leave us measuring a
+    // placeholder. Measured WITHOUT scrolling, so nothing jitters here.
+    var lastH = -1
+    var stable = 0
+    var settledH = -1
+    var frame = 0
+    while (frame < 40 && settledH <= 0) {
+        kotlinx.coroutines.delay(16)
+        li = messages.indexOfFirst { it.id == targetMsgId }
+        val h = listState.layoutInfo.visibleItemsInfo.find { it.index == li }?.size ?: -1
+        if (h > 0 && h == lastH) {
+            stable++
+            if (stable >= 3) { settledH = h; break }
+        } else {
+            stable = 0
+            lastH = h
+        }
+        frame++
+    }
+    if (settledH <= 0) settledH = if (lastH > 0) lastH else (vp0 * 18 / 100).coerceAtLeast(1)
+
+    li = messages.indexOfFirst { it.id == targetMsgId }.takeIf { it >= 0 } ?: return
+    val vp = listState.layoutInfo.viewportSize.height.let { if (it > 0) it else vp0 }
+    runCatching { listState.scrollToItem(li, (vp - settledH - topMargin).coerceAtLeast(0)) }
+
+    // SUSTAINED ANCHOR — re-assert the top spot every frame until the target's
+    // measured height holds for ~10 frames (catches a late image decode or a
+    // pagination reflow that would otherwise drag the separator off the top),
+    // bailing the instant the user starts scrolling so we never fight them.
+    // Re-resolved BY ID each frame so a reindex can't pin the wrong row. Hard
+    // cap ~1.4s so we never spin forever on a perpetually-loading item.
+    var f2 = 0
+    var lastSize = -1
+    var stableSize = 0
+    while (f2 < 90) {
+        kotlinx.coroutines.delay(16)
+        if (listState.isScrollInProgress) break
+        val cur = messages.indexOfFirst { it.id == targetMsgId }
+        if (cur < 0) break
+        val vis = listState.layoutInfo.visibleItemsInfo.find { it.index == cur } ?: break
+        val vpN = listState.layoutInfo.viewportSize.height.let { if (it > 0) it else vp }
+        runCatching { listState.scrollToItem(cur, (vpN - vis.size - topMargin).coerceAtLeast(0)) }
+        if (vis.size == lastSize) {
+            stableSize++
+            if (stableSize >= 10) break
+        } else {
+            stableSize = 0
+            lastSize = vis.size
+        }
+        f2++
+    }
+}
 
 @Composable
 fun ChatScreen(
@@ -931,35 +1032,14 @@ fun ChatScreen(
                         val firstUnreadVisible = listState.layoutInfo
                             .visibleItemsInfo.any { it.index == firstUnreadIdx }
                         if (!firstUnreadVisible) {
-                            // Many unread: bring the first-unread's TOP to
-                            // ~80px from the viewport top (height-aware so tall
-                            // bubbles aren't clipped), unread flowing downward.
-                            val viewportH0 = listState.layoutInfo.viewportSize.height
-                            val roughOffset = if (viewportH0 > 0)
-                                (viewportH0 - 400).coerceAtLeast(200) else 200
-                            runCatching { listState.scrollToItem(firstUnreadIdx, roughOffset) }
-                            var pinned = false
-                            repeat(8) {
-                                if (!pinned) {
-                                    kotlinx.coroutines.delay(20)
-                                    val vp = listState.layoutInfo.viewportSize.height
-                                    val item = listState.layoutInfo.visibleItemsInfo
-                                        .find { it.index == firstUnreadIdx }
-                                    if (vp > 0 && item != null) {
-                                        // Separator (item TOP) pinned just under the
-                                        // viewport top, ONCE — no laggy re-pinning as
-                                        // heights settle. 4px margin = separator at top.
-                                        val precise = (vp - item.size - 4).coerceAtLeast(0)
-                                        runCatching { listState.scrollToItem(firstUnreadIdx, precise) }
-                                        pinned = true
-                                    } else if (vp > 0) {
-                                        // Rough scroll left it outside the window —
-                                        // pull it to the bottom edge so the next pass
-                                        // measures and pins it (fixes "un po' sopra").
-                                        runCatching { listState.scrollToItem(firstUnreadIdx, 0) }
-                                    }
-                                }
-                            }
+                            // Many unread: the first-unread isn't on screen from
+                            // the bottom, so pull its "non letti" separator up to
+                            // the very top of the viewport and read downward
+                            // through the backlog. Robust settle-then-pin (see
+                            // anchorFirstUnread): the old rough+pin lost the layout
+                            // race on a freshly-populated list and left the
+                            // separator "sempre troppo sotto".
+                            anchorFirstUnread(listState, messages, unreadSeparatorId)
                         }
                         chatUnreadOnOpen = freshUnread
                         unreadModeActive = true
@@ -1008,7 +1088,11 @@ fun ChatScreen(
             var consecutiveEmpty = 0
             val attemptCap = if (initialUnread > 0) 10 else 6
             while (messages.size < target && attempts < attemptCap && consecutiveEmpty < 2) {
-                val res = TdClient.getChatHistory(chatId, fromId, 50)
+                // First pass is OFFLINE-only (onlyLocal): a chat you've synced
+                // before paints instantly from TDLib's local DB instead of
+                // waiting on a possible network round-trip. Subsequent passes go
+                // online to fill anything the cache was missing (cold chats).
+                val res = TdClient.getChatHistory(chatId, fromId, 0, 50, onlyLocal = attempts == 0)
                 if (res.messages.isEmpty()) {
                     consecutiveEmpty++
                     if (consecutiveEmpty < 2) delay(350)
@@ -1049,41 +1133,14 @@ fun ChatScreen(
                     messages.indexOfFirst { it.id == tgt.id }
                 } ?: -1
                 if (idx >= 0) {
-                    // Two-phase precise positioning — same algorithm as
-                    // the cache-miss path above. Rough scroll to bring
-                    // the first-unread into the visible window, then
-                    // refine to a height-aware offset that places
-                    // the bubble's visual TOP at ~80px from viewport
-                    // top regardless of bubble height — keeps target
-                    // visible at the start of the screen so the user
-                    // can read forward into newer-context below.
-                    val viewportH0 = listState.layoutInfo.viewportSize.height
-                    val roughOffset = if (viewportH0 > 0) (viewportH0 - 400).coerceAtLeast(200) else 200
-                    runCatching { listState.scrollToItem(idx, roughOffset) }
-                    // Pin the first-unread item's TOP (the "non letti" separator)
-                    // just under the viewport top, ONCE. The old loop re-ran
-                    // scrollToItem on every pass as bubble heights settled (media
-                    // loading) — that was the laggy "assesta". Here we retry only
-                    // until the item is measured and pinned a single time; if the
-                    // rough scroll left it outside the window we pull it to the
-                    // bottom edge so the next pass can measure and pin it (fixes
-                    // "lands a bit above the separator").
-                    var pinned = false
-                    repeat(8) {
-                        if (!pinned) {
-                            kotlinx.coroutines.delay(20)
-                            val vp = listState.layoutInfo.viewportSize.height
-                            val item = listState.layoutInfo.visibleItemsInfo
-                                .find { it.index == idx }
-                            if (vp > 0 && item != null) {
-                                val precise = (vp - item.size - 4).coerceAtLeast(0)
-                                runCatching { listState.scrollToItem(idx, precise) }
-                                pinned = true
-                            } else if (vp > 0) {
-                                runCatching { listState.scrollToItem(idx, 0) }
-                            }
-                        }
-                    }
+                    // Pull the first-unread's "non letti" separator to the very
+                    // top of the viewport and read downward through the backlog.
+                    // Robust settle-then-pin (anchorFirstUnread): the old
+                    // rough+pin used the placeholder height on a freshly-loaded
+                    // list and left the separator "sempre troppo sotto". If the
+                    // first-unread is the newest message (you were caught up and
+                    // one new arrived) the helper just drops to the bottom.
+                    anchorFirstUnread(listState, messages, unreadSeparatorId)
                     unreadModeActive = true
                 }
                 // Already-read incoming messages we DID load: those can be
@@ -1485,6 +1542,10 @@ fun ChatScreen(
         // before a fast fling reaches the bottom of memory, and the settle
         // re-check tops up the instant a fling that outran the fetch stops —
         // so it no longer dead-ends on an old message until a manual nudge.
+        // Tracks consecutive empty older-history fetches so a single transient
+        // empty (which TDLib is allowed to return) can't permanently seal the
+        // window — see the collect below.
+        var olderEmptyStreak = 0
         snapshotFlow {
             (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) to
                 listState.isScrollInProgress
@@ -1503,8 +1564,17 @@ fun ChatScreen(
                 val oldest = messages.lastOrNull()?.id ?: 0L
                 runCatching {
                     val res = TdClient.getChatHistory(chatId, oldest, 50)
-                    if (res.messages.isEmpty()) noMore = true
-                    else {
+                    if (res.messages.isEmpty()) {
+                        // TDLib can return an empty page transiently even when
+                        // older history still exists (the result may be smaller
+                        // than the limit, including 0). Treating the FIRST empty
+                        // as end-of-history permanently dead-ended scroll-up on a
+                        // transient miss. Require TWO empties in a row before
+                        // sealing the window; any non-empty fetch resets it.
+                        olderEmptyStreak++
+                        if (olderEmptyStreak >= 2) noMore = true
+                    } else {
+                        olderEmptyStreak = 0
                         // Filter out anything already in the window — fast
                         // scroll + concurrent newMessages emissions can
                         // produce overlap with the in-memory tail; without

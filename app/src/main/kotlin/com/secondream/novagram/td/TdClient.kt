@@ -1325,9 +1325,16 @@ object TdClient {
         chatId: Long,
         fromMessageId: Long,
         offset: Int,
-        limit: Int
+        limit: Int,
+        // Pass true for an OFFLINE-only fetch (no network round-trip): TDLib
+        // returns instantly whatever is already in its local message DB. Used
+        // for the first paint on chat open so a previously-synced chat shows
+        // immediately instead of waiting on the local-first-then-maybe-network
+        // path. Defaults to false (the completeness path) so every existing
+        // caller is unchanged.
+        onlyLocal: Boolean = false
     ): TdApi.Messages =
-        send(TdApi.GetChatHistory(chatId, fromMessageId, offset, limit, false))
+        send(TdApi.GetChatHistory(chatId, fromMessageId, offset, limit, onlyLocal))
 
     /**
      * Convenience overload: fetch [limit] messages strictly older than
