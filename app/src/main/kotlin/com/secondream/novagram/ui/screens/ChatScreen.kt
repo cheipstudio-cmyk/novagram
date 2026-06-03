@@ -1061,20 +1061,24 @@ fun ChatScreen(
                     val viewportH0 = listState.layoutInfo.viewportSize.height
                     val roughOffset = if (viewportH0 > 0) (viewportH0 - 400).coerceAtLeast(200) else 200
                     runCatching { listState.scrollToItem(idx, roughOffset) }
-                    repeat(3) {
-                        kotlinx.coroutines.delay(16)
+                    repeat(8) {
+                        kotlinx.coroutines.delay(20)
                         val vp = listState.layoutInfo.viewportSize.height
                         val item = listState.layoutInfo.visibleItemsInfo
                             .find { it.index == idx }
                         if (vp > 0 && item != null) {
                             // Pin the first-unread item's TOP (which carries the
                             // "non letti" separator) right under the viewport top.
-                            // Was 80px, which showed read content above the
-                            // separator and made the user land "un pochino sopra";
-                            // a 4px margin puts the separator at the top edge.
+                            // A 4px margin puts the separator at the very top edge.
                             val precise = (vp - item.size - 4).coerceAtLeast(0)
                             runCatching { listState.scrollToItem(idx, precise) }
-                            return@repeat
+                        } else if (vp > 0) {
+                            // The rough scroll left idx outside the measured
+                            // window (tall bubbles / late layout) — that's the
+                            // "lands too far above the separator" case. Pull it
+                            // back to the bottom edge so the next pass can measure
+                            // its height and pin its top precisely.
+                            runCatching { listState.scrollToItem(idx, 0) }
                         }
                     }
                     unreadModeActive = true
@@ -1462,6 +1466,9 @@ fun ChatScreen(
             }
     }
 
+    // Shared with the load-NEWER flow below so the two never mutate the
+    // SnapshotStateList at the same time (concurrent addAll crashed LazyColumn).
+    var loadingNewer by remember(chatId) { mutableStateOf(false) }
     // Auto load older when scroll near top of reversed list (i.e. bottom
     // of memory). Gated on `!loading` so it cannot fire while the initial
     // chat load is still iterating getChatHistory — two concurrent
@@ -1477,6 +1484,7 @@ fun ChatScreen(
                     messages.isNotEmpty() &&
                     !loading &&
                     !loadingMore &&
+                    !loadingNewer &&
                     !noMore
             }
             .collect {
@@ -1499,6 +1507,55 @@ fun ChatScreen(
                     }
                 }
                 loadingMore = false
+            }
+    }
+
+    // Auto-load NEWER when scrolling toward the bottom of a non-latest window.
+    // After jumpToMessage parks us on an old message (pinned tap, "see in
+    // chat" from a file/photo, reply or in-chat-search jump) the window is a
+    // contiguous slice centred on the target with atLatestWindow=false. In a
+    // reverseLayout list index 0 is the newest loaded; scrolling DOWN walks
+    // toward it and previously DEAD-ENDED at the window edge — the timeline
+    // "finished" mid-history and only the go-to-bottom arrow or a reopen
+    // pulled the rest. Here we extend the window FORWARD, contiguously, by
+    // fetching the page immediately newer than our current head until we
+    // reconnect to the live tail (then atLatestWindow flips back on and the
+    // newMessages collector resumes real-time appends). Fetching the
+    // immediately-newer page keeps the slice contiguous — no burned-middle gap.
+    LaunchedEffect(listState, chatId) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .distinctUntilChanged()
+            .filter {
+                it <= 3 &&
+                    messages.isNotEmpty() &&
+                    !atLatestWindow &&
+                    !loading &&
+                    !loadingMore &&
+                    !loadingNewer
+            }
+            .collect {
+                loadingNewer = true
+                val newestId = messages.firstOrNull()?.id ?: 0L
+                runCatching {
+                    // offset = -limit ⇒ TDLib returns the `limit` messages
+                    // strictly NEWER than newestId (fromMessageId sits at the
+                    // given negative offset in the date-descending list).
+                    val res = TdClient.getChatHistory(chatId, newestId, -50, 50)
+                    val existing = messages.mapTo(HashSet()) { it.id }
+                    val toPrepend = res.messages
+                        .filter { it.id > newestId && it.id !in existing }
+                        .sortedByDescending { it.id }
+                    if (toPrepend.isNotEmpty()) messages.addAll(0, toPrepend)
+                    // Reconnected to the present? Flip back to live mode so new
+                    // messages inject at the top again.
+                    val serverLast = TdClient.getCachedChat(chatId)?.lastMessage?.id ?: 0L
+                    if (toPrepend.isEmpty() ||
+                        (serverLast != 0L && messages.firstOrNull()?.id == serverLast)
+                    ) {
+                        atLatestWindow = true
+                    }
+                }
+                loadingNewer = false
             }
     }
 
