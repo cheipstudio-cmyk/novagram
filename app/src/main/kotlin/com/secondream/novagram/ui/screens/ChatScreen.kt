@@ -825,7 +825,21 @@ fun ChatScreen(
         // anchor stays glued to the existing items since they keep
         // their relative position, scroll only "ticks down" by the
         // new-message count which is the same behaviour Telegram has.
-        if (messages.isNotEmpty()) {
+        //
+        // EXCEPTION — stale jumped window + unread: if the cached window is an
+        // OLD one (atLatestWindow=false, e.g. the user left after jumping to a
+        // pinned message) AND the server says there are unread messages, the
+        // user has come back to the chat after new messages arrived. The
+        // cache-hit path below would strand them on the old window with the
+        // unread badge stuck forever — fixable only by tapping the go-to-bottom
+        // arrow, which feels disorienting. Skip the cache and fall through to
+        // the full reload of the live tail, landing on the first unread
+        // automatically: exactly what the arrow does, but without the tap. A
+        // pop-back from a sub-screen (MediaViewer / dialog) carries no unread,
+        // so its window is still preserved by the cache-hit path below.
+        val staleWithUnread = !atLatestWindow &&
+            (TdClient.getCachedChat(chatId)?.unreadCount ?: 0) > 0
+        if (messages.isNotEmpty() && !staleWithUnread) {
             loading = false
             runCatching {
                 // Re-entering an OLD jumped window (e.g. popped back from
