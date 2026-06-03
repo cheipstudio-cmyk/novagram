@@ -6,6 +6,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import com.secondream.novagram.ui.components.pressScale
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
@@ -1056,11 +1057,17 @@ private fun SegmentedChip(
 ) {
     val bg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
     val fg = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Box(
         modifier = modifier
+            .pressScale(interaction, pressedScale = 0.94f)
             .clip(RoundedCornerShape(12.dp))
             .background(bg)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interaction,
+                indication = androidx.compose.foundation.LocalIndication.current,
+                onClick = onClick
+            )
             .padding(vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -1142,9 +1149,11 @@ private fun AccentSwatch(
     onClick: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
         Box(
             modifier = Modifier
                 .size(44.dp)
+                .pressScale(interaction, pressedScale = 0.90f)
                 .clip(CircleShape)
                 .background(color)
                 .border(
@@ -1152,7 +1161,11 @@ private fun AccentSwatch(
                     color = MaterialTheme.colorScheme.onBackground,
                     shape = CircleShape
                 )
-                .clickable(onClick = onClick),
+                .clickable(
+                    interactionSource = interaction,
+                    indication = androidx.compose.foundation.LocalIndication.current,
+                    onClick = onClick
+                ),
             contentAlignment = Alignment.Center
         ) {
             // Selection shown by the accent ring around the swatch — no tick
@@ -1290,9 +1303,11 @@ private fun BubbleColorRow(
         Row(verticalAlignment = Alignment.CenterVertically) {
             swatches.forEachIndexed { idx, s ->
                 if (idx > 0) Spacer(Modifier.width(12.dp))
+                val interaction = remember(s.color) { androidx.compose.foundation.interaction.MutableInteractionSource() }
                 Box(
                     modifier = Modifier
                         .size(36.dp)
+                        .pressScale(interaction, pressedScale = 0.90f)
                         .clip(CircleShape)
                         .background(s.previewBg)
                         .border(
@@ -1301,7 +1316,10 @@ private fun BubbleColorRow(
                                     else (s.previewBorder ?: Color.Transparent),
                             shape = CircleShape
                         )
-                        .clickable { onPick(s.color) },
+                        .clickable(
+                            interactionSource = interaction,
+                            indication = androidx.compose.foundation.LocalIndication.current
+                        ) { onPick(s.color) },
                     contentAlignment = Alignment.Center
                 ) {
                     if (current == s.color) {
@@ -1315,10 +1333,16 @@ private fun BubbleColorRow(
 
 @Composable
 private fun ActionRow(label: String, destructive: Boolean, onClick: () -> Unit) {
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .pressScale(interaction, pressedScale = 0.97f)
+            .clickable(
+                interactionSource = interaction,
+                indication = androidx.compose.foundation.LocalIndication.current,
+                onClick = onClick
+            )
             .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1362,10 +1386,16 @@ private fun PrivacyToggleRow(
     enabled: Boolean = true
 ) {
     val contentAlpha = if (enabled) 1f else 0.45f
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled) { onToggle(!checked) }
+            .pressScale(interaction, pressedScale = 0.98f)
+            .clickable(
+                interactionSource = interaction,
+                indication = androidx.compose.foundation.LocalIndication.current,
+                enabled = enabled
+            ) { onToggle(!checked) }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

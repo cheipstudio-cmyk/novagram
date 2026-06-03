@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import com.secondream.novagram.R
 import com.secondream.novagram.td.TdClient
@@ -152,18 +153,44 @@ fun ProfileScreen(onBack: () -> Unit) {
                 profileCropUri = null
                 pendingAvatarPath = path
                 saving = true
+                val prevPhotoId = me?.profilePhoto?.id ?: 0L
+                val myId = me?.id
                 scope.launch {
                     // SetProfilePhoto is async; the userUpdates collector above
                     // swaps in (and downloads) the new avatar when TDLib pushes it.
                     val res = runCatching { TdClient.setProfilePhoto(path, isPublic = true) }
                     saving = false
                     res.exceptionOrNull()?.let { e ->
-                        // Surface the REAL reason in-app (no adb needed): bad
-                        // key / network / TDLib rejection all land here.
+                        // Synchronous refusal (bad file / network / TDLib reject).
                         pendingAvatarPath = null
                         android.widget.Toast.makeText(
                             context,
                             "Foto profilo: ${e.message ?: e}",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        return@launch
+                    }
+                    // Accepted — but the upload is async and can still fail
+                    // silently (the call already returned Ok, so nothing throws).
+                    // Wait for the server to echo a NEW profile photo; if none
+                    // arrives in 15s, surface it in-app with the file facts (so a
+                    // bad crop is distinguishable from an upload/connection
+                    // problem) and drop the optimistic preview so the circle shows
+                    // the truth instead of a change that never persisted.
+                    val confirmed = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
+                        TdClient.userUpdates.first { u ->
+                            u.id == myId && (u.profilePhoto?.id ?: 0L) != prevPhotoId
+                        }
+                        true
+                    } ?: false
+                    if (!confirmed) {
+                        pendingAvatarPath = null
+                        val f = java.io.File(path)
+                        android.widget.Toast.makeText(
+                            context,
+                            "Foto profilo non confermata dal server " +
+                                "(file ${f.length() / 1024} KB, esiste=${f.exists()}). " +
+                                "Riprova o controlla la connessione.",
                             android.widget.Toast.LENGTH_LONG
                         ).show()
                     }

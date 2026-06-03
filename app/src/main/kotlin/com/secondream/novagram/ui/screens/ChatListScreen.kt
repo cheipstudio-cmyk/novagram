@@ -84,6 +84,7 @@ import com.secondream.novagram.R
 import androidx.compose.ui.res.stringResource
 import com.secondream.novagram.td.TdClient
 import com.secondream.novagram.ui.components.Avatar
+import com.secondream.novagram.ui.components.pressScale
 import com.secondream.novagram.ui.theme.Ink
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -1345,10 +1346,15 @@ private fun PublicResultRow(
     // gates by membership too, so a viewed-but-not-joined chat won't
     // start spamming heads-up notifications.
     val alreadyMember = chat.positions != null && chat.positions.isNotEmpty()
+    val rowInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onOpen() }
+            .pressScale(rowInteraction, pressedScale = 0.98f)
+            .clickable(
+                interactionSource = rowInteraction,
+                indication = androidx.compose.foundation.LocalIndication.current
+            ) { onOpen() }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1441,10 +1447,17 @@ private fun ChatRow(
             peerId != null && peerId != myUserId && peerId in onlineUsersState.value
         }
     }
+    val rowInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .pressScale(rowInteraction, pressedScale = 0.98f)
+            .combinedClickable(
+                interactionSource = rowInteraction,
+                indication = androidx.compose.foundation.LocalIndication.current,
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

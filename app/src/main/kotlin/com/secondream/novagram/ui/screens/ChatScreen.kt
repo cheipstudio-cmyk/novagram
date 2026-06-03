@@ -836,24 +836,47 @@ fun ChatScreen(
                 // live tail when the user actually wants the present.
                 if (!atLatestWindow) return@runCatching
                 val cachedNewestId = messages.firstOrNull()?.id ?: 0L
-                val res = TdClient.getChatHistory(chatId, 0L, 30)
+                // Authoritative server state FIRST so we can tell whether a
+                // single history fetch actually surfaced the unread tail.
+                // ALWAYS read it — not just when we appended fresh messages:
+                // a chat opened from a notification may have its unread
+                // messages ALREADY in cache (toAdd empty) yet the user still
+                // expects to land on the first unread; gating this on
+                // toAdd.isNotEmpty() dumped them wherever listState last sat.
+                val freshChatInfo = runCatching { TdClient.getChat(chatId) }.getOrNull()
+                val freshUnread = freshChatInfo?.unreadCount ?: 0
+                val freshLastReadId = freshChatInfo?.lastReadInboxMessageId ?: 0L
+                // getChatHistory is local-first. After the app's been in the
+                // background/offline, TDLib can know unreadCount from a server
+                // sync BEFORE the new message bodies have landed in the local
+                // DB, so this fetch comes back WITHOUT them — the user opens a
+                // chat showing "N unread" and sees no new bubbles, stuck on
+                // the old tail (exactly the report). When the server says
+                // there's unread but the fetch hasn't surfaced it, retry a few
+                // times with a short delay to let TDLib backfill from the
+                // server before we prepend + position. Purely additive: when
+                // the messages are already local (the common case) the first
+                // fetch satisfies the guard and there is no retry, so the
+                // positioning path below is reached with identical timing.
+                var res = TdClient.getChatHistory(chatId, 0L, 30)
+                if (freshUnread > 0 && freshLastReadId > 0L) {
+                    var tries = 0
+                    while (
+                        tries < 4 &&
+                        res.messages.none { !it.isOutgoing && it.id > freshLastReadId } &&
+                        res.messages.none { it.id > cachedNewestId }
+                    ) {
+                        kotlinx.coroutines.delay(300)
+                        res = TdClient.getChatHistory(chatId, 0L, 30)
+                        tries++
+                    }
+                }
                 val toAdd = res.messages.filter { it.id > cachedNewestId }
                 for (m in toAdd.reversed()) {
                     if (messages.none { it.id == m.id }) {
                         messages.add(0, m)
                     }
                 }
-                // ALWAYS check the authoritative server state for unread
-                // — not just when we appended fresh messages. The user
-                // may have opened a chat from notification where the
-                // unread messages were ALREADY in cache (so toAdd is
-                // empty), but they still expect to land on the first
-                // unread. The previous gating on `toAdd.isNotEmpty()`
-                // skipped this case and dumped the user wherever
-                // listState was last anchored.
-                val freshChatInfo = runCatching { TdClient.getChat(chatId) }.getOrNull()
-                val freshUnread = freshChatInfo?.unreadCount ?: 0
-                val freshLastReadId = freshChatInfo?.lastReadInboxMessageId ?: 0L
 
                 if (freshUnread > 0 && freshLastReadId > 0L) {
                     // First-unread = smallest id strictly greater than
