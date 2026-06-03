@@ -150,7 +150,24 @@ jobs:
           echo "::endgroup::"
 
           # 3. Run the upstream build pipeline.
-          ./fetch-sdk.sh || true
+          # fetch-sdk.sh pulls TDLib's own Android SDK + NDK via sdkmanager.
+          # That download is intermittently corrupted ("Error on ZipFile
+          # unknown archive"); it used to be masked with `|| true` and then
+          # cascade into a confusing "NDK path invalid" failure inside
+          # build-openssl.sh. Retry a few times (wiping the partial SDK dir
+          # between attempts) and fail LOUDLY here if it genuinely can't fetch,
+          # so a transient bad download self-heals instead of killing the run.
+          n=0
+          until ./fetch-sdk.sh; do
+            n=$((n+1))
+            if [ "$n" -ge 3 ]; then
+              echo "ERROR: fetch-sdk.sh failed after $n attempts (corrupted SDK download)."
+              exit 1
+            fi
+            echo "fetch-sdk.sh attempt $n failed - wiping partial SDK and retrying in 15s..."
+            rm -rf SDK || true
+            sleep 15
+          done
           ./build-openssl.sh
           ./build-tdlib.sh
 
