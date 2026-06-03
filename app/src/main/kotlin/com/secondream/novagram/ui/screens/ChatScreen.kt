@@ -1681,6 +1681,13 @@ fun ChatScreen(
     // drives a brief centered spinner so the round-trip + teleport doesn't
     // read as a frozen tap.
     var jumpLoading by remember(chatId) { mutableStateOf(false) }
+    // While TRUE, message items drop their placement animation. We flip it on
+    // around a jump that REPLACES the window (clear + addAll a fresh slice):
+    // without it, animateItem tries to animate every bubble from its old
+    // position to the new one, which reads as the bubbles "sliding down one by
+    // one and settling" — the lag/glitch on far and pinned jumps. With it, the
+    // new window simply appears and we land instantly.
+    var jumpSuppressAnim by remember(chatId) { mutableStateOf(false) }
 
     // Jump to a message by id, loading older history in bounded batches
     // if it isn't in the in-memory window yet (used by same-chat link
@@ -1716,6 +1723,10 @@ fun ChatScreen(
             // `messages`, then scroll.
             if (idx < 0) {
                 jumpLoading = true
+                // Kill the per-item placement animation BEFORE we swap the
+                // window, so the fresh slice appears in place instead of every
+                // bubble sliding/settling from its old spot.
+                jumpSuppressAnim = true
                 runCatching {
                     val limit = 50
                     val ctx = TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
@@ -1748,7 +1759,7 @@ fun ChatScreen(
             // gracefully without flashing or scrolling. The caller
             // already returned true to short-circuit the Intent
             // fallback, so there's nothing more to do here.
-            if (idx < 0) { jumpLoading = false; return@launch }
+            if (idx < 0) { jumpLoading = false; jumpSuppressAnim = false; return@launch }
             // Round-trip (if any) done and target located — drop the spinner.
             jumpLoading = false
             // Light the accent flash IMMEDIATELY so the highlight rides in
@@ -1801,14 +1812,12 @@ fun ChatScreen(
 
                     // HEIGHT-INDEPENDENT placement. reverseLayout: scrollToItem(idx, S)
                     // leaves S px between the item's BOTTOM and the viewport bottom.
-                    // S = 30% of the viewport puts the bubble's bottom at ~70% down:
-                    // lower-middle, fully visible, context below, never glued to the
-                    // input bar. It needs NO height measurement, so it lands on the
-                    // EXACT same spot every time and can NEVER miss the row. (The old
-                    // measure-height + per-frame re-pin version is gone: that was the
-                    // "non arriva al target", the double animation and the
-                    // "assestamenti vistosi".)
-                    val rest = (vp * 0.30f).toInt()
+                    // S = 45% of the viewport puts the bubble's bottom at ~55% down —
+                    // i.e. the message sits around the vertical CENTRE / upper-middle
+                    // (was 30% → bottom at 70%, which read as "sempre troppo in basso").
+                    // No height measurement, so it lands on the EXACT same spot every
+                    // time and can NEVER miss the row.
+                    val rest = (vp * 0.45f).toInt()
 
                     // Animate the glide ONLY for a SHORT hop (target within a couple
                     // of screens of where we are). For anything far — an old pinned,
@@ -1831,6 +1840,12 @@ fun ChatScreen(
                 // on screen — a short, smooth hop). Freshly paginated in → never
                 // animate, just teleport precisely. (Flash already lit above.)
                 preciseRefine(animate = wasAlreadyLoaded)
+            }
+            // Re-enable item placement animation once the jump has settled
+            // (only if we suppressed it for a window swap above).
+            if (jumpSuppressAnim) {
+                kotlinx.coroutines.delay(80)
+                jumpSuppressAnim = false
             }
         }
     }
@@ -2758,7 +2773,7 @@ fun ChatScreen(
                                     // Reduce-animations escape hatch for weak
                                     // devices: null placement spec = items snap
                                     // to position with no animation at all.
-                                    placementSpec = if (appearance.reduceAnimations) null
+                                    placementSpec = if (appearance.reduceAnimations || jumpSuppressAnim) null
                                     else androidx.compose.animation.core.spring(
                                         dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
                                         stiffness = androidx.compose.animation.core.Spring.StiffnessMedium

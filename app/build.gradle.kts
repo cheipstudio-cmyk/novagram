@@ -23,8 +23,8 @@ android {
         applicationId = "com.secondream.novagram"
         minSdk = 26
         targetSdk = 35
-        versionCode = 240
-        versionName = "0.10.177"
+        versionCode = 241
+        versionName = "0.10.178"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
