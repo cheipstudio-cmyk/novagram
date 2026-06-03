@@ -158,7 +158,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                 scope.launch {
                     // SetProfilePhoto is async; the userUpdates collector above
                     // swaps in (and downloads) the new avatar when TDLib pushes it.
-                    val res = runCatching { TdClient.setProfilePhoto(path, isPublic = true) }
+                    val res = runCatching { TdClient.setProfilePhoto(path, isPublic = false) }
                     saving = false
                     res.exceptionOrNull()?.let { e ->
                         // Synchronous refusal (bad file / network / TDLib reject).

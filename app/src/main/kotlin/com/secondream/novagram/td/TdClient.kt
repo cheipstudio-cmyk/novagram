@@ -2645,7 +2645,15 @@ object TdClient {
      * Replace the signed-in user's profile photo from a local image file path.
      * isPublic=true makes it visible to non-contacts (default Telegram).
      */
-    suspend fun setProfilePhoto(filePath: String, isPublic: Boolean = true) {
+    /**
+     * Set the current user's MAIN profile photo (the one everyone sees).
+     * [isPublic] maps to TDLib's is_public: false = the main photo (default,
+     * what "change photo" means); true would set only the separate public
+     * fallback photo shown when the main one is hidden by privacy — which does
+     * NOT change user.profilePhoto, so the UI never sees the change. We pass
+     * false so the photo actually takes and UpdateUser echoes it back.
+     */
+    suspend fun setProfilePhoto(filePath: String, isPublic: Boolean = false) {
         val f = java.io.File(filePath)
         Log.i(TAG, "setProfilePhoto path=$filePath exists=${f.exists()} size=${f.length()} public=$isPublic")
         try {
@@ -2746,6 +2754,14 @@ object TdClient {
         }
         try {
             send(TdApi.DeleteChatHistory(chatId, removeFromChatList, revoke))
+            // The on-screen message list is cached process-wide (ChatMessageCache,
+            // keyed by chatId) and survives navigation. Deleting the history on the
+            // server does NOT touch that cache, so without this the next open renders
+            // the stale (deleted) messages from cache, and a freshly arrived message
+            // can't push past them — the user sees old content with the unread badge
+            // stuck until the app is killed (which is the only thing that wiped the
+            // cache). Evicting here covers every delete entry point at once.
+            com.secondream.novagram.ui.screens.ChatMessageCache.evict(chatId)
         } catch (t: Throwable) {
             hiddenChats.remove(chatId)
             refreshChats()

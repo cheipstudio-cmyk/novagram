@@ -371,13 +371,23 @@ fun AppRouter(
             // on actual removal, which is exactly the eviction
             // boundary we want.
             androidx.compose.runtime.DisposableEffect(entry) {
-                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-                    if (event == androidx.lifecycle.Lifecycle.Event.ON_DESTROY) {
+                onDispose {
+                    // Evict the per-chat message cache only when the user truly
+                    // LEFT the chat (popped back to the list), NOT when a
+                    // sub-screen was pushed on top (MediaViewer / Profile), which
+                    // disposes ChatScreen's composition but keeps its entry in the
+                    // back stack so scroll position can be restored on pop-back.
+                    // The previous approach observed ON_DESTROY but removed its own
+                    // observer in onDispose, racing the event and usually MISSING
+                    // it — so the stale list lingered and old messages reappeared
+                    // on reopen with the unread badge stuck. Checking the live back
+                    // stack at dispose time is race-free: entry gone ⇒ left for
+                    // good ⇒ evict; entry still present ⇒ sub-screen push ⇒ keep.
+                    val stillInStack = nav.currentBackStack.value.any { it.id == entry.id }
+                    if (!stillInStack) {
                         com.secondream.novagram.ui.screens.ChatMessageCache.evict(id)
                     }
                 }
-                entry.lifecycle.addObserver(observer)
-                onDispose { entry.lifecycle.removeObserver(observer) }
             }
             ChatScreen(
                 chatId = id,
