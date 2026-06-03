@@ -941,29 +941,21 @@ fun ChatScreen(
         // their relative position, scroll only "ticks down" by the
         // new-message count which is the same behaviour Telegram has.
         //
-        // EXCEPTION — stale jumped window + unread: if the cached window is an
-        // OLD one (atLatestWindow=false, e.g. the user left after jumping to a
-        // pinned message) AND the server says there are unread messages, the
-        // user has come back to the chat after new messages arrived. The
-        // cache-hit path below would strand them on the old window with the
-        // unread badge stuck forever — fixable only by tapping the go-to-bottom
-        // arrow, which feels disorienting. Skip the cache and fall through to
-        // the full reload of the live tail, landing on the first unread
-        // automatically: exactly what the arrow does, but without the tap. A
-        // pop-back from a sub-screen (MediaViewer / dialog) carries no unread,
-        // so its window is still preserved by the cache-hit path below.
-        val staleWithUnread = !atLatestWindow &&
-            (TdClient.getCachedChat(chatId)?.unreadCount ?: 0) > 0
-        if (messages.isNotEmpty() && !staleWithUnread) {
+        // NOTE — a stale JUMPED window is NOT topped up here; it's reloaded.
+        // See the guard just below.
+        // Cache-hit fast path (top-up + reposition, no full reload) is taken
+        // ONLY when the cached window is the LIVE TAIL. If the cache holds a
+        // stale JUMPED window (atLatestWindow == false — the user tapped an old
+        // pinned / a far reply and then left), do NOT preserve it: a fresh
+        // reopen reaching this point means the user is back and expects the
+        // PRESENT, not the old slice ("riapro e mi trovo nel passato"). Fall
+        // through to the full tail reload below, which also lands on the first
+        // unread when there is one. The in-chat media viewer is a hoisted
+        // dialog that never disposes this screen, so it does NOT re-run this
+        // effect — there is no sub-screen pop-back relying on the old window.
+        if (messages.isNotEmpty() && atLatestWindow) {
             loading = false
             runCatching {
-                // Re-entering an OLD jumped window (e.g. popped back from
-                // MediaViewer after a pinned-message jump): leave the window
-                // and the scroll position exactly as they were — do NOT
-                // prepend the latest (that would forge the burned-middle gap)
-                // nor yank to the bottom. The go-to-bottom button reloads the
-                // live tail when the user actually wants the present.
-                if (!atLatestWindow) return@runCatching
                 val cachedNewestId = messages.firstOrNull()?.id ?: 0L
                 // Authoritative server state FIRST so we can tell whether a
                 // single history fetch actually surfaced the unread tail.
@@ -1800,118 +1792,37 @@ fun ChatScreen(
                 // ~23% (the spot Eugenio approved). coerceAtLeast(0) so a bubble
                 // taller than 0.77*vp simply anchors to the viewport bottom.
                 suspend fun preciseRefine(animate: Boolean) {
-                    // Where the target should rest: its CENTRE at this fraction of
-                    // the viewport from the top. 0.62 = lower-middle (comfortably
-                    // visible, context below, not glued to the input bar). Tunable.
-                    val CENTER = 0.62f
-                    val vp0 = listState.layoutInfo.viewportSize.height
-                    if (vp0 <= 0) {
-                        val li0 = messages.indexOfFirst { it.id == targetId }
-                        if (li0 >= 0) runCatching { listState.scrollToItem(li0, 0) }
-                        return
-                    }
-
-                    // STEP 1 — guarantee the target is ON SCREEN and COMPOSED so we
-                    // can measure its REAL height. If it isn't currently visible
-                    // (or it was just paginated in, so the layout is fresh), jump
-                    // it to offset 0 — its bottom edge at the viewport bottom. That
-                    // placement is height-INDEPENDENT and pixel-exact, so it ALWAYS
-                    // lands on the right row: this is what kills "non mi porta al
-                    // messaggio". Instant (no fling); the short glide to CENTRE is
-                    // below. If it's already visible we skip this so a reply a few
-                    // bubbles up never flashes to the bottom first.
-                    run {
-                        val li = messages.indexOfFirst { it.id == targetId }
-                        if (li < 0) return
-                        val onScreen = animate &&
-                            listState.layoutInfo.visibleItemsInfo.any { it.index == li }
-                        if (!onScreen) {
-                            runCatching { listState.scrollToItem(li, 0) }
-                            kotlinx.coroutines.delay(16)
-                        }
-                    }
-
-                    // STEP 2 — settle the REAL height: hold for 3 identical frames
-                    // (cap ~40) so a still-decoding photo or a reflowing quote can't
-                    // leave us measuring a placeholder. The target is guaranteed
-                    // visible now, so this reads the true height EVERY time — the old
-                    // code measured it while off-screen and fell back to a bad
-                    // estimate, which is exactly the "troppo in alto / troppo in
-                    // basso". Nothing scrolls here, so there is no jitter.
-                    var lastH = -1
-                    var stableFrames = 0
-                    var settledH = -1
-                    var frame = 0
-                    while (frame < 40 && settledH <= 0) {
-                        val li = messages.indexOfFirst { it.id == targetId }
-                        val h = listState.layoutInfo.visibleItemsInfo
-                            .find { it.index == li }?.size ?: -1
-                        if (h > 0 && h == lastH) {
-                            stableFrames++
-                            if (stableFrames >= 3) { settledH = h; break }
-                        } else {
-                            stableFrames = 0
-                            lastH = h
-                        }
-                        kotlinx.coroutines.delay(16)
-                        frame++
-                    }
-                    if (settledH <= 0) settledH = if (lastH > 0) lastH else (vp0 * 18 / 100)
-
+                    // Resolve fresh by ID — the window may have been spliced or
+                    // paginated since the jump started.
+                    val li = messages.indexOfFirst { it.id == targetId }
+                    if (li < 0) return
                     val vp = listState.layoutInfo.viewportSize.height
-                        .let { if (it > 0) it else vp0 }
-                    // STEP 3 — resting offset from the REAL height. reverseLayout:
-                    // scrollToItem(idx, S) leaves S px between the item bottom and
-                    // the viewport bottom, so centre at C ⇒ S = vp*(1-C) - h/2. For
-                    // a TALL bubble (≥66% of the screen) centring drives S below 0
-                    // and slams it to the bottom ("spiaccicato in fondo"); instead
-                    // anchor its TOP ~10% down so you land on the START of the
-                    // message.
-                    val tall = settledH >= (vp * 0.66f).toInt()
-                    val exact = if (tall) {
-                        (vp - settledH - (vp * 0.10f)).toInt().coerceAtLeast(0)
-                    } else {
-                        (vp * (1f - CENTER) - settledH / 2f).toInt().coerceAtLeast(0)
-                    }
-                    val lockIdx = messages.indexOfFirst { it.id == targetId }
-                        .takeIf { it >= 0 } ?: return
-                    if (com.secondream.novagram.BuildConfig.DEBUG) android.util.Log.d(
-                        "NovaScroll",
-                        "jump id=$targetId lockIdx=$lockIdx vp=$vp settledH=$settledH " +
-                            "exact=$exact tall=$tall total=${messages.size}"
-                    )
-                    // One smooth glide onto the mark. From the bottom edge (the
-                    // off-screen case) or from where it already sat (on-screen) this
-                    // is always a SHORT hop — never a long animated fling.
-                    runCatching { listState.animateScrollToItem(lockIdx, exact) }
+                    if (vp <= 0) { runCatching { listState.scrollToItem(li, 0) }; return }
 
-                    // STEP 4 — ONE-SHOT corrections for media that finishes decoding
-                    // AFTER we placed (its bubble grows and nudges the target). We
-                    // re-place ONLY when the measured height actually CHANGES, and
-                    // stop the instant it's stable — so a text target shows ZERO
-                    // extra motion (this replaces the per-frame re-pin loop that read
-                    // as "assestamenti vistosi"). Bails the moment the user grabs
-                    // the list. Re-resolved BY ID so a reindex can't pin the wrong
-                    // bubble.
-                    var corr = 0
-                    var prevSize = settledH
-                    while (corr < 6) {
-                        kotlinx.coroutines.delay(80)
-                        if (listState.isScrollInProgress) break
-                        val li = messages.indexOfFirst { it.id == targetId }
-                        if (li < 0) break
-                        val info = listState.layoutInfo
-                        val item = info.visibleItemsInfo.find { it.index == li } ?: break
-                        if (item.size == prevSize) break
-                        prevSize = item.size
-                        val vpN = info.viewportSize.height.let { if (it > 0) it else vp }
-                        val want = if (item.size >= (vpN * 0.66f).toInt()) {
-                            (vpN - item.size - (vpN * 0.10f)).toInt().coerceAtLeast(0)
-                        } else {
-                            (vpN * (1f - CENTER) - item.size / 2f).toInt().coerceAtLeast(0)
-                        }
-                        runCatching { listState.animateScrollToItem(li, want) }
-                        corr++
+                    // HEIGHT-INDEPENDENT placement. reverseLayout: scrollToItem(idx, S)
+                    // leaves S px between the item's BOTTOM and the viewport bottom.
+                    // S = 30% of the viewport puts the bubble's bottom at ~70% down:
+                    // lower-middle, fully visible, context below, never glued to the
+                    // input bar. It needs NO height measurement, so it lands on the
+                    // EXACT same spot every time and can NEVER miss the row. (The old
+                    // measure-height + per-frame re-pin version is gone: that was the
+                    // "non arriva al target", the double animation and the
+                    // "assestamenti vistosi".)
+                    val rest = (vp * 0.30f).toInt()
+
+                    // Animate the glide ONLY for a SHORT hop (target within a couple
+                    // of screens of where we are). For anything far — an old pinned,
+                    // a reply deep in history — animateScrollToItem would FLING through
+                    // hundreds of bubbles, paginating as it scrolls ("carica un po' per
+                    // volta, lentissimo, a volte un target lontano"). So we teleport
+                    // INSTANTLY; the flash highlight (lit by the caller) makes the jump
+                    // read as intentional, exactly like Telegram.
+                    val firstVis = listState.firstVisibleItemIndex
+                    val near = kotlin.math.abs(li - firstVis) <= 12
+                    if (animate && near) {
+                        runCatching { listState.animateScrollToItem(li, rest) }
+                    } else {
+                        runCatching { listState.scrollToItem(li, rest) }
                     }
                 }
 
