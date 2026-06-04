@@ -26,7 +26,14 @@ object TdClient {
     private const val TAG = "TdClient"
 
     private lateinit var appContext: Context
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Single-threaded so the per-update `scope.launch { flow.emit(...) }`
+    // pushes ALL updates to the UI flows IN ORDER. On the old multi-threaded
+    // Dispatchers.IO, two updates for the same message (e.g. edit-then-edit, or
+    // a reaction burst) could emit out of order and leave the bubble showing
+    // the stale state until the chat was reopened. send()/downloadFile() suspend
+    // on a TDLib callback continuation, so they free the thread while waiting —
+    // serializing here costs nothing for them, it only orders the emits.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 
     private var client: Client? = null
 

@@ -13,8 +13,17 @@ object FileUtils {
 
     fun copyUriToCache(context: Context, uri: Uri, suggestedName: String? = null): File? {
         val name = suggestedName ?: queryFileName(context, uri) ?: "file_${System.currentTimeMillis()}"
-        val safeName = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        val outFile = File(context.cacheDir, "upload_${System.currentTimeMillis()}_$safeName")
+        // Keep the ORIGINAL filename intact (this is the name the recipient
+        // sees). Only strip characters that are illegal in a path component —
+        // path separators and control chars — so spaces, parentheses, accents
+        // etc. survive. We give the file a UNIQUE PARENT DIR (timestamp) instead
+        // of prefixing the name, so two uploads can't collide and TDLib uses the
+        // clean basename as the document name (no more "upload_1234567890_…").
+        val safeName = name
+            .replace(Regex("[/\\\\\\u0000-\\u001f]"), "_")
+            .ifBlank { "file_${System.currentTimeMillis()}" }
+        val parent = File(context.cacheDir, "upload_${System.currentTimeMillis()}").apply { mkdirs() }
+        val outFile = File(parent, safeName)
         runCatching {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(outFile).use { output ->

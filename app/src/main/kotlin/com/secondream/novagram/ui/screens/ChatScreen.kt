@@ -1728,27 +1728,46 @@ fun ChatScreen(
                 // bubble sliding/settling from its old spot.
                 jumpSuppressAnim = true
                 runCatching {
-                    val limit = 50
-                    val ctx = TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
-                    // Reset the window to a CONTIGUOUS slice centered on the
-                    // target rather than MERGING it with the (disjoint) latest
-                    // window already in memory. Merging two non-adjacent pages
-                    // and sorting by id presented them as contiguous, leaving a
-                    // hidden gap you'd silently scroll through — the burned-
-                    // middle bug (jump to July, go to bottom, scroll up and the
-                    // months in between were gone). A fresh window keeps
-                    // scroll-up (older) contiguous; the go-to-bottom button
-                    // reloads the live tail.
-                    val window = ctx.messages.toList().sortedByDescending { it.id }
+                    val limit = 60
+                    // getChatHistory around an OLD message (an old pinned, a far
+                    // t.me link) returns FEW or ZERO messages on the FIRST call:
+                    // with onlyLocal=false TDLib pulls the surrounding history
+                    // from the SERVER in the background, so the first response is
+                    // often a stub that doesn't even contain the target. A single
+                    // call was the "non lo trova / cascata che cerca"; the old
+                    // 40-call page-by-page backfill was the "scroll a vita". This
+                    // is the bounded middle: poll a few times until we actually
+                    // have the target PLUS enough context to fill the screen,
+                    // capped so it can never hang. The spinner stays up for the
+                    // whole poll, then we land in one shot.
+                    var window: List<TdApi.Message> = emptyList()
+                    var attempt = 0
+                    while (attempt < 6) {
+                        val got = runCatching {
+                            TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
+                                .messages.toList()
+                        }.getOrDefault(emptyList())
+                        if (got.size > window.size) window = got   // keep the best so far
+                        val hasTarget = got.any { it.id == targetId }
+                        // Enough context = target present AND a screenful around it
+                        // so it doesn't immediately paginate in a visible cascade.
+                        if (hasTarget && got.size >= 14) { window = got; break }
+                        attempt++
+                        kotlinx.coroutines.delay(160)
+                    }
+                    // Reset to a CONTIGUOUS slice centered on the target rather
+                    // than MERGING with the disjoint latest window (that forged
+                    // the burned-middle gap). Fresh window keeps scroll-up
+                    // contiguous; the go-to-bottom arrow reloads the live tail.
                     if (window.isNotEmpty()) {
                         messages.clear()
-                        messages.addAll(window)
+                        messages.addAll(window.sortedByDescending { it.id })
                         noMore = false
                     }
                     idx = messages.indexOfFirst { it.id == targetId }
-                    // Only still "on the tail" if this window actually reaches
-                    // the newest message; otherwise we've parked in old history
-                    // and new messages must NOT inject at the top.
+                    // Still "on the tail" only if this window reaches the newest
+                    // message; otherwise we've parked in old history and new
+                    // messages must NOT inject at the top.
                     atLatestWindow =
                         messages.firstOrNull()?.id == TdClient.getCachedChat(chatId)?.lastMessage?.id
                 }
@@ -1812,12 +1831,12 @@ fun ChatScreen(
 
                     // HEIGHT-INDEPENDENT placement. reverseLayout: scrollToItem(idx, S)
                     // leaves S px between the item's BOTTOM and the viewport bottom.
-                    // S = 45% of the viewport puts the bubble's bottom at ~55% down —
-                    // i.e. the message sits around the vertical CENTRE / upper-middle
-                    // (was 30% → bottom at 70%, which read as "sempre troppo in basso").
-                    // No height measurement, so it lands on the EXACT same spot every
-                    // time and can NEVER miss the row.
-                    val rest = (vp * 0.45f).toInt()
+                    // S = 40% of the viewport puts the bubble's bottom at ~60% down —
+                    // a touch above the middle (0.30 read "troppo in basso", 0.45 read
+                    // "un po' troppo in alto", so 0.40 splits them). No height
+                    // measurement, so it lands on the EXACT same spot every time and
+                    // can NEVER miss the row.
+                    val rest = (vp * 0.40f).toInt()
 
                     // Animate the glide ONLY for a SHORT hop (target within a couple
                     // of screens of where we are). For anything far — an old pinned,
