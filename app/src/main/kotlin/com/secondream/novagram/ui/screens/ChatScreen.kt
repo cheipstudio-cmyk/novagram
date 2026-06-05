@@ -3918,53 +3918,20 @@ fun ChatScreen(
             is TdApi.MessageSenderChat -> TdClient.getCachedChat(s.chatId)?.title
             else -> null
         }
-        // Last ~12 messages around the target as plain "Sender: text" lines.
-        val targetIdx = messages.indexOfFirst { it.id == target.id }
-        val contextLines = if (targetIdx >= 0) {
-            val from = (targetIdx - 6).coerceAtLeast(0)
-            val to = (targetIdx + 6).coerceAtMost(messages.lastIndex)
-            messages.subList(from, to + 1).asReversed().mapNotNull { m ->
-                val mText = when (val c = m.content) {
-                    is TdApi.MessageText -> c.text.text
-                    is TdApi.MessagePhoto -> "[foto] ${c.caption.text}".trim()
-                    is TdApi.MessageVideo -> "[video] ${c.caption.text}".trim()
-                    is TdApi.MessageVoiceNote -> "[vocale]"
-                    is TdApi.MessageSticker -> "[sticker] ${c.sticker.emoji}".trim()
-                    else -> null
-                } ?: return@mapNotNull null
-                val sName = when (val s = m.senderId) {
-                    is TdApi.MessageSenderUser -> {
-                        val u = TdClient.getCachedUser(s.userId)
-                        "${u?.firstName.orEmpty()}".trim().ifBlank { "Utente" }
-                    }
-                    is TdApi.MessageSenderChat -> TdClient.getCachedChat(s.chatId)?.title ?: "Chat"
-                    else -> "Utente"
-                }
-                "$sName: $mText"
-            }
-        } else emptyList()
-        com.secondream.novagram.ai.AiActionsSheet(
-            messageText = text,
-            senderName = senderName,
-            context = contextLines,
-            onDismiss = { aiTarget = null },
-            onUseAsReply = { aiReply ->
-                aiTarget = null
-                run {
-                    val replyText = aiReply
-                    input = androidx.compose.ui.text.input.TextFieldValue(
-                        replyText,
-                        androidx.compose.ui.text.TextRange(replyText.length)
-                    )
-                }
+        com.secondream.novagram.ui.components.AiAssistantModal(
+            mode = com.secondream.novagram.ui.components.AiContext.MESSAGE,
+            contextLabel = chatTitle,
+            chatId = chatId,
+            focusText = text,
+            focusSender = senderName,
+            onReplyDraft = { aiReply ->
+                input = androidx.compose.ui.text.input.TextFieldValue(
+                    aiReply,
+                    androidx.compose.ui.text.TextRange(aiReply.length)
+                )
                 replyTarget = target
             },
-            onSendDirect = { aiReply ->
-                aiTarget = null
-                scope.launch {
-                    runCatching { TdClient.sendText(chatId, aiReply, target.id) }
-                }
-            }
+            onDismiss = { aiTarget = null }
         )
     }
 

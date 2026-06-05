@@ -28,10 +28,10 @@ import java.net.URL
 object AiClient {
 
     /** Default model — Claude Sonnet 4.5 sweet-spot for chat-style use. */
-    private const val DEFAULT_MODEL = "claude-sonnet-4-5"
+    private const val DEFAULT_MODEL = "claude-opus-4-8"
     private const val API_URL = "https://api.anthropic.com/v1/messages"
     private const val API_VERSION = "2023-06-01"
-    private const val MAX_TOKENS = 1024
+    private const val MAX_TOKENS = 2048
 
     /**
      * Send a single user message (with an optional system prompt for
@@ -128,6 +128,83 @@ object AiClient {
                     put("role", "user")
                     put("content", userPrompt)
                 })
+            })
+        }.toString()
+
+        val conn = (URL(API_URL).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            connectTimeout = 15_000
+            readTimeout = 120_000
+            setRequestProperty("x-api-key", apiKey)
+            setRequestProperty("anthropic-version", API_VERSION)
+            setRequestProperty("content-type", "application/json")
+            setRequestProperty("accept", "text/event-stream")
+        }
+
+        try {
+            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(payload) }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val body = conn.errorStream
+                    ?.let { BufferedReader(InputStreamReader(it, Charsets.UTF_8)).readText() } ?: ""
+                val err = runCatching {
+                    JSONObject(body).optJSONObject("error")?.optString("message")
+                }.getOrNull()
+                throw RuntimeException(err ?: "HTTP $code")
+            }
+            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    if (!line.startsWith("data:")) continue
+                    val data = line.removePrefix("data:").trim()
+                    if (data.isEmpty() || data == "[DONE]") continue
+                    val obj = runCatching { JSONObject(data) }.getOrNull() ?: continue
+                    when (obj.optString("type")) {
+                        "content_block_delta" -> {
+                            val delta = obj.optJSONObject("delta")
+                            if (delta?.optString("type") == "text_delta") {
+                                val text = delta.optString("text")
+                                if (text.isNotEmpty()) {
+                                    withContext(Dispatchers.Main) { onDelta(text) }
+                                }
+                            }
+                        }
+                        "message_stop" -> break
+                    }
+                }
+            }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * Multi-turn streaming. [messages] is the full conversation so far as
+     * (role, content) pairs ("user"/"assistant"), letting the model keep
+     * context across many exchanges. [onDelta] fires on the MAIN thread.
+     */
+    suspend fun streamConversation(
+        messages: List<Pair<String, String>>,
+        systemPrompt: String? = null,
+        model: String = DEFAULT_MODEL,
+        onDelta: (String) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        val apiKey = AppSettings.appearance.first().anthropicApiKey
+            ?: throw IllegalStateException("Chiave API mancante")
+
+        val payload = JSONObject().apply {
+            put("model", model)
+            put("max_tokens", MAX_TOKENS)
+            put("stream", true)
+            if (!systemPrompt.isNullOrBlank()) put("system", systemPrompt)
+            put("messages", JSONArray().apply {
+                messages.forEach { (role, content) ->
+                    put(JSONObject().apply {
+                        put("role", role)
+                        put("content", content)
+                    })
+                }
             })
         }.toString()
 
