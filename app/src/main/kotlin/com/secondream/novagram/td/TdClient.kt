@@ -1404,6 +1404,38 @@ object TdClient {
     }
 
     /**
+     * Same recent history as [chatRecentLines] but as structured [MsgRef]s so
+     * the AI can cite specific messages and we can render a tappable card
+     * (avatar + sender + snippet) that jumps straight to the message.
+     */
+    suspend fun chatRecentRefs(chatId: Long, limit: Int = 40): List<MsgRef> {
+        val msgs = runCatching {
+            getChatHistory(chatId, 0L, limit).messages?.toList().orEmpty()
+        }.getOrNull().orEmpty()
+        return msgs
+            .asReversed()
+            .mapNotNull { m ->
+                val text = buildPreview(m).trim()
+                if (text.isBlank()) return@mapNotNull null
+                val who = resolveSenderName(m).trim().ifBlank { "?" }
+                val photo: TdApi.File?
+                val seed: Long
+                when (val s = m.senderId) {
+                    is TdApi.MessageSenderUser -> {
+                        photo = userCache[s.userId]?.profilePhoto?.small
+                        seed = s.userId
+                    }
+                    is TdApi.MessageSenderChat -> {
+                        photo = chatCache[s.chatId]?.photo?.small
+                        seed = -s.chatId
+                    }
+                    else -> { photo = null; seed = 0L }
+                }
+                MsgRef(m.id, who, photo, seed, text)
+            }
+    }
+
+    /**
      * Recent activity across the user's top chats regardless of read state, as
      * chronological "Sender: text" lines per chat. Feeds the home AI when there
      * are no unread messages, so it still has the chats to reason about.
@@ -3301,6 +3333,21 @@ data class BotCommandItem(
 
 /** One chat's worth of recent unread message lines, for the AI digest. */
 data class ChatUnreadDigest(val title: String, val lines: List<String>)
+
+/**
+ * A single referenceable message for the AI: carries the TDLib message id
+ * (already shifted — pass straight to jumpToMessage), the sender name, the
+ * sender's small avatar file (may be null / not-yet-downloaded; Avatar handles
+ * that), a deterministic colour seed for the fallback circle, and a short text
+ * preview. The AI cites these by their 1-based position in the list (e.g. [3]).
+ */
+data class MsgRef(
+    val id: Long,
+    val sender: String,
+    val photo: org.drinkless.tdlib.TdApi.File?,
+    val colorSeed: Long,
+    val text: String
+)
 
 data class ChatSummary(
     val id: Long,

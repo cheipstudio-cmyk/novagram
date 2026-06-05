@@ -3935,6 +3935,10 @@ fun ChatScreen(
                 aiTarget = null
                 openTelegramLink(android.net.Uri.parse(url))
             },
+            onJumpMessage = { mid ->
+                aiTarget = null
+                jumpToMessage(mid)
+            },
             onDismiss = { aiTarget = null }
         )
     }
@@ -4599,6 +4603,10 @@ fun ChatScreen(
             onOpenTme = { url ->
                 aiModalOpen = false
                 openTelegramLink(android.net.Uri.parse(url))
+            },
+            onJumpMessage = { mid ->
+                aiModalOpen = false
+                jumpToMessage(mid)
             },
             onDismiss = { aiModalOpen = false }
         )

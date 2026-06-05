@@ -66,6 +66,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -77,15 +78,20 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import android.view.WindowManager
+import androidx.core.view.WindowCompat
 import com.secondream.novagram.ai.AiClient
 import com.secondream.novagram.ai.AiMemory
 import com.secondream.novagram.settings.AppSettings
 import com.secondream.novagram.td.TdClient
+import com.secondream.novagram.td.MsgRef
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -112,6 +118,7 @@ fun AiAssistantModal(
     focusSender: String? = null,
     onReplyDraft: ((String) -> Unit)? = null,
     onOpenTme: ((String) -> Unit)? = null,
+    onJumpMessage: ((Long) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val ctx = LocalContext.current
@@ -132,9 +139,18 @@ fun AiAssistantModal(
     var systemPrompt by remember { mutableStateOf<String?>(null) }
     var tier by remember { mutableStateOf(com.secondream.novagram.ai.AiPrefs.getTier(ctx)) }
     var hasUnread by remember { mutableStateOf(true) }
+    // Referenceable messages for the current chat (CHAT mode only) — lets the
+    // AI cite messages as [n] and lets us render a tappable card that jumps.
+    val refs = remember { mutableStateListOf<MsgRef>() }
     LaunchedEffect(mode) {
         if (mode == AiContext.HOME) {
             hasUnread = runCatching { TdClient.recentUnreadDigest().isNotEmpty() }.getOrDefault(true)
+        }
+    }
+    LaunchedEffect(mode, chatId) {
+        if (mode != AiContext.HOME && chatId != 0L) {
+            val loaded = runCatching { TdClient.chatRecentRefs(chatId, 60) }.getOrDefault(emptyList())
+            refs.clear(); refs.addAll(loaded)
         }
     }
 
@@ -163,29 +179,38 @@ fun AiAssistantModal(
         val base = "You are Novagram AI, embedded inside a Telegram client. ALWAYS reply in " + langName +
             ". Reply ONLY in " + langName + ", even if the user's message, the action buttons, or the " +
             "chat context are written in another language. Write in PLAIN TEXT: no Markdown, no asterisks, " +
-            "no headings, no code fences. Be concise and direct, no filler preamble. When you refer to a " +
-            "specific message, include its t.me link so it becomes tappable."
+            "no headings, no code fences. Be concise and direct, no filler preamble."
+        val citeByNumber = " Each message in the context is numbered like [1], [2]. When you point to a " +
+            "specific message, cite it by writing its number in square brackets, for example [3]. Cite only " +
+            "messages that are actually in the list, never invent a number, and only when it adds value."
         return when (mode) {
             AiContext.HOME -> {
                 val unread = TdClient.recentUnreadDigest()
                 val digest = if (unread.isNotEmpty()) unread else TdClient.recentChatsDigest()
                 val label = if (unread.isNotEmpty()) "unread messages" else "recent messages"
                 val block = digest.joinToString("\n\n") { "## " + it.title + "\n" + it.lines.joinToString("\n") }
-                base + "\n\nThe user's " + label + " across chats:\n<chats>\n" +
+                base + " When you refer to a specific message, include its t.me link so it becomes tappable." +
+                    "\n\nThe user's " + label + " across chats:\n<chats>\n" +
                     (block.ifBlank { "(none)" }) + "\n</chats>"
             }
             AiContext.CHAT -> {
-                val lines = TdClient.chatRecentLines(chatId, 80)
-                base + "\n\nYou are inside the chat \"" + contextLabel +
+                val numbered = if (refs.isNotEmpty())
+                    refs.mapIndexed { i, r -> "[" + (i + 1) + "] " + r.sender + ": " + r.text }.joinToString("\n")
+                else
+                    TdClient.chatRecentLines(chatId, 80).joinToString("\n")
+                base + citeByNumber + "\n\nYou are inside the chat \"" + contextLabel +
                     "\". Recent messages (oldest to newest):\n<chat>\n" +
-                    (lines.joinToString("\n").ifBlank { "(empty)" }) + "\n</chat>"
+                    (numbered.ifBlank { "(empty)" }) + "\n</chat>"
             }
             AiContext.MESSAGE -> {
-                val lines = TdClient.chatRecentLines(chatId, 20)
-                base + "\n\nThe user long-pressed this message" +
+                val numbered = if (refs.isNotEmpty())
+                    refs.mapIndexed { i, r -> "[" + (i + 1) + "] " + r.sender + ": " + r.text }.joinToString("\n")
+                else
+                    TdClient.chatRecentLines(chatId, 20).joinToString("\n")
+                base + citeByNumber + "\n\nThe user long-pressed this message" +
                     (focusSender?.let { " from " + it } ?: "") + ":\n\"" + (focusText ?: "") +
                     "\"\n\nSurrounding chat context:\n<chat>\n" +
-                    (lines.joinToString("\n").ifBlank { "(empty)" }) + "\n</chat>"
+                    (numbered.ifBlank { "(empty)" }) + "\n</chat>"
             }
         }
     }
@@ -234,7 +259,7 @@ fun AiAssistantModal(
     }
 
     LaunchedEffect(convo.size, convo.lastOrNull()?.second?.length, streaming) {
-        if (convo.isNotEmpty()) runCatching { listState.animateScrollToItem(convo.size) }
+        if (convo.isNotEmpty()) runCatching { listState.scrollToItem(convo.size) }
     }
 
     val tiles = when (mode) {
@@ -295,12 +320,19 @@ fun AiAssistantModal(
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
+            val view = LocalView.current
+            LaunchedEffect(Unit) {
+                (view.parent as? DialogWindowProvider)?.window?.let { w ->
+                    w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+                    WindowCompat.setDecorFitsSystemWindows(w, false)
+                }
+            }
             val hPx = with(density) { maxHeight.toPx() }
             var visible by remember { mutableStateOf(false) }
             var everShown by remember { mutableStateOf(false) }
             LaunchedEffect(Unit) { visible = true; everShown = true }
             LaunchedEffect(visible) { if (!visible && everShown) { delay(180); onDismiss() } }
-            val scale by animateFloatAsState(if (visible) 1f else 0.92f, tween(180), label = "scale")
+            val scale by animateFloatAsState(if (visible) 1f else 0.86f, tween(190), label = "scale")
             val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(180), label = "alpha")
             val offsetY = remember { Animatable(0f) }
             val close = { visible = false; Unit }
@@ -314,7 +346,7 @@ fun AiAssistantModal(
                     .statusBarsPadding()
                     .navigationBarsPadding()
                     .imePadding()
-                    .padding(14.dp),
+                    .padding(16.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Surface(
@@ -325,8 +357,9 @@ fun AiAssistantModal(
                             scaleY = scale
                             this.alpha = alpha
                             translationY = offsetY.value
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
                         },
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.background,
                     tonalElevation = 6.dp
                 ) {
@@ -445,19 +478,29 @@ fun AiAssistantModal(
                                 verticalArrangement = Arrangement.Center
                             ) {
                                 Text(
+                                    if (mode == AiContext.MESSAGE) "Cosa faccio con questo messaggio?"
+                                    else "Come posso aiutarti?",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontFamily = FontFamily.Serif,
+                                    fontStyle = FontStyle.Italic,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
                                     if (mode == AiContext.MESSAGE)
-                                        "Scegli cosa fare con il messaggio, o scrivi una richiesta."
+                                        "Scegli un'azione qui sotto, o scrivi una richiesta."
                                     else
-                                        "Posso aiutarti e continuare la conversazione tenendo il contesto. Scegli un'azione o scrivi qui sotto.",
+                                        "Tengo il contesto della conversazione. Scegli un'azione, oppure scrivi qui sotto.",
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                Spacer(Modifier.height(14.dp))
+                                Spacer(Modifier.height(18.dp))
                                 tiles.forEach { tile ->
                                     Surface(
-                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                        shape = RoundedCornerShape(15.dp),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.12f)),
+                                        color = accent.copy(alpha = 0.07f),
+                                        shape = RoundedCornerShape(18.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.22f)),
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clickable(
@@ -467,30 +510,31 @@ fun AiAssistantModal(
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.padding(13.dp)
+                                            modifier = Modifier.padding(14.dp)
                                         ) {
                                             Box(
                                                 Modifier
-                                                    .size(38.dp)
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .background(accent.copy(alpha = 0.16f)),
+                                                    .size(42.dp)
+                                                    .clip(RoundedCornerShape(13.dp))
+                                                    .background(accent),
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 Icon(
                                                     tile.glyph.icon(),
                                                     contentDescription = null,
-                                                    tint = accent,
-                                                    modifier = Modifier.size(21.dp)
+                                                    tint = onAccent,
+                                                    modifier = Modifier.size(22.dp)
                                                 )
                                             }
-                                            Spacer(Modifier.size(13.dp))
+                                            Spacer(Modifier.size(14.dp))
                                             Column(Modifier.weight(1f)) {
                                                 Text(
                                                     tile.label,
-                                                    fontSize = 14.sp,
-                                                    fontWeight = FontWeight.Medium,
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.SemiBold,
                                                     color = MaterialTheme.colorScheme.onSurface
                                                 )
+                                                Spacer(Modifier.height(2.dp))
                                                 Text(
                                                     tile.sub,
                                                     fontSize = 12.sp,
@@ -499,7 +543,7 @@ fun AiAssistantModal(
                                             }
                                         }
                                     }
-                                    Spacer(Modifier.height(9.dp))
+                                    Spacer(Modifier.height(10.dp))
                                 }
                             }
                         } else {
@@ -520,9 +564,9 @@ fun AiAssistantModal(
                                     ) {
                                         tiles.forEach { tile ->
                                             Surface(
-                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                                shape = RoundedCornerShape(20.dp),
-                                                border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.12f)),
+                                                color = accent.copy(alpha = 0.10f),
+                                                shape = RoundedCornerShape(18.dp),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.26f)),
                                                 modifier = Modifier.clickable(
                                                     interactionSource = remember { MutableInteractionSource() },
                                                     indication = null
@@ -531,14 +575,15 @@ fun AiAssistantModal(
                                                 Text(
                                                     tile.label,
                                                     fontSize = 12.sp,
-                                                    color = MaterialTheme.colorScheme.onSurface,
-                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = accent,
+                                                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp)
                                                 )
                                             }
                                         }
                                     }
                                 }
-                                itemsIndexed(convo) { index, msg ->
+                                itemsIndexed(convo, key = { i, _ -> "m$i" }) { index, msg ->
                                     val role = msg.first
                                     val body = msg.second
                                     val isUser = role == "user"
@@ -548,7 +593,7 @@ fun AiAssistantModal(
                                             .find(body)?.value
                                     }
                                     Row(
-                                        modifier = Modifier.fillMaxWidth().animateItem(),
+                                        modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
                                     ) {
                                         Surface(
@@ -576,11 +621,70 @@ fun AiAssistantModal(
                                                         color = MaterialTheme.colorScheme.onSurface
                                                     )
                                                 } else {
+                                                    val rendered = remember(body) {
+                                                        buildAiText(body, accent, codeColor, onOpenTme)
+                                                    }
                                                     Text(
-                                                        buildAiText(body, accent, codeColor, onOpenTme),
+                                                        rendered,
                                                         fontSize = 14.sp,
                                                         color = MaterialTheme.colorScheme.onSurface
                                                     )
+                                                    val citedRefs = remember(body, refs.size) {
+                                                        Regex("\\[(\\d+)\\]").findAll(body)
+                                                            .mapNotNull { it.groupValues[1].toIntOrNull() }
+                                                            .distinct()
+                                                            .mapNotNull { n -> refs.getOrNull(n - 1) }
+                                                            .toList()
+                                                    }
+                                                    if (citedRefs.isNotEmpty() && onJumpMessage != null) {
+                                                        Spacer(Modifier.height(9.dp))
+                                                        citedRefs.forEach { r ->
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .clip(RoundedCornerShape(12.dp))
+                                                                    .background(accent.copy(alpha = 0.08f))
+                                                                    .clickable(
+                                                                        interactionSource = remember { MutableInteractionSource() },
+                                                                        indication = null
+                                                                    ) { onJumpMessage?.invoke(r.id); close() }
+                                                                    .padding(8.dp)
+                                                            ) {
+                                                                Avatar(
+                                                                    file = r.photo,
+                                                                    fallbackText = r.sender,
+                                                                    bgColor = com.secondream.novagram.ui.screens.avatarBackgroundFor(r.colorSeed),
+                                                                    size = 30.dp
+                                                                )
+                                                                Spacer(Modifier.size(9.dp))
+                                                                Column(Modifier.weight(1f)) {
+                                                                    Text(
+                                                                        r.sender,
+                                                                        fontSize = 12.sp,
+                                                                        fontWeight = FontWeight.SemiBold,
+                                                                        color = accent,
+                                                                        maxLines = 1
+                                                                    )
+                                                                    Text(
+                                                                        r.text,
+                                                                        fontSize = 12.sp,
+                                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                        maxLines = 2,
+                                                                        overflow = TextOverflow.Ellipsis
+                                                                    )
+                                                                }
+                                                                Spacer(Modifier.size(6.dp))
+                                                                Icon(
+                                                                    com.secondream.novagram.ui.icons.PhosphorIcons.Reply,
+                                                                    contentDescription = null,
+                                                                    tint = accent,
+                                                                    modifier = Modifier.size(15.dp)
+                                                                )
+                                                            }
+                                                            Spacer(Modifier.height(6.dp))
+                                                        }
+                                                    }
                                                     if (jumpLink != null && onOpenTme != null) {
                                                         Spacer(Modifier.height(9.dp))
                                                         Row(
@@ -649,7 +753,7 @@ fun AiAssistantModal(
                                 if (streaming && (convo.isEmpty() || convo.last().first == "user")) {
                                     item {
                                         Row(
-                                            modifier = Modifier.fillMaxWidth().animateItem(),
+                                            modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.Start
                                         ) {
                                             Surface(
@@ -800,6 +904,7 @@ private fun buildAiText(
         var l = raw
         l = l.replace(Regex("^\\s*#{1,6}\\s+"), "")
         l = l.replace(Regex("^(\\s*)[-*]\\s+"), "$1• ")
+        l = l.replace(Regex("\\s?\\[\\d+\\]"), "")
         l
     }
     val linkRx = Regex("(https?://[^\\s]+)|(t\\.me/[^\\s]+)|(@[A-Za-z0-9_]{4,})")
