@@ -1,18 +1,17 @@
 package com.secondream.novagram.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,9 +21,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -37,34 +37,29 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * The Novagram AI surface — SLICE 1: pure motion + layout shell.
+ * Novagram AI surface — SLICE 1b: the FAB MORPHS into the bubble.
  *
- * A floating button that lives at the bottom-right of whatever screen mounts
- * it. Tapping it expands a bubble that GROWS OUT OF THE BUTTON (the panel's
- * transform origin is pinned to the FAB corner) with a spring, the action
- * tiles cascade in one after another, and a scrim fades behind to catch an
- * outside tap. Tapping the FAB again (now an ✕) collapses it back into itself.
+ * Not a button that pops a separate panel: it is ONE element that transforms.
+ * Collapsed it's a 56dp amber circle with the sparkle. Tapped, the SAME
+ * surface grows up-and-right from its bottom-left corner — its size animates
+ * (animateContentSize), its colour bleeds from amber to the dark panel
+ * surface, its corner relaxes from a circle to a soft rounded rect — and the
+ * panel content is revealed by the growing bounds (the surface clips to its
+ * shape, so it reads as a container expanding, not a card appearing). A scrim
+ * fades behind; tapping it (or the chevron) collapses the surface back into
+ * the circle.
  *
- * The tiles do NOT do anything yet — this build exists only to judge and tune
- * the FEEL of the open/close on a real device. Streaming, the per-chat AI
- * session, and the agentic commands (with confirmation cards) are later slices
- * wired through [onCommand].
+ * Tiles are still inert here — this build is to judge the MORPH and the look.
+ * The actions, streaming and per-chat session are the next slices, wired
+ * through [onCommand].
  *
- * Mount it as the LAST child of a full-screen Box so it overlays everything:
- *     Box(Modifier.fillMaxSize()) { ...screen...; AiAssistantBubble(chatTitle) }
- *
- * @param contextLabel what the assistant is currently scoped to (e.g. the chat
- *        title) — shown under the title so it reads as "I work on THIS chat".
- * @param onCommand invoked with a stable id when a tile is tapped (wired later).
+ * Mount as the LAST child of a full-screen Box so it overlays everything.
  */
 @Composable
 fun AiAssistantBubble(
@@ -74,23 +69,21 @@ fun AiAssistantBubble(
 ) {
     var open by remember { mutableStateOf(false) }
 
-    // Read-only commands first (safe, no confirmation). Act-commands (PDF,
-    // group, reply-for-me) come later behind a preview/confirm card.
     val tiles = remember {
         listOf(
-            AiTile("summarize_unread", "Riassumi i non letti"),
-            AiTile("find_message", "Trova un messaggio"),
-            AiTile("translate", "Traduci la chat")
+            AiTile("summarize_unread", "Riassumi i non letti", "Cosa mi sono perso", AiGlyph.Chats),
+            AiTile("find_message", "Trova un messaggio", "Cerca per significato", AiGlyph.Search),
+            AiTile("translate", "Traduci", "Gli ultimi messaggi", AiGlyph.Translate)
         )
     }
 
     val accent = MaterialTheme.colorScheme.primary
     val onAccent = MaterialTheme.colorScheme.onPrimary
+    val surface = MaterialTheme.colorScheme.surface
 
     Box(modifier = modifier.fillMaxSize()) {
 
-        // Scrim — fades in behind the bubble, swallows the outside tap. No
-        // ripple (it's a dismiss surface, not a button).
+        // Scrim behind the surface; catches the outside tap.
         AnimatedVisibility(
             visible = open,
             enter = fadeIn(tween(180)),
@@ -107,172 +100,226 @@ fun AiAssistantBubble(
             )
         }
 
-        // The bubble. Anchored bottom-end and grown FROM the FAB corner:
-        // transformOrigin (1,1) = bottom-right, so the scale-up emanates out of
-        // the button instead of from the panel's own centre. Spring (not tween)
-        // so it has a little life on the way out.
-        AnimatedVisibility(
-            visible = open,
+        // The morphing element. Bottom-left pinned; everything else animates.
+        val containerColor by animateColorAsState(
+            targetValue = if (open) surface else accent,
+            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            label = "ai-bg"
+        )
+        val corner by animateDpAsState(
+            targetValue = if (open) 22.dp else 28.dp,
+            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            label = "ai-corner"
+        )
+        Surface(
+            color = containerColor,
+            shape = RoundedCornerShape(corner),
+            shadowElevation = 10.dp,
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 16.dp, bottom = 86.dp),
-            enter = scaleIn(
-                animationSpec = spring(
-                    dampingRatio = 0.72f,
-                    stiffness = Spring.StiffnessMediumLow
-                ),
-                initialScale = 0.55f,
-                transformOrigin = TransformOrigin(0f, 1f)
-            ) + fadeIn(tween(120)),
-            exit = scaleOut(
-                animationSpec = tween(170),
-                targetScale = 0.6f,
-                transformOrigin = TransformOrigin(0f, 1f)
-            ) + fadeOut(tween(140))
-        ) {
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                shape = RoundedCornerShape(20.dp),
-                tonalElevation = 3.dp,
-                shadowElevation = 8.dp,
-                modifier = Modifier.widthIn(min = 240.dp, max = 300.dp)
-            ) {
-                Column(Modifier.padding(16.dp)) {
-
-                    // Header — sparkle mark + serif italic title (the editorial
-                    // accent), with the current scope underneath.
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(accent),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("✦", fontSize = 16.sp, color = onAccent)
-                        }
-                        Spacer(Modifier.size(10.dp))
-                        Column {
-                            Text(
-                                "Novagram AI",
-                                fontFamily = MaterialTheme.typography.titleMedium.fontFamily,
-                                fontStyle = FontStyle.Italic,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                contextLabel,
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-
-                    // Tiles — cascade in one by one. Each tile's alpha + vertical
-                    // offset is driven by its own animation, staggered by index,
-                    // and only "armed" once the panel is open so the cascade
-                    // restarts on every open.
-                    tiles.forEachIndexed { i, tile ->
-                        val progress by animateFloatAsState(
-                            targetValue = if (open) 1f else 0f,
-                            animationSpec = tween(
-                                durationMillis = 240,
-                                delayMillis = 60 + i * 55
-                            ),
-                            label = "tile-$i"
-                        )
-                        val dy = with(LocalDensity.current) { ((1f - progress) * 14.dp.toPx()) }
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = MaterialTheme.colorScheme.onSurface,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .graphicsLayer { alpha = progress; translationY = dy }
-                                .clickable {
-                                    onCommand(tile.id)
-                                    open = false
-                                }
-                        ) {
-                            Text(
-                                tile.label,
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)
-                            )
-                        }
-                        Spacer(Modifier.height(8.dp))
-                    }
-
-                    // Conversation entry (visual only for now).
-                    Surface(
-                        color = MaterialTheme.colorScheme.background,
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(start = 14.dp, end = 7.dp, top = 7.dp, bottom = 7.dp)
-                        ) {
-                            Text(
-                                "Chiedi o dai un comando…",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Box(
-                                Modifier
-                                    .size(30.dp)
-                                    .clip(CircleShape)
-                                    .background(accent),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("↑", fontSize = 15.sp, color = onAccent)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // The FAB itself. A subtle press-scale, and its glyph crossfades /
-        // rotates between the sparkle (closed) and an ✕ (open) so the same
-        // button reads as "open AI" and "close" without moving.
-        val fabScale by animateFloatAsState(
-            targetValue = if (open) 0.92f else 1f,
-            animationSpec = spring(stiffness = Spring.StiffnessMedium),
-            label = "fab-scale"
-        )
-        val iconSpin by animateFloatAsState(
-            targetValue = if (open) 90f else 0f,
-            animationSpec = spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow),
-            label = "fab-spin"
-        )
-        Box(
-            Modifier
-                .align(Alignment.BottomStart)
                 .padding(start = 16.dp, bottom = 18.dp)
-                .graphicsLayer { scaleX = fabScale; scaleY = fabScale }
-                .size(52.dp)
-                .clip(CircleShape)
-                .background(accent)
+                .animateContentSize(
+                    animationSpec = spring(
+                        dampingRatio = 0.78f,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+                )
                 .clickable(
+                    enabled = !open,
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
-                ) { open = !open },
-            contentAlignment = Alignment.Center
+                ) { open = true }
         ) {
-            Text(
-                if (open) "✕" else "✦",
-                fontSize = if (open) 20.sp else 22.sp,
-                color = onAccent,
-                modifier = Modifier.graphicsLayer { rotationZ = iconSpin }
-            )
+            if (open) {
+                AiPanel(
+                    contextLabel = contextLabel,
+                    tiles = tiles,
+                    accent = accent,
+                    onAccent = onAccent,
+                    onCollapse = { open = false },
+                    onCommand = {
+                        onCommand(it)
+                        open = false
+                    }
+                )
+            } else {
+                Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                    Icon(
+                        com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
+                        contentDescription = "Novagram AI",
+                        tint = onAccent,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
         }
     }
 }
 
-private data class AiTile(val id: String, val label: String)
+@Composable
+private fun AiPanel(
+    contextLabel: String,
+    tiles: List<AiTile>,
+    accent: Color,
+    onAccent: Color,
+    onCollapse: () -> Unit,
+    onCommand: (String) -> Unit
+) {
+    // Whole panel fades up slightly as the container grows, so the content
+    // settles in rather than snapping on.
+    Column(
+        modifier = Modifier
+            .width(330.dp)
+            .padding(16.dp)
+    ) {
+        // Header: sparkle mark + serif italic title + scope + collapse chevron.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(accent),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
+                    contentDescription = null,
+                    tint = onAccent,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Novagram AI",
+                    fontFamily = MaterialTheme.typography.titleMedium.fontFamily,
+                    fontStyle = FontStyle.Italic,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 17.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    contextLabel,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Box(
+                Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onCollapse() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    com.secondream.novagram.ui.icons.PhosphorIcons.CaretDown,
+                    contentDescription = "Chiudi",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Action tiles — Novagram style: amber-tinted icon chip + title + sub.
+        tiles.forEach { tile ->
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onCommand(tile.id) }
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(12.dp)
+                ) {
+                    Box(
+                        Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(accent.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            tile.glyph.icon(),
+                            contentDescription = null,
+                            tint = accent,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            tile.label,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            tile.sub,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+
+        // Conversation entry (visual only for now).
+        Surface(
+            color = MaterialTheme.colorScheme.background,
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 16.dp, end = 7.dp, top = 7.dp, bottom = 7.dp)
+            ) {
+                Text(
+                    "Chiedi o dai un comando...",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(accent),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        com.secondream.novagram.ui.icons.PhosphorIcons.ArrowUp,
+                        contentDescription = "Invia",
+                        tint = onAccent,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private enum class AiGlyph { Chats, Search, Translate }
+
+private fun AiGlyph.icon(): androidx.compose.ui.graphics.vector.ImageVector = when (this) {
+    AiGlyph.Chats -> com.secondream.novagram.ui.icons.PhosphorIcons.Chats
+    AiGlyph.Search -> com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass
+    AiGlyph.Translate -> com.secondream.novagram.ui.icons.PhosphorIcons.Translate
+}
+
+private data class AiTile(
+    val id: String,
+    val label: String,
+    val sub: String,
+    val glyph: AiGlyph
+)
