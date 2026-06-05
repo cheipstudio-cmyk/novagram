@@ -520,7 +520,7 @@ object TdClient {
                 }
                 chatCache[obj.chatId]?.unreadMentionCount = finalValue.coerceAtLeast(0)
                 lastKnownServerMentionCount[obj.chatId] = newServer
-                scheduleRefresh()
+                refreshChats()
                 // Also notify per-chat observers (the in-chat mention
                 // chip in ChatScreen listens on chatUpdates to know
                 // when to hide itself after readAllChatMentions). Without
@@ -539,7 +539,7 @@ object TdClient {
                 }
                 chatCache[obj.chatId]?.unreadReactionCount = finalValue.coerceAtLeast(0)
                 lastKnownServerReactionCount[obj.chatId] = newServer
-                scheduleRefresh()
+                refreshChats()
                 // Same per-chat observer notify as mention count above.
                 scope.launch { _chatUpdates.emit(obj.chatId) }
             }

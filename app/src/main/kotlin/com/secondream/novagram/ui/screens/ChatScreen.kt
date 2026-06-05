@@ -3931,6 +3931,10 @@ fun ChatScreen(
                 )
                 replyTarget = target
             },
+            onOpenTme = { url ->
+                aiTarget = null
+                openTelegramLink(android.net.Uri.parse(url))
+            },
             onDismiss = { aiTarget = null }
         )
     }
@@ -4592,6 +4596,10 @@ fun ChatScreen(
             mode = com.secondream.novagram.ui.components.AiContext.CHAT,
             contextLabel = chatTitle,
             chatId = chatId,
+            onOpenTme = { url ->
+                aiModalOpen = false
+                openTelegramLink(android.net.Uri.parse(url))
+            },
             onDismiss = { aiModalOpen = false }
         )
     }

@@ -190,7 +190,7 @@ object AiClient {
         model: String = DEFAULT_MODEL,
         onDelta: (String) -> Unit
     ) = withContext(Dispatchers.IO) {
-        val apiKey = AppSettings.appearance.first().anthropicApiKey
+        val key = AppSettings.appearance.first().anthropicApiKey
             ?: throw IllegalStateException("Chiave API mancante")
 
         val payload = JSONObject().apply {
@@ -213,7 +213,7 @@ object AiClient {
             doOutput = true
             connectTimeout = 15_000
             readTimeout = 120_000
-            setRequestProperty("x-api-key", apiKey)
+            setRequestProperty("x-api-key", key)
             setRequestProperty("anthropic-version", API_VERSION)
             setRequestProperty("content-type", "application/json")
             setRequestProperty("accept", "text/event-stream")
@@ -255,4 +255,5 @@ object AiClient {
             conn.disconnect()
         }
     }
+
 }

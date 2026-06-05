@@ -1,6 +1,5 @@
 package com.secondream.novagram.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -9,29 +8,31 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -55,124 +56,43 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.secondream.novagram.ai.AiClient
+import com.secondream.novagram.ai.AiMemory
 import com.secondream.novagram.settings.AppSettings
 import com.secondream.novagram.td.TdClient
-import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /** Where the modal is opened from — sets the starter tiles and the context. */
 enum class AiContext { HOME, CHAT, MESSAGE }
 
 /**
- * In-session conversation memory, keyed per context ("home" / "chat:<id>").
- * Keeps the thread alive across modal opens within the app run. Not persisted
- * to disk yet, so it resets on process death.
- */
-object AiChatMemory {
-    private val store = HashMap<String, MutableList<Pair<String, String>>>()
-    fun get(key: String): List<Pair<String, String>> = store[key]?.toList() ?: emptyList()
-    fun set(key: String, convo: List<Pair<String, String>>) {
-        store[key] = convo.toMutableList()
-    }
-    fun clear(key: String) { store.remove(key) }
-}
-
-private data class MdRun(val text: String, val bold: Boolean, val italic: Boolean)
-
-private val LINK_RE = Regex("(https?://\\S+|t\\.me/\\S+|@[A-Za-z0-9_]{3,})")
-
-private fun tokenizeMd(s: String, baseBold: Boolean): List<MdRun> {
-    val out = ArrayList<MdRun>()
-    var bold = baseBold
-    var italic = false
-    val cur = StringBuilder()
-    fun push() {
-        if (cur.isNotEmpty()) {
-            out.add(MdRun(cur.toString(), bold, italic))
-            cur.setLength(0)
-        }
-    }
-    var i = 0
-    while (i < s.length) {
-        if (i + 1 < s.length && s[i] == '*' && s[i + 1] == '*') {
-            push(); bold = !bold; i += 2; continue
-        }
-        when (s[i]) {
-            '*' -> { push(); italic = !italic; i++ }
-            '`' -> { i++ }
-            else -> { cur.append(s[i]); i++ }
-        }
-    }
-    push()
-    return out
-}
-
-private fun AnnotatedString.Builder.appendStyled(text: String, bold: Boolean, italic: Boolean, color: Color?) {
-    pushStyle(
-        SpanStyle(
-            fontWeight = if (bold) FontWeight.SemiBold else null,
-            fontStyle = if (italic) FontStyle.Italic else null,
-            color = color ?: Color.Unspecified
-        )
-    )
-    append(text)
-    pop()
-}
-
-private fun AnnotatedString.Builder.appendWithLinks(run: MdRun, accent: Color) {
-    val s = run.text
-    var last = 0
-    for (m in LINK_RE.findAll(s)) {
-        if (m.range.first > last) appendStyled(s.substring(last, m.range.first), run.bold, run.italic, null)
-        appendStyled(m.value, run.bold, run.italic, accent)
-        last = m.range.last + 1
-    }
-    if (last < s.length) appendStyled(s.substring(last), run.bold, run.italic, null)
-}
-
-/** Renders the model's markdown into styled text: bold/italic applied, markers
- *  stripped (no raw asterisks), links and @mentions tinted with [accent]. */
-private fun buildAiAnnotated(raw: String, accent: Color): AnnotatedString = buildAnnotatedString {
-    val lines = raw.split("\n")
-    lines.forEachIndexed { li, lineRaw ->
-        var line = lineRaw
-        var header = false
-        when {
-            line.startsWith("### ") -> { line = line.removePrefix("### "); header = true }
-            line.startsWith("## ") -> { line = line.removePrefix("## "); header = true }
-            line.startsWith("# ") -> { line = line.removePrefix("# "); header = true }
-        }
-        if (line.startsWith("- ") || line.startsWith("* ")) {
-            append("\u2022  ")
-            line = line.substring(2)
-        }
-        tokenizeMd(line, header).forEach { run -> appendWithLinks(run, accent) }
-        if (li < lines.lastIndex) append("\n")
-    }
-}
-
-/**
- * Novagram AI — a near-full-screen conversational sheet that rises from the
- * bottom. Multi-turn: the thread persists per context across opens. The input
- * docks above the keyboard; swipe the header down to dismiss. Answers are
- * rendered (bold/links), not raw markdown. Starter tiles depend on where it
- * was opened from (home recap / this chat / a long-pressed message).
+ * Novagram AI — a full-screen, chat-shaped assistant that looks like a normal
+ * Novagram conversation. It is multi-turn and keeps context; for HOME and CHAT
+ * the exchange is persisted locally (AiMemory) so it survives reopen. The
+ * answer is rendered cleanly (no raw markdown asterisks), and any t.me links or
+ * @mentions come out amber and tappable — a message link also surfaces a "Vai
+ * al messaggio" chip that jumps there via [onOpenTme]. Opens by sliding up and
+ * can be flicked down to close.
  */
 @Composable
 fun AiAssistantModal(
@@ -182,44 +102,55 @@ fun AiAssistantModal(
     focusText: String? = null,
     focusSender: String? = null,
     onReplyDraft: ((String) -> Unit)? = null,
+    onOpenTme: ((String) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
-    val memKey = when (mode) {
-        AiContext.HOME -> "home"
-        AiContext.CHAT -> "chat:$chatId"
-        AiContext.MESSAGE -> null
-    }
-    val convo = remember {
-        mutableStateListOf<Pair<String, String>>().also { list ->
-            if (memKey != null) list.addAll(AiChatMemory.get(memKey))
-        }
-    }
-    var streaming by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var input by remember { mutableStateOf("") }
-    var systemPrompt by remember { mutableStateOf<String?>(null) }
-
-    var visible by remember { mutableStateOf(false) }
-    var everShown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { visible = true; everShown = true }
-    LaunchedEffect(visible) { if (!visible && everShown) { delay(200); onDismiss() } }
-    val dismiss = { visible = false }
-
+    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val clipboard = LocalClipboardManager.current
     val listState = rememberLazyListState()
-    val dragY = remember { Animatable(0f) }
     val langName = java.util.Locale.getDefault()
         .getDisplayLanguage(java.util.Locale.getDefault())
         .ifBlank { "English" }
 
+    val persistKey = when (mode) {
+        AiContext.HOME -> "home"
+        AiContext.CHAT -> "chat:$chatId"
+        AiContext.MESSAGE -> null
+    }
+
+    val convo = remember { mutableStateListOf<Pair<String, String>>() }
+    var streaming by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var input by remember { mutableStateOf("") }
+    var systemPrompt by remember { mutableStateOf<String?>(null) }
+    var tier by remember { mutableStateOf(com.secondream.novagram.ai.AiPrefs.getTier(ctx)) }
+    var hasUnread by remember { mutableStateOf(true) }
+    LaunchedEffect(mode) {
+        if (mode == AiContext.HOME) {
+            hasUnread = runCatching { TdClient.recentUnreadDigest().isNotEmpty() }.getOrDefault(true)
+        }
+    }
+
     val accent = MaterialTheme.colorScheme.primary
     val onAccent = MaterialTheme.colorScheme.onPrimary
+    val codeColor = MaterialTheme.colorScheme.surfaceVariant
+
+    // Restore any saved conversation for this surface.
+    LaunchedEffect(persistKey) {
+        if (persistKey != null && convo.isEmpty()) {
+            val saved = AiMemory.load(ctx, persistKey)
+            if (saved.isNotEmpty()) {
+                convo.clear()
+                convo.addAll(saved)
+            }
+        }
+    }
 
     suspend fun buildSystem(): String {
-        val base = "You are Novagram AI, embedded inside a Telegram client. Reply in " +
-            langName + ", concise and direct, no filler preamble. You may use **bold** and " +
-            "- bullets, but keep formatting light."
+        val base = "You are Novagram AI, embedded inside a Telegram client. Reply in " + langName +
+            ". Write in PLAIN TEXT only: no Markdown, no asterisks for bold, no headings, no code " +
+            "fences, no bullet symbols unless natural. Be concise and direct, no filler preamble. " +
+            "When you refer to a specific message in the chat, include its t.me link so it becomes tappable."
         return when (mode) {
             AiContext.HOME -> {
                 val digest = TdClient.recentUnreadDigest()
@@ -242,6 +173,13 @@ fun AiAssistantModal(
         }
     }
 
+    fun persist() {
+        if (persistKey != null) {
+            val snapshot = convo.toList()
+            scope.launch { AiMemory.save(ctx, persistKey, snapshot) }
+        }
+    }
+
     fun send(userText: String) {
         if (streaming) return
         convo.add("user" to userText)
@@ -258,7 +196,7 @@ fun AiAssistantModal(
                 }
                 if (systemPrompt == null) systemPrompt = buildSystem()
                 var started = false
-                AiClient.streamConversation(convo.toList(), systemPrompt) { delta ->
+                AiClient.streamConversation(convo.toList(), systemPrompt, tier.model) { delta ->
                     if (!started) {
                         convo.add("assistant" to delta)
                         started = true
@@ -269,6 +207,7 @@ fun AiAssistantModal(
                 }
                 if (!started) convo.add("assistant" to "(nessuna risposta)")
                 streaming = false
+                persist()
             }.onFailure {
                 error = it.message ?: "Errore"
                 streaming = false
@@ -277,310 +216,375 @@ fun AiAssistantModal(
         }
     }
 
-    // Persist + autoscroll as the thread changes.
     LaunchedEffect(convo.size, convo.lastOrNull()?.second?.length, streaming) {
-        if (memKey != null) AiChatMemory.set(memKey, convo.toList())
         if (convo.isNotEmpty()) runCatching { listState.animateScrollToItem(convo.size) }
     }
 
     val tiles = when (mode) {
-        AiContext.HOME -> listOf(
+        AiContext.HOME -> if (hasUnread) listOf(
             AiTile("Riassumi le chat non lette", "Cosa ti sei perso", AiGlyph.Chats) {
                 send("Riassumi le mie chat non lette, raggruppando per chat.")
             },
-            AiTile("Cosa è urgente", "Le cose da non perdere", AiGlyph.Bell) {
-                send("Cosa tra i messaggi non letti sembra urgente o richiede una risposta?")
+            AiTile("Cosa richiede risposta", "Le cose urgenti", AiGlyph.Reply) {
+                send("Tra i messaggi non letti, dimmi cosa richiede una mia risposta o azione.")
             },
-            AiTile("Chi devo richiamare", "Conversazioni in sospeso", AiGlyph.Phone) {
-                send("Chi mi ha scritto e aspetta una risposta da me?")
+            AiTile("Cerca tra i messaggi", "Trova qualcosa", AiGlyph.Search) {
+                send("Aiutami a cercare qualcosa tra i miei messaggi recenti.")
+            }
+        ) else listOf(
+            AiTile("Riassumi una chat recente", "Aggiornami", AiGlyph.Chats) {
+                send("Riassumi cosa è successo di recente nelle mie chat principali.")
+            },
+            AiTile("Cerca tra i messaggi", "Trova qualcosa", AiGlyph.Search) {
+                send("Aiutami a cercare qualcosa tra i miei messaggi recenti.")
             }
         )
         AiContext.CHAT -> listOf(
-            AiTile("Riassumi", "Riepilogo di questa chat", AiGlyph.Chats) {
+            AiTile("Riassumi questa chat", "Riepilogo recente", AiGlyph.Chats) {
                 send("Riassumi i messaggi recenti di questa chat.")
             },
-            AiTile("Punti chiave", "Le cose importanti", AiGlyph.List) {
-                send("Elenca i punti chiave emersi in questa chat.")
-            },
-            AiTile("Cosa rispondere", "Proponi una risposta", AiGlyph.Reply) {
-                send("In base alla conversazione, cosa potrei rispondere ora? Proponi una bozza.")
+            AiTile("Punti chiave", "I momenti importanti", AiGlyph.Info) {
+                send("Elenca i punti chiave e le decisioni prese in questa chat di recente.")
             },
             AiTile("Traduci", "Gli ultimi messaggi", AiGlyph.Translate) {
                 send("Traduci nella mia lingua gli ultimi messaggi di questa chat, tenendo i nomi.")
+            },
+            AiTile("Bozza risposta", "Proponi cosa scrivere", AiGlyph.Reply) {
+                send("Proponi una risposta adatta all'ultimo messaggio di questa chat.")
             }
         )
         AiContext.MESSAGE -> listOf(
             AiTile("Rispondi", "Proponi una risposta", AiGlyph.Reply) {
                 send("Proponi una risposta breve e naturale a questo messaggio.")
             },
-            AiTile("Tono formale", "Risposta più formale", AiGlyph.Pencil) {
-                send("Proponi una risposta a questo messaggio con un tono formale e professionale.")
-            },
             AiTile("Traduci", "Questo messaggio", AiGlyph.Translate) {
                 send("Traduci questo messaggio nella mia lingua.")
             },
             AiTile("Spiega", "Cosa significa", AiGlyph.Info) {
                 send("Spiega in breve cosa significa questo messaggio.")
+            },
+            AiTile("Riassumi sopra", "Il thread fin qui", AiGlyph.Chats) {
+                send("Riassumi il thread di messaggi attorno a questo.")
             }
         )
     }
 
     Dialog(
-        onDismissRequest = { dismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        onDismissRequest = { onDismiss() },
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        Box(Modifier.fillMaxSize()) {
-            AnimatedVisibility(
-                visible = visible,
-                modifier = Modifier.align(Alignment.BottomCenter),
-                enter = slideInVertically(
-                    animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
-                    initialOffsetY = { it }
-                ) + fadeIn(tween(140)),
-                exit = slideOutVertically(tween(200), targetOffsetY = { it }) + fadeOut(tween(150))
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val density = LocalDensity.current
+            val hPx = with(density) { maxHeight.toPx() }
+            val offsetY = remember { Animatable(3000f) }
+            LaunchedEffect(Unit) {
+                offsetY.snapTo(hPx)
+                offsetY.animateTo(0f, tween(300))
+            }
+            val close = {
+                scope.launch {
+                    offsetY.animateTo(hPx, tween(240))
+                    onDismiss()
+                }
+                Unit
+            }
+            val dragState = rememberDraggableState { delta ->
+                scope.launch { offsetY.snapTo((offsetY.value + delta).coerceAtLeast(0f)) }
+            }
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset { IntOffset(0, offsetY.value.roundToInt()) },
+                color = MaterialTheme.colorScheme.background
             ) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.94f)
-                        .offset { IntOffset(0, dragY.value.roundToInt()) },
-                    shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 4.dp
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
                 ) {
+                    // Drag handle + header (this region is the drag-to-dismiss zone).
                     Column(
                         Modifier
-                            .fillMaxSize()
-                            .imePadding()
-                    ) {
-                        // Drag handle + header (vertical drag-down dismisses).
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .pointerInput(Unit) {
-                                    detectVerticalDragGestures(
-                                        onDragEnd = {
-                                            if (dragY.value > 170f) dismiss()
-                                            else scope.launch { dragY.animateTo(0f, spring()) }
-                                        },
-                                        onVerticalDrag = { _, dy ->
-                                            scope.launch { dragY.snapTo((dragY.value + dy).coerceAtLeast(0f)) }
-                                        }
-                                    )
+                            .fillMaxWidth()
+                            .draggable(
+                                state = dragState,
+                                orientation = Orientation.Vertical,
+                                onDragStopped = { velocity ->
+                                    if (offsetY.value > hPx * 0.18f || velocity > 1800f) {
+                                        offsetY.animateTo(hPx, tween(220))
+                                        onDismiss()
+                                    } else {
+                                        offsetY.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+                                    }
                                 }
-                                .padding(horizontal = 18.dp)
+                            )
+                    ) {
+                        Box(
+                            Modifier
+                                .padding(top = 8.dp)
+                                .fillMaxWidth(),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Spacer(Modifier.height(10.dp))
                             Box(
                                 Modifier
-                                    .align(Alignment.CenterHorizontally)
-                                    .width(40.dp)
-                                    .height(4.dp)
-                                    .clip(CircleShape)
+                                    .size(width = 38.dp, height = 4.dp)
+                                    .clip(RoundedCornerShape(2.dp))
                                     .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
                             )
-                            Spacer(Modifier.height(14.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(accent),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
+                                    contentDescription = null,
+                                    tint = onAccent,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(Modifier.size(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Novagram AI",
+                                    fontFamily = MaterialTheme.typography.titleMedium.fontFamily,
+                                    fontStyle = FontStyle.Italic,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 19.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    contextLabel,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (convo.isNotEmpty()) {
                                 Box(
                                     Modifier
-                                        .size(38.dp)
-                                        .clip(CircleShape)
-                                        .background(accent),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
-                                        contentDescription = null,
-                                        tint = onAccent,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                                Spacer(Modifier.size(12.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        "Novagram AI",
-                                        fontFamily = MaterialTheme.typography.titleMedium.fontFamily,
-                                        fontStyle = FontStyle.Italic,
-                                        fontWeight = FontWeight.Medium,
-                                        fontSize = 20.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        contextLabel,
-                                        fontSize = 13.sp,
-                                        maxLines = 1,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                if (convo.isNotEmpty()) {
-                                    Box(
-                                        Modifier
-                                            .size(34.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                            .clickable(
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null
-                                            ) {
-                                                convo.clear()
-                                                if (memKey != null) AiChatMemory.clear(memKey)
-                                                systemPrompt = null
-                                                error = null
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
-                                            contentDescription = "Nuova conversazione",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(17.dp)
-                                        )
-                                    }
-                                    Spacer(Modifier.size(8.dp))
-                                }
-                                Box(
-                                    Modifier
-                                        .size(34.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                        .clip(RoundedCornerShape(8.dp))
                                         .clickable(
                                             interactionSource = remember { MutableInteractionSource() },
                                             indication = null
-                                        ) { dismiss() },
-                                    contentAlignment = Alignment.Center
+                                        ) {
+                                            convo.clear()
+                                            error = null
+                                            systemPrompt = null
+                                            if (persistKey != null) scope.launch { AiMemory.clear(ctx, persistKey) }
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
-                                    Icon(
-                                        com.secondream.novagram.ui.icons.PhosphorIcons.X,
-                                        contentDescription = "Chiudi",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                    Text("Azzera", fontSize = 13.sp, color = accent)
                                 }
                             }
-                            Spacer(Modifier.height(14.dp))
+                            Box(
+                                Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) { close() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    com.secondream.novagram.ui.icons.PhosphorIcons.X,
+                                    contentDescription = "Chiudi",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
+                    }
 
-                        // Body
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                                .padding(horizontal = 18.dp)
-                        ) {
-                            if (convo.isEmpty() && error == null) {
-                                LazyColumn(
-                                    modifier = Modifier.fillMaxSize(),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    item {
-                                        Text(
-                                            if (mode == AiContext.MESSAGE)
-                                                "Scegli cosa fare con il messaggio, o scrivi una richiesta."
-                                            else
-                                                "Tocca un'azione o scrivi. Continuo a rispondere mantenendo il contesto.",
-                                            fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(bottom = 4.dp)
-                                        )
+                    // Tier selector — Basic / Pro / Business (all Anthropic).
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        com.secondream.novagram.ai.AiTier.values().forEach { t ->
+                            val selected = t == tier
+                            Box(
+                                Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (selected) accent
+                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                    )
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) {
+                                        tier = t
+                                        com.secondream.novagram.ai.AiPrefs.setTier(ctx, t)
                                     }
-                                    itemsIndexed(tiles) { _, tile ->
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                                            shape = RoundedCornerShape(16.dp),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable(
-                                                    interactionSource = remember { MutableInteractionSource() },
-                                                    indication = null
-                                                ) { tile.onClick() }
+                                    .padding(vertical = 9.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    t.short,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (selected) onAccent else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    // Body: starter tiles when empty, else the conversation.
+                    Box(Modifier.fillMaxWidth().weight(1f)) {
+                        if (convo.isEmpty() && error == null) {
+                            Column(Modifier.padding(horizontal = 16.dp)) {
+                                Text(
+                                    if (mode == AiContext.MESSAGE)
+                                        "Scegli cosa fare con il messaggio, o scrivi una richiesta."
+                                    else
+                                        "Posso aiutarti e continuare la conversazione tenendo il contesto. Scegli un'azione o scrivi qui sotto.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.height(14.dp))
+                                tiles.forEach { tile ->
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        shape = RoundedCornerShape(15.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.12f)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) { tile.onClick() }
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(13.dp)
                                         ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.padding(14.dp)
+                                            Box(
+                                                Modifier
+                                                    .size(38.dp)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(accent.copy(alpha = 0.16f)),
+                                                contentAlignment = Alignment.Center
                                             ) {
-                                                Box(
-                                                    Modifier
-                                                        .size(42.dp)
-                                                        .clip(RoundedCornerShape(13.dp))
-                                                        .background(accent.copy(alpha = 0.16f)),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Icon(
-                                                        tile.glyph.icon(),
-                                                        contentDescription = null,
-                                                        tint = accent,
-                                                        modifier = Modifier.size(23.dp)
-                                                    )
-                                                }
-                                                Spacer(Modifier.size(14.dp))
-                                                Column(Modifier.weight(1f)) {
-                                                    Text(
-                                                        tile.label,
-                                                        fontSize = 15.sp,
-                                                        fontWeight = FontWeight.Medium,
-                                                        color = MaterialTheme.colorScheme.onSurface
-                                                    )
-                                                    Text(
-                                                        tile.sub,
-                                                        fontSize = 12.sp,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                }
+                                                Icon(
+                                                    tile.glyph.icon(),
+                                                    contentDescription = null,
+                                                    tint = accent,
+                                                    modifier = Modifier.size(21.dp)
+                                                )
+                                            }
+                                            Spacer(Modifier.size(13.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(
+                                                    tile.label,
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                                Text(
+                                                    tile.sub,
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
                                             }
                                         }
                                     }
+                                    Spacer(Modifier.height(9.dp))
                                 }
-                            } else {
-                                LazyColumn(
-                                    state = listState,
-                                    modifier = Modifier.fillMaxSize(),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    itemsIndexed(convo) { index, msg ->
-                                        val isUser = msg.first == "user"
-                                        val body = msg.second
-                                        val isLastAssistant = !isUser && index == convo.lastIndex
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+                            }
+                        } else {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                    start = 14.dp, end = 14.dp, top = 6.dp, bottom = 6.dp
+                                ),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                itemsIndexed(convo) { index, msg ->
+                                    val role = msg.first
+                                    val body = msg.second
+                                    val isUser = role == "user"
+                                    val jumpLink = remember(body) {
+                                        if (isUser) null
+                                        else Regex("(?:https?://)?t\\.me/(?:c/[0-9]+/[0-9]+|[A-Za-z0-9_]+/[0-9]+)")
+                                            .find(body)?.value
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().animateItem(),
+                                        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+                                    ) {
+                                        Surface(
+                                            color = if (isUser) accent.copy(alpha = 0.2f)
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                            shape = RoundedCornerShape(
+                                                topStart = 18.dp,
+                                                topEnd = 18.dp,
+                                                bottomStart = if (isUser) 18.dp else 5.dp,
+                                                bottomEnd = if (isUser) 5.dp else 18.dp
+                                            ),
+                                            modifier = Modifier.widthIn(max = 300.dp)
                                         ) {
-                                            Surface(
-                                                color = if (isUser) accent.copy(alpha = 0.18f)
-                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                                shape = RoundedCornerShape(18.dp),
-                                                modifier = Modifier.widthIn(max = 300.dp)
-                                            ) {
-                                                Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
-                                                    if (isUser) {
-                                                        Text(
-                                                            body,
-                                                            fontSize = 14.sp,
-                                                            color = MaterialTheme.colorScheme.onSurface
-                                                        )
-                                                    } else {
-                                                        val shown = if (isLastAssistant && streaming) body + " \u258b" else body
-                                                        Text(
-                                                            buildAiAnnotated(shown, accent),
-                                                            fontSize = 14.sp,
-                                                            color = MaterialTheme.colorScheme.onSurface
-                                                        )
+                                            Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
+                                                if (isUser) {
+                                                    Text(
+                                                        body,
+                                                        fontSize = 14.sp,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                } else {
+                                                    Text(
+                                                        buildAiText(body, accent, codeColor, onOpenTme),
+                                                        fontSize = 14.sp,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    if (jumpLink != null && onOpenTme != null) {
+                                                        Spacer(Modifier.height(9.dp))
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(10.dp))
+                                                                .background(accent.copy(alpha = 0.16f))
+                                                                .clickable(
+                                                                    interactionSource = remember { MutableInteractionSource() },
+                                                                    indication = null
+                                                                ) {
+                                                                    val u = if (jumpLink.startsWith("http")) jumpLink else "https://$jumpLink"
+                                                                    onOpenTme(u)
+                                                                }
+                                                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                                        ) {
+                                                            Icon(
+                                                                com.secondream.novagram.ui.icons.PhosphorIcons.Reply,
+                                                                contentDescription = null,
+                                                                tint = accent,
+                                                                modifier = Modifier.size(14.dp)
+                                                            )
+                                                            Spacer(Modifier.size(6.dp))
+                                                            Text("Vai al messaggio", fontSize = 12.sp, color = accent)
+                                                        }
                                                     }
-                                                    if (isLastAssistant && !streaming && body.isNotBlank()) {
+                                                    if (!streaming && index == convo.lastIndex && body.isNotBlank()) {
                                                         Spacer(Modifier.height(8.dp))
                                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                                            Box(
-                                                                Modifier
-                                                                    .clip(RoundedCornerShape(8.dp))
-                                                                    .clickable(
-                                                                        interactionSource = remember { MutableInteractionSource() },
-                                                                        indication = null
-                                                                    ) { clipboard.setText(AnnotatedString(body)) }
-                                                                    .padding(vertical = 4.dp, horizontal = 4.dp)
-                                                            ) {
-                                                                Text("Copia", fontSize = 12.sp, color = accent)
-                                                            }
                                                             if (mode == AiContext.MESSAGE && onReplyDraft != null) {
-                                                                Spacer(Modifier.size(14.dp))
                                                                 Box(
                                                                     Modifier
                                                                         .clip(RoundedCornerShape(8.dp))
@@ -589,12 +593,13 @@ fun AiAssistantModal(
                                                                             indication = null
                                                                         ) {
                                                                             onReplyDraft(body)
-                                                                            dismiss()
+                                                                            close()
                                                                         }
                                                                         .padding(vertical = 4.dp, horizontal = 4.dp)
                                                                 ) {
                                                                     Text("Usa come risposta", fontSize = 12.sp, color = accent)
                                                                 }
+                                                                Spacer(Modifier.size(14.dp))
                                                             }
                                                         }
                                                     }
@@ -602,19 +607,19 @@ fun AiAssistantModal(
                                             }
                                         }
                                     }
-                                    if (streaming && (convo.isEmpty() || convo.last().first == "user")) {
-                                        item {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.Start
+                                }
+                                if (streaming && (convo.isEmpty() || convo.last().first == "user")) {
+                                    item {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().animateItem(),
+                                            horizontalArrangement = Arrangement.Start
+                                        ) {
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                                shape = RoundedCornerShape(18.dp)
                                             ) {
-                                                Surface(
-                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                                    shape = RoundedCornerShape(18.dp)
-                                                ) {
-                                                    Box(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                                                        AiTypingDots(accent)
-                                                    }
+                                                Box(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                                                    AiTypingDots(accent)
                                                 }
                                             }
                                         }
@@ -628,67 +633,70 @@ fun AiAssistantModal(
                                     err,
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.align(Alignment.BottomStart)
+                                    modifier = Modifier
+                                        .align(Alignment.BottomStart)
+                                        .padding(horizontal = 16.dp, vertical = 8.dp)
                                 )
                             }
                         }
+                    }
 
-                        // Input (docks above the keyboard via imePadding)
-                        Box(Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 14.dp)) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.background,
-                                shape = RoundedCornerShape(24.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(start = 18.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)
-                                ) {
-                                    Box(Modifier.weight(1f)) {
-                                        if (input.isEmpty()) {
-                                            Text(
-                                                "Chiedi o dai un comando...",
-                                                fontSize = 14.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        BasicTextField(
-                                            value = input,
-                                            onValueChange = { input = it },
-                                            textStyle = TextStyle(
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                fontSize = 14.sp
-                                            ),
-                                            cursorBrush = SolidColor(accent),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-                                    Spacer(Modifier.size(8.dp))
-                                    Box(
-                                        Modifier
-                                            .size(38.dp)
-                                            .clip(CircleShape)
-                                            .background(accent)
-                                            .clickable(
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null,
-                                                enabled = input.isNotBlank() && !streaming
-                                            ) {
-                                                val q = input.trim()
-                                                input = ""
-                                                if (q.isNotEmpty()) send(q)
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            com.secondream.novagram.ui.icons.PhosphorIcons.ArrowUp,
-                                            contentDescription = "Invia",
-                                            tint = onAccent,
-                                            modifier = Modifier.size(19.dp)
-                                        )
-                                    }
+                    // Input bar — rides above the keyboard / nav bar.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(24.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
+                                if (input.isEmpty()) {
+                                    Text(
+                                        "Scrivi a Novagram AI...",
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
+                                BasicTextField(
+                                    value = input,
+                                    onValueChange = { input = it },
+                                    textStyle = TextStyle(
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 14.sp
+                                    ),
+                                    cursorBrush = SolidColor(accent),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
+                        }
+                        Spacer(Modifier.size(8.dp))
+                        Box(
+                            Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(accent)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    enabled = input.isNotBlank() && !streaming
+                                ) {
+                                    val q = input.trim()
+                                    input = ""
+                                    if (q.isNotEmpty()) send(q)
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                com.secondream.novagram.ui.icons.PhosphorIcons.ArrowUp,
+                                contentDescription = "Invia",
+                                tint = onAccent,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
                 }
@@ -722,17 +730,74 @@ private fun AiTypingDots(color: Color) {
     }
 }
 
-private enum class AiGlyph { Chats, Translate, Reply, Info, Bell, Phone, List, Pencil }
+/** Inline bold/code so the bubble never shows literal ** or backticks. */
+private fun AnnotatedString.Builder.appendInline(seg: String, codeColor: Color) {
+    val rx = Regex("\\*\\*(.+?)\\*\\*|__(.+?)__|`([^`]+)`")
+    var last = 0
+    for (m in rx.findAll(seg)) {
+        if (m.range.first > last) append(seg.substring(last, m.range.first))
+        val g = m.groupValues
+        when {
+            m.groups[1] != null -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(g[1]) }
+            m.groups[2] != null -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(g[2]) }
+            m.groups[3] != null -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeColor)) { append(g[3]) }
+        }
+        last = m.range.last + 1
+    }
+    if (last < seg.length) append(seg.substring(last))
+}
+
+/**
+ * Render an assistant reply: strip stray markdown, then turn URLs, t.me links
+ * and @mentions into amber tappable spans. t.me links / mentions route through
+ * [onOpenTme] (internal jump / open chat); other URLs open normally.
+ */
+private fun buildAiText(
+    text: String,
+    accent: Color,
+    codeColor: Color,
+    onOpenTme: ((String) -> Unit)?
+): AnnotatedString {
+    val cleaned = text.lines().joinToString("\n") { raw ->
+        var l = raw
+        l = l.replace(Regex("^\\s*#{1,6}\\s+"), "")
+        l = l.replace(Regex("^(\\s*)[-*]\\s+"), "$1• ")
+        l
+    }
+    val linkRx = Regex("(https?://[^\\s]+)|(t\\.me/[^\\s]+)|(@[A-Za-z0-9_]{4,})")
+    val styles = TextLinkStyles(SpanStyle(color = accent, fontWeight = FontWeight.Medium))
+    return buildAnnotatedString {
+        var last = 0
+        for (m in linkRx.findAll(cleaned)) {
+            if (m.range.first > last) appendInline(cleaned.substring(last, m.range.first), codeColor)
+            val tok = m.value
+            val isTme = tok.startsWith("t.me/") || tok.startsWith("@") || tok.contains("//t.me/")
+            val url = when {
+                tok.startsWith("@") -> "https://t.me/" + tok.drop(1)
+                tok.startsWith("t.me/") -> "https://" + tok
+                else -> tok
+            }
+            if (isTme && onOpenTme != null) {
+                withLink(LinkAnnotation.Clickable("tme", styles, linkInteractionListener = { _ -> onOpenTme(url) })) {
+                    append(tok)
+                }
+            } else {
+                withLink(LinkAnnotation.Url(url, styles)) { append(tok) }
+            }
+            last = m.range.last + 1
+        }
+        if (last < cleaned.length) appendInline(cleaned.substring(last), codeColor)
+    }
+}
+
+private enum class AiGlyph { Chats, Translate, Reply, Info, Search }
 
 private fun AiGlyph.icon(): androidx.compose.ui.graphics.vector.ImageVector = when (this) {
     AiGlyph.Chats -> com.secondream.novagram.ui.icons.PhosphorIcons.Chats
     AiGlyph.Translate -> com.secondream.novagram.ui.icons.PhosphorIcons.Translate
     AiGlyph.Reply -> com.secondream.novagram.ui.icons.PhosphorIcons.Reply
     AiGlyph.Info -> com.secondream.novagram.ui.icons.PhosphorIcons.Info
-    AiGlyph.Bell -> com.secondream.novagram.ui.icons.PhosphorIcons.Bell
-    AiGlyph.Phone -> com.secondream.novagram.ui.icons.PhosphorIcons.Phone
-    AiGlyph.List -> com.secondream.novagram.ui.icons.PhosphorIcons.List
-    AiGlyph.Pencil -> com.secondream.novagram.ui.icons.PhosphorIcons.PencilSimple
+    AiGlyph.Search -> com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass
 }
 
 private data class AiTile(
