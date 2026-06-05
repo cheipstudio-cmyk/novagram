@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
@@ -128,8 +129,10 @@ fun AiAssistantModal(
 
     val persistKey = when (mode) {
         AiContext.HOME -> "home"
-        AiContext.CHAT -> "chat:$chatId"
-        AiContext.MESSAGE -> null
+        // MESSAGE shares the chat's session: a thread started from a single
+        // message keeps living in the same chat-level AI, so it survives close
+        // and reopening from the top AI button continues it instead of losing it.
+        AiContext.CHAT, AiContext.MESSAGE -> "chat:$chatId"
     }
 
     val convo = remember { mutableStateListOf<Pair<String, String>>() }
@@ -176,13 +179,23 @@ fun AiAssistantModal(
         else
             java.util.Locale.forLanguageTag(tag)
         val langName = loc.getDisplayLanguage(java.util.Locale.ENGLISH).ifBlank { "English" }
-        val base = "You are Novagram AI, embedded inside a Telegram client. ALWAYS reply in " + langName +
-            ". Reply ONLY in " + langName + ", even if the user's message, the action buttons, or the " +
-            "chat context are written in another language. Write in PLAIN TEXT: no Markdown, no asterisks, " +
-            "no headings, no code fences. Be concise and direct, no filler preamble."
-        val citeByNumber = " Each message in the context is numbered like [1], [2]. When you point to a " +
-            "specific message, cite it by writing its number in square brackets, for example [3]. Cite only " +
-            "messages that are actually in the list, never invent a number, and only when it adds value."
+        val base = "You are Novagram AI, the built-in assistant of Novagram — a fast, independent Android " +
+            "client for Telegram, built in Kotlin and Jetpack Compose (it is NOT the official Telegram app). " +
+            "You help the user both with their chats and with using Novagram itself. Novagram's main features: " +
+            "multiple accounts, custom themes with imported chat backgrounds, chat folders, message reactions " +
+            "and mentions, a per-chat media gallery (photos, videos, files, links, voice, music), voice notes " +
+            "with adjustable playback speed, message forwarding and replies, protected-content handling, bot " +
+            "slash-commands and inline keyboards, and this AI assistant. It ships via Google Play and GitHub " +
+            "Releases. When the user asks about Novagram, answer about Novagram and never imply they are on the " +
+            "official Telegram app; if you are unsure of an exact step, give general guidance instead of " +
+            "inventing precise menu names. ALWAYS reply in " + langName + ". Reply ONLY in " + langName +
+            ", even if the user's message, the action buttons, or the chat context are written in another " +
+            "language. Write in PLAIN TEXT: no Markdown, no asterisks, no headings, no code fences. Be concise " +
+            "and practical, lead with the answer, no filler preamble."
+        val citeByNumber = " Each message in the context is numbered like [1], [2]. When a specific message " +
+            "is central to your answer, you may cite it by writing its number in square brackets, for example " +
+            "[3]. Cite AT MOST one or two truly key messages in the whole reply, never more, only real numbers " +
+            "from the list, and only when it genuinely helps. Most replies need no citation at all."
         return when (mode) {
             AiContext.HOME -> {
                 val unread = TdClient.recentUnreadDigest()
@@ -279,6 +292,9 @@ fun AiAssistantModal(
             },
             AiTile("Cerca tra i messaggi", "Trova qualcosa", AiGlyph.Search) {
                 send("Aiutami a cercare qualcosa tra i miei messaggi recenti.")
+            },
+            AiTile("Consigli su Novagram", "Sfrutta meglio l'app", AiGlyph.Info) {
+                send("Dammi due o tre consigli pratici per sfruttare meglio Novagram in base a come uso le chat.")
             }
         )
         AiContext.CHAT -> listOf(
@@ -351,7 +367,8 @@ fun AiAssistantModal(
             ) {
                 Surface(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxWidth()
+                        .heightIn(max = maxHeight)
                         .graphicsLayer {
                             scaleX = scale
                             scaleY = scale
@@ -363,7 +380,7 @@ fun AiAssistantModal(
                     color = MaterialTheme.colorScheme.background,
                     tonalElevation = 6.dp
                 ) {
-                    Column(Modifier.fillMaxSize()) {
+                    Column(Modifier.fillMaxWidth()) {
                     // Drag handle + header (this region is the drag-to-dismiss zone).
                     Column(
                         Modifier
@@ -469,13 +486,12 @@ fun AiAssistantModal(
                     }
 
                     // Body: starter tiles when empty, else the conversation.
-                    Box(Modifier.fillMaxWidth().weight(1f)) {
+                    Box(Modifier.fillMaxWidth().weight(1f, fill = false)) {
                         if (convo.isEmpty() && error == null) {
                             Column(
                                 modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 16.dp),
-                                verticalArrangement = Arrangement.Center
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 6.dp)
                             ) {
                                 Text(
                                     if (mode == AiContext.MESSAGE) "Cosa faccio con questo messaggio?"
@@ -549,7 +565,7 @@ fun AiAssistantModal(
                         } else {
                             LazyColumn(
                                 state = listState,
-                                modifier = Modifier.fillMaxSize(),
+                                modifier = Modifier.fillMaxWidth(),
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                                     start = 14.dp, end = 14.dp, top = 6.dp, bottom = 6.dp
                                 ),
@@ -621,6 +637,24 @@ fun AiAssistantModal(
                                                         color = MaterialTheme.colorScheme.onSurface
                                                     )
                                                 } else {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.padding(bottom = 4.dp)
+                                                    ) {
+                                                        Icon(
+                                                            com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
+                                                            contentDescription = null,
+                                                            tint = accent,
+                                                            modifier = Modifier.size(13.dp)
+                                                        )
+                                                        Spacer(Modifier.size(5.dp))
+                                                        Text(
+                                                            "Novagram AI",
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = accent
+                                                        )
+                                                    }
                                                     val rendered = remember(body) {
                                                         buildAiText(body, accent, codeColor, onOpenTme)
                                                     }
@@ -634,6 +668,7 @@ fun AiAssistantModal(
                                                             .mapNotNull { it.groupValues[1].toIntOrNull() }
                                                             .distinct()
                                                             .mapNotNull { n -> refs.getOrNull(n - 1) }
+                                                            .take(2)
                                                             .toList()
                                                     }
                                                     if (citedRefs.isNotEmpty() && onJumpMessage != null) {
