@@ -592,6 +592,51 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                             }
                         }
                     }
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        "Modello AI",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    var aiTier by remember { mutableStateOf(com.secondream.novagram.ai.AiPrefs.getTier(context)) }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        com.secondream.novagram.ai.AiTier.values().forEach { t ->
+                            val sel = t == aiTier
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (sel) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                    .clickable {
+                                        aiTier = t
+                                        com.secondream.novagram.ai.AiPrefs.setTier(context, t)
+                                    }
+                                    .padding(vertical = 10.dp),
+                                contentAlignment = androidx.compose.ui.Alignment.Center
+                            ) {
+                                Text(
+                                    t.short,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = if (sel) MaterialTheme.colorScheme.onPrimary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Basic è veloce ed economico, Business è il più capace.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 // Feature gates — both call Anthropic, so they're forced off
                 // and non-toggleable until a key is configured.

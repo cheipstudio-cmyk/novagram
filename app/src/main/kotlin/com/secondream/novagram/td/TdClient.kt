@@ -1404,6 +1404,34 @@ object TdClient {
     }
 
     /**
+     * Recent activity across the user's top chats regardless of read state, as
+     * chronological "Sender: text" lines per chat. Feeds the home AI when there
+     * are no unread messages, so it still has the chats to reason about.
+     */
+    suspend fun recentChatsDigest(maxChats: Int = 8, perChat: Int = 10): List<ChatUnreadDigest> {
+        val candidates = _chats.value
+            .filter { !it.isArchived }
+            .sortedByDescending { it.order }
+            .take(maxChats)
+        val out = mutableListOf<ChatUnreadDigest>()
+        for (cs in candidates) {
+            val msgs = runCatching {
+                getChatHistory(cs.id, 0L, perChat).messages?.toList().orEmpty()
+            }.getOrNull().orEmpty()
+            val lines = msgs
+                .asReversed()
+                .mapNotNull { m ->
+                    val text = buildPreview(m).trim()
+                    if (text.isBlank()) return@mapNotNull null
+                    val who = resolveSenderName(m).trim()
+                    if (who.isBlank()) text else "$who: $text"
+                }
+            if (lines.isNotEmpty()) out += ChatUnreadDigest(cs.title, lines)
+        }
+        return out
+    }
+
+    /**
      * Search messages in a chat filtered by content type. Drives the
      * media-gallery tabs in ChatInfoDialog: pass a TdApi filter (e.g.
      * SearchMessagesFilterPhoto, SearchMessagesFilterDocument,

@@ -4,13 +4,17 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -25,7 +29,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -54,8 +60,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
@@ -108,9 +116,7 @@ fun AiAssistantModal(
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-    val langName = java.util.Locale.getDefault()
-        .getDisplayLanguage(java.util.Locale.getDefault())
-        .ifBlank { "English" }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
     val persistKey = when (mode) {
         AiContext.HOME -> "home"
@@ -147,24 +153,34 @@ fun AiAssistantModal(
     }
 
     suspend fun buildSystem(): String {
-        val base = "You are Novagram AI, embedded inside a Telegram client. Reply in " + langName +
-            ". Write in PLAIN TEXT only: no Markdown, no asterisks for bold, no headings, no code " +
-            "fences, no bullet symbols unless natural. Be concise and direct, no filler preamble. " +
-            "When you refer to a specific message in the chat, include its t.me link so it becomes tappable."
+        val tag = AppSettings.appearance.first().languageTag
+        val loc = if (tag.isBlank() || tag.equals("system", ignoreCase = true))
+            java.util.Locale.getDefault()
+        else
+            java.util.Locale.forLanguageTag(tag)
+        val langName = loc.getDisplayLanguage(java.util.Locale.ENGLISH).ifBlank { "English" }
+        val base = "You are Novagram AI, embedded inside a Telegram client. ALWAYS reply in " + langName +
+            ". Reply ONLY in " + langName + ", even if the user's message, the action buttons, or the " +
+            "chat context are written in another language. Write in PLAIN TEXT: no Markdown, no asterisks, " +
+            "no headings, no code fences. Be concise and direct, no filler preamble. When you refer to a " +
+            "specific message, include its t.me link so it becomes tappable."
         return when (mode) {
             AiContext.HOME -> {
-                val digest = TdClient.recentUnreadDigest()
+                val unread = TdClient.recentUnreadDigest()
+                val digest = if (unread.isNotEmpty()) unread else TdClient.recentChatsDigest()
+                val label = if (unread.isNotEmpty()) "unread messages" else "recent messages"
                 val block = digest.joinToString("\n\n") { "## " + it.title + "\n" + it.lines.joinToString("\n") }
-                base + "\n\nThe user's unread messages across chats:\n<unread>\n" +
-                    (block.ifBlank { "(none)" }) + "\n</unread>"
+                base + "\n\nThe user's " + label + " across chats:\n<chats>\n" +
+                    (block.ifBlank { "(none)" }) + "\n</chats>"
             }
             AiContext.CHAT -> {
-                val lines = TdClient.chatRecentLines(chatId, 40)
-                base + "\n\nYou are inside the chat \"" + contextLabel + "\". Recent messages:\n<chat>\n" +
+                val lines = TdClient.chatRecentLines(chatId, 80)
+                base + "\n\nYou are inside the chat \"" + contextLabel +
+                    "\". Recent messages (oldest to newest):\n<chat>\n" +
                     (lines.joinToString("\n").ifBlank { "(empty)" }) + "\n</chat>"
             }
             AiContext.MESSAGE -> {
-                val lines = TdClient.chatRecentLines(chatId, 16)
+                val lines = TdClient.chatRecentLines(chatId, 20)
                 base + "\n\nThe user long-pressed this message" +
                     (focusSender?.let { " from " + it } ?: "") + ":\n\"" + (focusText ?: "") +
                     "\"\n\nSurrounding chat context:\n<chat>\n" +
@@ -279,33 +295,41 @@ fun AiAssistantModal(
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
             val hPx = with(density) { maxHeight.toPx() }
-            val offsetY = remember { Animatable(3000f) }
-            LaunchedEffect(Unit) {
-                offsetY.snapTo(hPx)
-                offsetY.animateTo(0f, tween(300))
-            }
-            val close = {
-                scope.launch {
-                    offsetY.animateTo(hPx, tween(240))
-                    onDismiss()
-                }
-                Unit
-            }
+            var visible by remember { mutableStateOf(false) }
+            var everShown by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) { visible = true; everShown = true }
+            LaunchedEffect(visible) { if (!visible && everShown) { delay(180); onDismiss() } }
+            val scale by animateFloatAsState(if (visible) 1f else 0.92f, tween(180), label = "scale")
+            val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(180), label = "alpha")
+            val offsetY = remember { Animatable(0f) }
+            val close = { visible = false; Unit }
             val dragState = rememberDraggableState { delta ->
                 scope.launch { offsetY.snapTo((offsetY.value + delta).coerceAtLeast(0f)) }
             }
 
-            Surface(
-                modifier = Modifier
+            Box(
+                Modifier
                     .fillMaxSize()
-                    .offset { IntOffset(0, offsetY.value.roundToInt()) },
-                color = MaterialTheme.colorScheme.background
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .padding(14.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Column(
-                    Modifier
+                Surface(
+                    modifier = Modifier
                         .fillMaxSize()
-                        .statusBarsPadding()
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            this.alpha = alpha
+                            translationY = offsetY.value
+                        },
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.background,
+                    tonalElevation = 6.dp
                 ) {
+                    Column(Modifier.fillMaxSize()) {
                     // Drag handle + header (this region is the drag-to-dismiss zone).
                     Column(
                         Modifier
@@ -410,47 +434,15 @@ fun AiAssistantModal(
                         }
                     }
 
-                    // Tier selector — Basic / Pro / Business (all Anthropic).
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        com.secondream.novagram.ai.AiTier.values().forEach { t ->
-                            val selected = t == tier
-                            Box(
-                                Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(
-                                        if (selected) accent
-                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                    )
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null
-                                    ) {
-                                        tier = t
-                                        com.secondream.novagram.ai.AiPrefs.setTier(ctx, t)
-                                    }
-                                    .padding(vertical = 9.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    t.short,
-                                    fontSize = 13.sp,
-                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                    color = if (selected) onAccent else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-
                     // Body: starter tiles when empty, else the conversation.
                     Box(Modifier.fillMaxWidth().weight(1f)) {
                         if (convo.isEmpty() && error == null) {
-                            Column(Modifier.padding(horizontal = 16.dp)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 16.dp),
+                                verticalArrangement = Arrangement.Center
+                            ) {
                                 Text(
                                     if (mode == AiContext.MESSAGE)
                                         "Scegli cosa fare con il messaggio, o scrivi una richiesta."
@@ -518,6 +510,33 @@ fun AiAssistantModal(
                                 ),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
+                                item {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        tiles.forEach { tile ->
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                                shape = RoundedCornerShape(20.dp),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.12f)),
+                                                modifier = Modifier.clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null
+                                                ) { tile.onClick() }
+                                            ) {
+                                                Text(
+                                                    tile.label,
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                                 itemsIndexed(convo) { index, msg ->
                                     val role = msg.first
                                     val body = msg.second
@@ -540,7 +559,13 @@ fun AiAssistantModal(
                                                 bottomStart = if (isUser) 18.dp else 5.dp,
                                                 bottomEnd = if (isUser) 5.dp else 18.dp
                                             ),
-                                            modifier = Modifier.widthIn(max = 300.dp)
+                                            modifier = Modifier
+                                                .widthIn(max = 300.dp)
+                                                .pointerInput(body) {
+                                                    detectTapGestures(onLongPress = {
+                                                        clipboard.setText(AnnotatedString(body))
+                                                    })
+                                                }
                                         ) {
                                             Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
                                                 if (isUser) {
@@ -584,7 +609,19 @@ fun AiAssistantModal(
                                                     if (!streaming && index == convo.lastIndex && body.isNotBlank()) {
                                                         Spacer(Modifier.height(8.dp))
                                                         Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            Box(
+                                                                Modifier
+                                                                    .clip(RoundedCornerShape(8.dp))
+                                                                    .clickable(
+                                                                        interactionSource = remember { MutableInteractionSource() },
+                                                                        indication = null
+                                                                    ) { clipboard.setText(AnnotatedString(body)) }
+                                                                    .padding(vertical = 4.dp, horizontal = 4.dp)
+                                                            ) {
+                                                                Text("Copia", fontSize = 12.sp, color = accent)
+                                                            }
                                                             if (mode == AiContext.MESSAGE && onReplyDraft != null) {
+                                                                Spacer(Modifier.size(14.dp))
                                                                 Box(
                                                                     Modifier
                                                                         .clip(RoundedCornerShape(8.dp))
@@ -646,7 +683,6 @@ fun AiAssistantModal(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
                             .padding(horizontal = 12.dp, vertical = 10.dp)
                     ) {
                         Surface(
@@ -700,6 +736,7 @@ fun AiAssistantModal(
                         }
                     }
                 }
+            }
             }
         }
     }
