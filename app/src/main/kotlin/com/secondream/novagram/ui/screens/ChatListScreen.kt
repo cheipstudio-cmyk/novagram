@@ -302,6 +302,7 @@ fun ChatListScreen(
         }
     }
 
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
     Scaffold(
         modifier = Modifier.nestedScroll(nestedScrollConnection),
         floatingActionButton = {
@@ -335,28 +336,6 @@ fun ChatListScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                if (aiKeySet && appearance.aiRecapEnabled) {
-                    androidx.compose.material3.SmallFloatingActionButton(
-                        onClick = { if (online) showAiSummary = true },
-                        // Same palette as the primary + FAB below (solid
-                        // accent container, onPrimary icon) so they read as a
-                        // matching pair. Flat (no elevation) keeps it clean.
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                            .copy(alpha = if (online) 1f else 0.45f),
-                        elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(
-                            defaultElevation = 0.dp,
-                            pressedElevation = 0.dp,
-                            focusedElevation = 0.dp,
-                            hoveredElevation = 0.dp
-                        )
-                    ) {
-                        Icon(
-                            com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
-                            contentDescription = stringResource(R.string.ai_summary_fab_cd)
-                        )
-                    }
-                }
                 FloatingActionButton(
                     onClick = onNewChat,
                     interactionSource = fabInteraction,
@@ -740,6 +719,17 @@ fun ChatListScreen(
                     }
                 }
             }
+        }
+    }
+        if (appearance.aiRecapEnabled) {
+            com.secondream.novagram.ui.components.AiAssistantBubble(
+                contextLabel = "Tutte le chat",
+                mode = com.secondream.novagram.ui.components.AiContext.HOME,
+                collapsedSize = 56.dp,
+                endInset = 16.dp,
+                bottomInset = 86.dp,
+                navBarPadding = true
+            )
         }
     }
 

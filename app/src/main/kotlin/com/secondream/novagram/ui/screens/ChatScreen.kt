@@ -3211,7 +3211,14 @@ fun ChatScreen(
                         )
                     }
                 }
-                com.secondream.novagram.ui.components.AiAssistantBubble(contextLabel = chatTitle)
+                com.secondream.novagram.ui.components.AiAssistantBubble(
+                    contextLabel = chatTitle,
+                    mode = com.secondream.novagram.ui.components.AiContext.CHAT,
+                    chatId = chatId,
+                    collapsedSize = 44.dp,
+                    endInset = 14.dp,
+                    bottomInset = 128.dp
+                )
             }
 
             // Mention picker (popup just above the input bar). The detection

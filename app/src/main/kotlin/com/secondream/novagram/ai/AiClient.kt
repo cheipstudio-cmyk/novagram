@@ -102,4 +102,80 @@ object AiClient {
             conn.disconnect()
         }
     }
+
+    /**
+     * Streaming variant: opens the SSE endpoint and invokes [onDelta] with each
+     * text chunk as it arrives, on the MAIN thread (so callers can append to
+     * Compose state directly). Throws on a non-2xx response with the JSON error
+     * message. This is what powers the in-bubble "types as it thinks" effect.
+     */
+    suspend fun stream(
+        userPrompt: String,
+        systemPrompt: String? = null,
+        model: String = DEFAULT_MODEL,
+        onDelta: (String) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        val apiKey = AppSettings.appearance.first().anthropicApiKey
+            ?: throw IllegalStateException("Chiave API mancante")
+
+        val payload = JSONObject().apply {
+            put("model", model)
+            put("max_tokens", MAX_TOKENS)
+            put("stream", true)
+            if (!systemPrompt.isNullOrBlank()) put("system", systemPrompt)
+            put("messages", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", userPrompt)
+                })
+            })
+        }.toString()
+
+        val conn = (URL(API_URL).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            connectTimeout = 15_000
+            readTimeout = 120_000
+            setRequestProperty("x-api-key", apiKey)
+            setRequestProperty("anthropic-version", API_VERSION)
+            setRequestProperty("content-type", "application/json")
+            setRequestProperty("accept", "text/event-stream")
+        }
+
+        try {
+            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(payload) }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val body = conn.errorStream
+                    ?.let { BufferedReader(InputStreamReader(it, Charsets.UTF_8)).readText() } ?: ""
+                val err = runCatching {
+                    JSONObject(body).optJSONObject("error")?.optString("message")
+                }.getOrNull()
+                throw RuntimeException(err ?: "HTTP $code")
+            }
+            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    if (!line.startsWith("data:")) continue
+                    val data = line.removePrefix("data:").trim()
+                    if (data.isEmpty() || data == "[DONE]") continue
+                    val obj = runCatching { JSONObject(data) }.getOrNull() ?: continue
+                    when (obj.optString("type")) {
+                        "content_block_delta" -> {
+                            val delta = obj.optJSONObject("delta")
+                            if (delta?.optString("type") == "text_delta") {
+                                val text = delta.optString("text")
+                                if (text.isNotEmpty()) {
+                                    withContext(Dispatchers.Main) { onDelta(text) }
+                                }
+                            }
+                        }
+                        "message_stop" -> break
+                    }
+                }
+            }
+        } finally {
+            conn.disconnect()
+        }
+    }
 }

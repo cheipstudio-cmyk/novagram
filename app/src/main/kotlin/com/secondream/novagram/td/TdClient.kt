@@ -1385,6 +1385,25 @@ object TdClient {
     }
 
     /**
+     * Recent messages of ONE chat as chronological "Sender: text" lines, for
+     * the in-chat AI bubble (summarise / translate / free-form over this chat).
+     * Reuses the same preview + sender resolution as the cross-chat digest.
+     */
+    suspend fun chatRecentLines(chatId: Long, limit: Int = 30): List<String> {
+        val msgs = runCatching {
+            getChatHistory(chatId, 0L, limit).messages?.toList().orEmpty()
+        }.getOrNull().orEmpty()
+        return msgs
+            .asReversed() // TDLib returns newest-first; flip to chronological
+            .mapNotNull { m ->
+                val text = buildPreview(m).trim()
+                if (text.isBlank()) return@mapNotNull null
+                val who = resolveSenderName(m).trim()
+                if (who.isBlank()) text else "$who: $text"
+            }
+    }
+
+    /**
      * Search messages in a chat filtered by content type. Drives the
      * media-gallery tabs in ChatInfoDialog: pass a TdApi filter (e.g.
      * SearchMessagesFilterPhoto, SearchMessagesFilterDocument,
