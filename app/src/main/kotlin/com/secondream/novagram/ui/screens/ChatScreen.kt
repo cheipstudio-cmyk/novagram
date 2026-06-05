@@ -2050,6 +2050,7 @@ fun ChatScreen(
         }
     }
     var menuOpen by remember { mutableStateOf(false) }
+    var aiModalOpen by remember { mutableStateOf(false) }
     // Controls visibility of the self-destruct timer chooser dialog.
     // Set true by the menu item; the dialog itself clears it.
     var ttlDialogOpen by remember { mutableStateOf(false) }
@@ -2455,6 +2456,9 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { aiModalOpen = true }) {
+                        Icon(com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle, contentDescription = "Novagram AI")
+                    }
                     IconButton(onClick = { searchOpen = true }) {
                         Icon(com.secondream.novagram.ui.icons.PhosphorIcons.MagnifyingGlass, null)
                     }
@@ -3211,14 +3215,6 @@ fun ChatScreen(
                         )
                     }
                 }
-                com.secondream.novagram.ui.components.AiAssistantBubble(
-                    contextLabel = chatTitle,
-                    mode = com.secondream.novagram.ui.components.AiContext.CHAT,
-                    chatId = chatId,
-                    collapsedSize = 44.dp,
-                    endInset = 14.dp,
-                    bottomInset = 128.dp
-                )
             }
 
             // Mention picker (popup just above the input bar). The detection
@@ -4623,6 +4619,15 @@ fun ChatScreen(
         )
     }
     } // close back-swipe Box
+
+    if (aiModalOpen) {
+        com.secondream.novagram.ui.components.AiAssistantModal(
+            mode = com.secondream.novagram.ui.components.AiContext.CHAT,
+            contextLabel = chatTitle,
+            chatId = chatId,
+            onDismiss = { aiModalOpen = false }
+        )
+    }
 }
 
 /**

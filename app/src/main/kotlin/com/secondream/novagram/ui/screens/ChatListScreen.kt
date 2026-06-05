@@ -302,7 +302,6 @@ fun ChatListScreen(
         }
     }
 
-    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
     Scaffold(
         modifier = Modifier.nestedScroll(nestedScrollConnection),
         floatingActionButton = {
@@ -336,6 +335,25 @@ fun ChatListScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
+                if (appearance.aiRecapEnabled) {
+                    androidx.compose.material3.SmallFloatingActionButton(
+                        onClick = { showAiSummary = true },
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(
+                            defaultElevation = 0.dp,
+                            pressedElevation = 0.dp,
+                            focusedElevation = 0.dp,
+                            hoveredElevation = 0.dp
+                        )
+                    ) {
+                        Icon(
+                            com.secondream.novagram.ui.icons.PhosphorIcons.Sparkle,
+                            contentDescription = stringResource(R.string.ai_summary_fab_cd)
+                        )
+                    }
+                }
                 FloatingActionButton(
                     onClick = onNewChat,
                     interactionSource = fabInteraction,
@@ -721,17 +739,6 @@ fun ChatListScreen(
             }
         }
     }
-        if (appearance.aiRecapEnabled) {
-            com.secondream.novagram.ui.components.AiAssistantBubble(
-                contextLabel = "Tutte le chat",
-                mode = com.secondream.novagram.ui.components.AiContext.HOME,
-                collapsedSize = 56.dp,
-                endInset = 16.dp,
-                bottomInset = 86.dp,
-                navBarPadding = true
-            )
-        }
-    }
 
     chatActionTarget?.let { target ->
         val cachedChat = TdClient.getCachedChat(target.id)
@@ -828,7 +835,11 @@ fun ChatListScreen(
     }
 
     if (showAiSummary) {
-        com.secondream.novagram.ai.AiSummarySheet(onDismiss = { showAiSummary = false })
+        com.secondream.novagram.ui.components.AiAssistantModal(
+            mode = com.secondream.novagram.ui.components.AiContext.HOME,
+            contextLabel = "Tutte le chat",
+            onDismiss = { showAiSummary = false }
+        )
     }
 
     // Bot tapped in public search: choose what to do with it rather than just
