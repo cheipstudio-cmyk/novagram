@@ -46,6 +46,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -191,7 +192,11 @@ fun AiAssistantModal(
             "inventing precise menu names. ALWAYS reply in " + langName + ". Reply ONLY in " + langName +
             ", even if the user's message, the action buttons, or the chat context are written in another " +
             "language. Write in PLAIN TEXT: no Markdown, no asterisks, no headings, no code fences. Be concise " +
-            "and practical, lead with the answer, no filler preamble."
+            "and practical, lead with the answer, no filler preamble. When it would help the user continue " +
+            "without typing, you MAY end your reply with exactly one final line starting with 'SUGGEST::' " +
+            "followed by two or three very short tap-reply options separated by ' | ' (for example: " +
+            "SUGGEST:: Sì, procedi | No | Spiega meglio). Put nothing after that line, and omit it entirely " +
+            "when no natural follow-up exists."
         val citeByNumber = " Each message in the context is numbered like [1], [2]. When a specific message " +
             "is central to your answer, you may cite it by writing its number in square brackets, for example " +
             "[3]. Cite AT MOST one or two truly key messages in the whole reply, never more, only real numbers " +
@@ -309,6 +314,9 @@ fun AiAssistantModal(
             },
             AiTile("Bozza risposta", "Proponi cosa scrivere", AiGlyph.Reply) {
                 send("Proponi una risposta adatta all'ultimo messaggio di questa chat.")
+            },
+            AiTile("Cose da fare", "Estrai le azioni", AiGlyph.Info) {
+                send("Estrai una lista breve di cose da fare o azioni in sospeso emerse in questa chat.")
             }
         )
         AiContext.MESSAGE -> listOf(
@@ -344,6 +352,7 @@ fun AiAssistantModal(
                 }
             }
             val hPx = with(density) { maxHeight.toPx() }
+            val availH = maxHeight
             var visible by remember { mutableStateOf(false) }
             var everShown by remember { mutableStateOf(false) }
             LaunchedEffect(Unit) { visible = true; everShown = true }
@@ -368,7 +377,7 @@ fun AiAssistantModal(
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = maxHeight)
+                        .heightIn(max = availH)
                         .graphicsLayer {
                             scaleX = scale
                             scaleY = scale
@@ -563,6 +572,17 @@ fun AiAssistantModal(
                                 }
                             }
                         } else {
+                            val lastAssistant = convo.lastOrNull()?.takeIf { it.first == "assistant" }?.second
+                            val suggestions = remember(lastAssistant, streaming) {
+                                if (streaming || lastAssistant.isNullOrBlank()) emptyList()
+                                else Regex("(?im)^\\s*SUGGEST::\\s*(.+)$").find(lastAssistant)
+                                    ?.groupValues?.get(1)
+                                    ?.split("|")
+                                    ?.map { it.trim() }
+                                    ?.filter { it.isNotBlank() }
+                                    ?.take(3)
+                                    ?: emptyList()
+                            }
                             LazyColumn(
                                 state = listState,
                                 modifier = Modifier.fillMaxWidth(),
@@ -621,21 +641,17 @@ fun AiAssistantModal(
                                                 bottomStart = if (isUser) 18.dp else 5.dp,
                                                 bottomEnd = if (isUser) 5.dp else 18.dp
                                             ),
-                                            modifier = Modifier
-                                                .widthIn(max = 300.dp)
-                                                .pointerInput(body) {
-                                                    detectTapGestures(onLongPress = {
-                                                        clipboard.setText(AnnotatedString(body))
-                                                    })
-                                                }
+                                            modifier = Modifier.widthIn(max = 300.dp)
                                         ) {
                                             Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
                                                 if (isUser) {
-                                                    Text(
-                                                        body,
-                                                        fontSize = 14.sp,
-                                                        color = MaterialTheme.colorScheme.onSurface
-                                                    )
+                                                    SelectionContainer {
+                                                        Text(
+                                                            body,
+                                                            fontSize = 14.sp,
+                                                            color = MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                    }
                                                 } else {
                                                     Row(
                                                         verticalAlignment = Alignment.CenterVertically,
@@ -655,14 +671,30 @@ fun AiAssistantModal(
                                                             color = accent
                                                         )
                                                     }
-                                                    val rendered = remember(body) {
-                                                        buildAiText(body, accent, codeColor, onOpenTme)
+                                                    val visibleBody = remember(body) {
+                                                        body.replace(Regex("(?im)^\\s*SUGGEST::.*$"), "")
+                                                            .replace(Regex("\\s?\\[\\d+\\]"), "")
+                                                            .trimEnd()
                                                     }
-                                                    Text(
-                                                        rendered,
-                                                        fontSize = 14.sp,
-                                                        color = MaterialTheme.colorScheme.onSurface
-                                                    )
+                                                    val isStreamingLast = streaming && index == convo.lastIndex
+                                                    SelectionContainer {
+                                                        if (isStreamingLast) {
+                                                            Text(
+                                                                visibleBody,
+                                                                fontSize = 14.sp,
+                                                                color = MaterialTheme.colorScheme.onSurface
+                                                            )
+                                                        } else {
+                                                            val rendered = remember(visibleBody) {
+                                                                buildAiText(visibleBody, accent, codeColor, onOpenTme)
+                                                            }
+                                                            Text(
+                                                                rendered,
+                                                                fontSize = 14.sp,
+                                                                color = MaterialTheme.colorScheme.onSurface
+                                                            )
+                                                        }
+                                                    }
                                                     val citedRefs = remember(body, refs.size) {
                                                         Regex("\\[(\\d+)\\]").findAll(body)
                                                             .mapNotNull { it.groupValues[1].toIntOrNull() }
@@ -780,6 +812,36 @@ fun AiAssistantModal(
                                                             }
                                                         }
                                                     }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (suggestions.isNotEmpty()) {
+                                    item {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            suggestions.forEach { s ->
+                                                Surface(
+                                                    color = accent.copy(alpha = 0.12f),
+                                                    shape = RoundedCornerShape(18.dp),
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.30f)),
+                                                    modifier = Modifier.clickable(
+                                                        interactionSource = remember { MutableInteractionSource() },
+                                                        indication = null
+                                                    ) { send(s) }
+                                                ) {
+                                                    Text(
+                                                        s,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = accent,
+                                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
+                                                    )
                                                 }
                                             }
                                         }
