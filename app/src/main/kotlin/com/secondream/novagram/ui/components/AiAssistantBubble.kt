@@ -87,6 +87,7 @@ import com.secondream.novagram.ai.AiMemory
 import com.secondream.novagram.settings.AppSettings
 import com.secondream.novagram.td.TdClient
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
