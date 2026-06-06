@@ -89,6 +89,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.activity.compose.BackHandler
+import com.secondream.novagram.R
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import android.view.WindowManager
@@ -207,7 +209,13 @@ fun AiAssistantModal(
             "without typing, you MAY end your reply with exactly one final line starting with 'SUGGEST::' " +
             "followed by two or three very short tap-reply options separated by ' | ' (for example: " +
             "SUGGEST:: Sì, procedi | No | Spiega meglio). Put nothing after that line, and omit it entirely " +
-            "when no natural follow-up exists." + whoAmI +
+            "when no natural follow-up exists." +
+            " When you propose a concrete message the user could send as-is in this chat (for example " +
+            "because they asked you to draft, write, or translate a reply), put that exact message — and " +
+            "nothing else — on one final line starting with 'REPLY::', with no quotation marks around it, " +
+            "for example: REPLY:: Ciao, arrivo verso le 20. Include this line only when there is a single " +
+            "ready-to-send message; never invent one otherwise. If you add both REPLY:: and SUGGEST::, " +
+            "put REPLY:: first." + whoAmI +
             " In any chat context provided below, lines whose sender is \"You\" are the user's OWN " +
             "messages; every other sender is a different person. Use this to be personal and specific: " +
             "refer to what the user themselves said when it helps, and give concrete, actionable help — " +
@@ -264,7 +272,7 @@ fun AiAssistantModal(
             runCatching {
                 val key = AppSettings.appearance.first().anthropicApiKey
                 if (key.isNullOrBlank()) {
-                    error = "Manca la chiave API (Impostazioni)"
+                    error = ctx.getString(R.string.ai_error_no_key)
                     streaming = false
                     if (convo.isNotEmpty() && convo.last().first == "user") convo.removeAt(convo.lastIndex)
                     return@launch
@@ -280,11 +288,11 @@ fun AiAssistantModal(
                         convo[i] = "assistant" to (convo[i].second + delta)
                     }
                 }
-                if (!started) convo.add("assistant" to "(nessuna risposta)")
+                if (!started) convo.add("assistant" to ctx.getString(R.string.ai_no_response))
                 streaming = false
                 persist()
             }.onFailure {
-                error = it.message ?: "Errore"
+                error = it.message ?: ctx.getString(R.string.ai_error_generic)
                 streaming = false
                 if (convo.isNotEmpty() && convo.last().first == "user") convo.removeAt(convo.lastIndex)
             }
@@ -297,74 +305,66 @@ fun AiAssistantModal(
 
     val tiles = when (mode) {
         AiContext.HOME -> if (hasUnread) listOf(
-            AiTile("Riassumi le chat non lette", "Cosa ti sei perso", AiGlyph.Chats) {
-                send("Riassumi le mie chat non lette, raggruppando per chat.")
+            AiTile(ctx.getString(R.string.ai_tile_unread_summary_label), ctx.getString(R.string.ai_tile_unread_summary_sub), AiGlyph.Chats) {
+                send(ctx.getString(R.string.ai_tile_unread_summary_cmd))
             },
-            AiTile("Cosa richiede risposta", "Le cose urgenti", AiGlyph.Reply) {
-                send("Tra i messaggi non letti, dimmi cosa richiede una mia risposta o azione.")
+            AiTile(ctx.getString(R.string.ai_tile_needs_reply_label), ctx.getString(R.string.ai_tile_needs_reply_sub), AiGlyph.Reply) {
+                send(ctx.getString(R.string.ai_tile_needs_reply_cmd))
             },
-            AiTile("Cerca tra i messaggi", "Trova qualcosa", AiGlyph.Search) {
-                send("Aiutami a cercare qualcosa tra i miei messaggi recenti.")
+            AiTile(ctx.getString(R.string.ai_tile_search_label), ctx.getString(R.string.ai_tile_search_sub), AiGlyph.Search) {
+                send(ctx.getString(R.string.ai_tile_search_cmd))
             }
         ) else listOf(
-            AiTile("Riassumi una chat recente", "Aggiornami", AiGlyph.Chats) {
-                send("Riassumi cosa è successo di recente nelle mie chat principali.")
+            AiTile(ctx.getString(R.string.ai_tile_recent_summary_label), ctx.getString(R.string.ai_tile_recent_summary_sub), AiGlyph.Chats) {
+                send(ctx.getString(R.string.ai_tile_recent_summary_cmd))
             },
-            AiTile("Cerca tra i messaggi", "Trova qualcosa", AiGlyph.Search) {
-                send("Aiutami a cercare qualcosa tra i miei messaggi recenti.")
+            AiTile(ctx.getString(R.string.ai_tile_search_label), ctx.getString(R.string.ai_tile_search_sub), AiGlyph.Search) {
+                send(ctx.getString(R.string.ai_tile_search_cmd))
             },
-            AiTile("Consigli su Novagram", "Sfrutta meglio l'app", AiGlyph.Info) {
-                send("Dammi due o tre consigli pratici per sfruttare meglio Novagram in base a come uso le chat.")
+            AiTile(ctx.getString(R.string.ai_tile_tips_label), ctx.getString(R.string.ai_tile_tips_sub), AiGlyph.Info) {
+                send(ctx.getString(R.string.ai_tile_tips_cmd))
             }
         )
         AiContext.CHAT -> listOf(
-            AiTile("Riassumi questa chat", "Riepilogo recente", AiGlyph.Chats) {
-                send("Riassumi i messaggi recenti di questa chat.")
+            AiTile(ctx.getString(R.string.ai_tile_chat_summary_label), ctx.getString(R.string.ai_tile_chat_summary_sub), AiGlyph.Chats) {
+                send(ctx.getString(R.string.ai_tile_chat_summary_cmd))
             },
-            AiTile("Punti chiave", "I momenti importanti", AiGlyph.Info) {
-                send("Elenca i punti chiave e le decisioni prese in questa chat di recente.")
+            AiTile(ctx.getString(R.string.ai_tile_keypoints_label), ctx.getString(R.string.ai_tile_keypoints_sub), AiGlyph.Info) {
+                send(ctx.getString(R.string.ai_tile_keypoints_cmd))
             },
-            AiTile("Traduci", "Gli ultimi messaggi", AiGlyph.Translate) {
-                send("Traduci nella mia lingua gli ultimi messaggi di questa chat, tenendo i nomi.")
+            AiTile(ctx.getString(R.string.ai_tile_translate_label), ctx.getString(R.string.ai_tile_translate_chat_sub), AiGlyph.Translate) {
+                send(ctx.getString(R.string.ai_tile_translate_chat_cmd))
             },
-            AiTile("Bozza risposta", "Proponi cosa scrivere", AiGlyph.Reply) {
-                send("Proponi una risposta adatta all'ultimo messaggio di questa chat.")
+            AiTile(ctx.getString(R.string.ai_tile_draft_label), ctx.getString(R.string.ai_tile_draft_sub), AiGlyph.Reply) {
+                send(ctx.getString(R.string.ai_tile_draft_cmd))
             },
-            AiTile("Cose da fare", "Estrai le azioni", AiGlyph.Info) {
-                send("Estrai una lista breve di cose da fare o azioni in sospeso emerse in questa chat.")
+            AiTile(ctx.getString(R.string.ai_tile_todo_label), ctx.getString(R.string.ai_tile_todo_sub), AiGlyph.Info) {
+                send(ctx.getString(R.string.ai_tile_todo_cmd))
             }
         )
         AiContext.MESSAGE -> listOf(
-            AiTile("Rispondi", "Proponi una risposta", AiGlyph.Reply) {
-                send("Proponi una risposta breve e naturale a questo messaggio.")
+            AiTile(ctx.getString(R.string.ai_tile_reply_label), ctx.getString(R.string.ai_tile_reply_sub), AiGlyph.Reply) {
+                send(ctx.getString(R.string.ai_tile_reply_cmd))
             },
-            AiTile("Traduci", "Questo messaggio", AiGlyph.Translate) {
-                send("Traduci questo messaggio nella mia lingua.")
+            AiTile(ctx.getString(R.string.ai_tile_translate_label), ctx.getString(R.string.ai_tile_translate_msg_sub), AiGlyph.Translate) {
+                send(ctx.getString(R.string.ai_tile_translate_msg_cmd))
             },
-            AiTile("Spiega", "Cosa significa", AiGlyph.Info) {
-                send("Spiega in breve cosa significa questo messaggio.")
+            AiTile(ctx.getString(R.string.ai_tile_explain_label), ctx.getString(R.string.ai_tile_explain_sub), AiGlyph.Info) {
+                send(ctx.getString(R.string.ai_tile_explain_cmd))
             },
-            AiTile("Riassumi sopra", "Il thread fin qui", AiGlyph.Chats) {
-                send("Riassumi il thread di messaggi attorno a questo.")
+            AiTile(ctx.getString(R.string.ai_tile_thread_label), ctx.getString(R.string.ai_tile_thread_sub), AiGlyph.Chats) {
+                send(ctx.getString(R.string.ai_tile_thread_cmd))
             }
         )
     }
 
-    Dialog(
-        onDismissRequest = { onDismiss() },
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = true
-        )
-    ) {
+    // In-app overlay, NOT a Dialog. A Dialog renders in its own window where
+    // imePadding is unreliable on some OEMs (the keyboard covered the input).
+    // In the main window (edge-to-edge + adjustResize) the card lifts above the
+    // keyboard via imePadding. Every call site is a top-level sibling in the
+    // screen's nav container, so this Box fills the screen and overlays on top.
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
-            val view = LocalView.current
-            LaunchedEffect(Unit) {
-                (view.parent as? DialogWindowProvider)?.window?.setSoftInputMode(
-                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-                )
-            }
             val hPx = with(density) { maxHeight.toPx() }
             var visible by remember { mutableStateOf(false) }
             var everShown by remember { mutableStateOf(false) }
@@ -378,9 +378,27 @@ fun AiAssistantModal(
                 scope.launch { offsetY.snapTo((offsetY.value + delta).coerceAtLeast(0f)) }
             }
 
+            // Back button / gesture closes the overlay (the Dialog used to do this).
+            BackHandler(enabled = true) { close() }
+
+            // Dimmed scrim behind the card; tapping outside the card dismisses.
+            // Fades together with the card via the shared alpha.
             Box(
                 Modifier
                     .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.45f * alpha))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { close() }
+            )
+
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .imePadding()
                     .padding(16.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -394,7 +412,11 @@ fun AiAssistantModal(
                             this.alpha = alpha
                             translationY = offsetY.value
                             transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
-                        },
+                        }
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {},
                     shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.background,
                     tonalElevation = 6.dp
@@ -491,7 +513,7 @@ fun AiAssistantModal(
                                             modifier = Modifier.size(15.dp)
                                         )
                                         Spacer(Modifier.size(6.dp))
-                                        Text("Azzera", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = accent)
+                                        Text(ctx.getString(R.string.ai_reset), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = accent)
                                     }
                                 }
                                 Spacer(Modifier.size(8.dp))
@@ -509,7 +531,7 @@ fun AiAssistantModal(
                             ) {
                                 Icon(
                                     com.secondream.novagram.ui.icons.PhosphorIcons.X,
-                                    contentDescription = "Chiudi",
+                                    contentDescription = ctx.getString(R.string.ai_close_cd),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp)
                                 )
@@ -527,8 +549,8 @@ fun AiAssistantModal(
                                 verticalArrangement = Arrangement.Center
                             ) {
                                 Text(
-                                    if (mode == AiContext.MESSAGE) "Cosa faccio con questo messaggio?"
-                                    else "Come posso aiutarti?",
+                                    if (mode == AiContext.MESSAGE) ctx.getString(R.string.ai_empty_title_message)
+                                    else ctx.getString(R.string.ai_empty_title_default),
                                     fontSize = 20.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     fontFamily = FontFamily.Serif,
@@ -538,9 +560,9 @@ fun AiAssistantModal(
                                 Spacer(Modifier.height(6.dp))
                                 Text(
                                     if (mode == AiContext.MESSAGE)
-                                        "Scegli un'azione qui sotto, o scrivi una richiesta."
+                                        ctx.getString(R.string.ai_empty_sub_message)
                                     else
-                                        "Tengo il contesto della conversazione. Scegli un'azione, oppure scrivi qui sotto.",
+                                        ctx.getString(R.string.ai_empty_sub_default),
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -791,7 +813,7 @@ fun AiAssistantModal(
                                                                 modifier = Modifier.size(14.dp)
                                                             )
                                                             Spacer(Modifier.size(6.dp))
-                                                            Text("Vai al messaggio", fontSize = 12.sp, color = accent)
+                                                            Text(ctx.getString(R.string.ai_jump_to_message), fontSize = 12.sp, color = accent)
                                                         }
                                                     }
                                                     if (!isStreamingLast && body.isNotBlank()) {
@@ -801,17 +823,17 @@ fun AiAssistantModal(
                                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                         ) {
                                                             PillButton(
-                                                                "Copia",
+                                                                ctx.getString(R.string.ai_copy),
                                                                 com.secondream.novagram.ui.icons.PhosphorIcons.Copy,
                                                                 accent
                                                             ) { clipboard.setText(AnnotatedString(cleanAiText(body))) }
                                                             if (onReplyDraft != null) {
                                                                 PillButton(
-                                                                    "Usa come risposta",
+                                                                    ctx.getString(R.string.ai_use_as_reply),
                                                                     com.secondream.novagram.ui.icons.PhosphorIcons.Reply,
                                                                     accent
                                                                 ) {
-                                                                    onReplyDraft?.invoke(cleanAiText(body))
+                                                                    onReplyDraft?.invoke(extractReply(body) ?: cleanAiText(body))
                                                                     close()
                                                                 }
                                                             }
@@ -884,7 +906,7 @@ fun AiAssistantModal(
                             Box(Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
                                 if (input.isEmpty()) {
                                     Text(
-                                        "Scrivi a Novagram AI...",
+                                        ctx.getString(R.string.ai_input_placeholder),
                                         fontSize = 14.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -920,7 +942,7 @@ fun AiAssistantModal(
                         ) {
                             Icon(
                                 com.secondream.novagram.ui.icons.PhosphorIcons.ArrowUp,
-                                contentDescription = "Invia",
+                                contentDescription = ctx.getString(R.string.ai_send_cd),
                                 tint = onAccent,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -930,15 +952,29 @@ fun AiAssistantModal(
             }
             }
         }
-    }
 }
 
 /** Strips internal AI markers (SUGGEST line, [n] citation tags) so the text is
  *  clean for the user — for display, copy, and "use as reply". */
 private fun cleanAiText(s: String): String =
     s.replace(Regex("(?im)^\\s*SUGGEST::.*$"), "")
+        .replace(Regex("(?im)^\\s*REPLY::.*$"), "")
         .replace(Regex("\\s?\\[\\d+\\]"), "")
         .trim()
+
+/**
+ * Pull out the single ready-to-send message the model optionally marked with a
+ * final "REPLY::" line, so ctx.getString(R.string.ai_use_as_reply) inserts only that text (not the
+ * whole explanation bubble). Strips surrounding quotes/«». Null if absent.
+ */
+private fun extractReply(s: String): String? {
+    val raw = Regex("(?im)^\\s*REPLY::\\s*(.+)$").find(s)?.groupValues?.getOrNull(1)?.trim()
+        ?: return null
+    val unq = raw.removeSurrounding("\"")
+        .let { if (it.startsWith("«") && it.endsWith("»")) it.removeSurrounding("«", "»") else it }
+        .trim()
+    return unq.ifBlank { null }
+}
 
 @Composable
 private fun PillButton(
@@ -991,7 +1027,7 @@ private fun TypewriterText(full: String, cursorColor: Color) {
         while (true) { delay(450); blink = !blink }
     }
     val revealed = full.take(shown.coerceAtMost(full.length))
-    val visible = revealed.substringBefore("SUGGEST::")
+    val visible = revealed.substringBefore("SUGGEST::").substringBefore("REPLY::")
         .replace(Regex("\\s?\\[\\d+\\]"), "")
         .let { if (it.length < revealed.length) it.trimEnd() else it }
     Text(
