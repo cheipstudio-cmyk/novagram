@@ -701,7 +701,7 @@ fun AiAssistantModal(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .graphicsLayer {
-                                                alpha = bubbleEnter.value
+                                                this.alpha = bubbleEnter.value
                                                 translationY = (1f - bubbleEnter.value) * 16f
                                             },
                                         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
