@@ -4,6 +4,9 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -11,6 +14,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
@@ -63,6 +67,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
@@ -393,6 +398,13 @@ fun AiAssistantModal(
                     ) { close() }
             )
 
+            // When the keyboard is up, slide the card down so its input sits just
+            // above the keyboard (centered alignment left a big gap below it).
+            // Animate the bias so it rides down with the IME instead of snapping.
+            val imeUp = WindowInsets.ime.getBottom(density) > 0
+            val cardBias by animateFloatAsState(
+                if (imeUp) 1f else 0f, tween(220), label = "cardBias"
+            )
             Box(
                 Modifier
                     .fillMaxSize()
@@ -400,7 +412,7 @@ fun AiAssistantModal(
                     .navigationBarsPadding()
                     .imePadding()
                     .padding(16.dp),
-                contentAlignment = Alignment.Center
+                contentAlignment = BiasAlignment(0f, cardBias)
             ) {
                 Surface(
                     modifier = Modifier
@@ -545,9 +557,11 @@ fun AiAssistantModal(
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
                                     .padding(horizontal = 16.dp),
-                                verticalArrangement = Arrangement.Center
+                                verticalArrangement = Arrangement.Top
                             ) {
+                                Spacer(Modifier.height(8.dp))
                                 Text(
                                     if (mode == AiContext.MESSAGE) ctx.getString(R.string.ai_empty_title_message)
                                     else ctx.getString(R.string.ai_empty_title_default),
@@ -674,8 +688,22 @@ fun AiAssistantModal(
                                         else Regex("(?:https?://)?t\\.me/(?:c/[0-9]+/[0-9]+|[A-Za-z0-9_]+/[0-9]+)")
                                             .find(body)?.value
                                     }
+                                    val isLastMsg = index == convo.lastIndex
+                                    val bubbleEnter = remember(index) {
+                                        Animatable(if (isLastMsg) 0f else 1f)
+                                    }
+                                    LaunchedEffect(index, isLastMsg) {
+                                        if (isLastMsg && bubbleEnter.value < 1f) {
+                                            bubbleEnter.animateTo(1f, tween(300))
+                                        }
+                                    }
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .graphicsLayer {
+                                                alpha = bubbleEnter.value
+                                                translationY = (1f - bubbleEnter.value) * 16f
+                                            },
                                         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
                                     ) {
                                         Surface(
@@ -743,7 +771,18 @@ fun AiAssistantModal(
                                                     }
                                                     if (citedRefs.isNotEmpty() && onJumpMessage != null) {
                                                         Spacer(Modifier.height(9.dp))
-                                                        citedRefs.forEach { r ->
+                                                        citedRefs.forEachIndexed { ci, r ->
+                                                            var cardShown by remember(r.id) { mutableStateOf(false) }
+                                                            LaunchedEffect(r.id) {
+                                                                delay(140L + ci * 90L)
+                                                                cardShown = true
+                                                            }
+                                                            AnimatedVisibility(
+                                                                visible = cardShown,
+                                                                enter = fadeIn(tween(240)) +
+                                                                    slideInVertically(tween(240)) { it / 3 }
+                                                            ) {
+                                                              Column {
                                                             Row(
                                                                 verticalAlignment = Alignment.CenterVertically,
                                                                 modifier = Modifier
@@ -788,6 +827,8 @@ fun AiAssistantModal(
                                                                 )
                                                             }
                                                             Spacer(Modifier.height(6.dp))
+                                                              }
+                                                            }
                                                         }
                                                     }
                                                     if (jumpLink != null && onOpenTme != null) {
