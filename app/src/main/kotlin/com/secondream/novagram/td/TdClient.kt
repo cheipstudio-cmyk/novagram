@@ -1431,7 +1431,7 @@ object TdClient {
                     }
                     else -> { photo = null; seed = 0L }
                 }
-                MsgRef(m.id, who, photo, seed, text)
+                MsgRef(m.id, who, photo, seed, text, m.containsUnreadMention)
             }
     }
 
@@ -3346,7 +3346,8 @@ data class MsgRef(
     val sender: String,
     val photo: org.drinkless.tdlib.TdApi.File?,
     val colorSeed: Long,
-    val text: String
+    val text: String,
+    val mention: Boolean
 )
 
 data class ChatSummary(

@@ -3924,6 +3924,7 @@ fun ChatScreen(
             chatId = chatId,
             focusText = text,
             focusSender = senderName,
+            focusMessageId = target.id,
             onReplyDraft = { aiReply ->
                 input = androidx.compose.ui.text.input.TextFieldValue(
                     aiReply,
@@ -4600,6 +4601,12 @@ fun ChatScreen(
             mode = com.secondream.novagram.ui.components.AiContext.CHAT,
             contextLabel = chatTitle,
             chatId = chatId,
+            onReplyDraft = { aiReply ->
+                input = androidx.compose.ui.text.input.TextFieldValue(
+                    aiReply,
+                    androidx.compose.ui.text.TextRange(aiReply.length)
+                )
+            },
             onOpenTme = { url ->
                 aiModalOpen = false
                 openTelegramLink(android.net.Uri.parse(url))

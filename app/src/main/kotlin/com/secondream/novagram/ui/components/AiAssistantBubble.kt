@@ -118,6 +118,7 @@ fun AiAssistantModal(
     chatId: Long = 0L,
     focusText: String? = null,
     focusSender: String? = null,
+    focusMessageId: Long = 0L,
     onReplyDraft: ((String) -> Unit)? = null,
     onOpenTme: ((String) -> Unit)? = null,
     onJumpMessage: ((Long) -> Unit)? = null,
@@ -130,10 +131,11 @@ fun AiAssistantModal(
 
     val persistKey = when (mode) {
         AiContext.HOME -> "home"
-        // MESSAGE shares the chat's session: a thread started from a single
-        // message keeps living in the same chat-level AI, so it survives close
-        // and reopening from the top AI button continues it instead of losing it.
-        AiContext.CHAT, AiContext.MESSAGE -> "chat:$chatId"
+        AiContext.CHAT -> "chat:$chatId"
+        // A single-message thread is its OWN session, keyed by that message, so
+        // it never mixes with the chat-level AI opened from the top bar. Opening
+        // the same message again resumes it; the top bar stays a separate thread.
+        AiContext.MESSAGE -> if (focusMessageId != 0L) "msg:$chatId:$focusMessageId" else null
     }
 
     val convo = remember { mutableStateListOf<Pair<String, String>>() }
@@ -207,8 +209,7 @@ fun AiAssistantModal(
                 val digest = if (unread.isNotEmpty()) unread else TdClient.recentChatsDigest()
                 val label = if (unread.isNotEmpty()) "unread messages" else "recent messages"
                 val block = digest.joinToString("\n\n") { "## " + it.title + "\n" + it.lines.joinToString("\n") }
-                base + " When you refer to a specific message, include its t.me link so it becomes tappable." +
-                    "\n\nThe user's " + label + " across chats:\n<chats>\n" +
+                base + "\n\nThe user's " + label + " across chats:\n<chats>\n" +
                     (block.ifBlank { "(none)" }) + "\n</chats>"
             }
             AiContext.CHAT -> {
@@ -277,7 +278,7 @@ fun AiAssistantModal(
     }
 
     LaunchedEffect(convo.size, convo.lastOrNull()?.second?.length, streaming) {
-        if (convo.isNotEmpty()) runCatching { listState.scrollToItem(convo.size) }
+        if (convo.isNotEmpty()) runCatching { listState.scrollToItem(convo.size, 100000) }
     }
 
     val tiles = when (mode) {
@@ -339,20 +340,18 @@ fun AiAssistantModal(
         onDismissRequest = { onDismiss() },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
+            decorFitsSystemWindows = true
         )
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
             val view = LocalView.current
             LaunchedEffect(Unit) {
-                (view.parent as? DialogWindowProvider)?.window?.let { w ->
-                    w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-                    WindowCompat.setDecorFitsSystemWindows(w, false)
-                }
+                (view.parent as? DialogWindowProvider)?.window?.setSoftInputMode(
+                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                )
             }
             val hPx = with(density) { maxHeight.toPx() }
-            val availH = maxHeight
             var visible by remember { mutableStateOf(false) }
             var everShown by remember { mutableStateOf(false) }
             LaunchedEffect(Unit) { visible = true; everShown = true }
@@ -368,16 +367,13 @@ fun AiAssistantModal(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .imePadding()
                     .padding(16.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = availH)
+                        .fillMaxHeight(0.66f)
                         .graphicsLayer {
                             scaleX = scale
                             scaleY = scale
@@ -389,7 +385,7 @@ fun AiAssistantModal(
                     color = MaterialTheme.colorScheme.background,
                     tonalElevation = 6.dp
                 ) {
-                    Column(Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxSize()) {
                     // Drag handle + header (this region is the drag-to-dismiss zone).
                     Column(
                         Modifier
@@ -456,22 +452,35 @@ fun AiAssistantModal(
                                 )
                             }
                             if (convo.isNotEmpty()) {
-                                Box(
-                                    Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null
-                                        ) {
-                                            convo.clear()
-                                            error = null
-                                            systemPrompt = null
-                                            if (persistKey != null) scope.launch { AiMemory.clear(ctx, persistKey) }
-                                        }
-                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                Surface(
+                                    color = accent.copy(alpha = 0.12f),
+                                    shape = RoundedCornerShape(14.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.28f)),
+                                    modifier = Modifier.clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) {
+                                        convo.clear()
+                                        error = null
+                                        systemPrompt = null
+                                        if (persistKey != null) scope.launch { AiMemory.clear(ctx, persistKey) }
+                                    }
                                 ) {
-                                    Text("Azzera", fontSize = 13.sp, color = accent)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                                    ) {
+                                        Icon(
+                                            com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                                            contentDescription = null,
+                                            tint = accent,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(Modifier.size(6.dp))
+                                        Text("Azzera", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = accent)
+                                    }
                                 }
+                                Spacer(Modifier.size(8.dp))
                             }
                             Box(
                                 Modifier
@@ -495,12 +504,13 @@ fun AiAssistantModal(
                     }
 
                     // Body: starter tiles when empty, else the conversation.
-                    Box(Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                    Box(Modifier.fillMaxWidth().weight(1f)) {
                         if (convo.isEmpty() && error == null) {
                             Column(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                                    .fillMaxSize()
+                                    .padding(horizontal = 16.dp),
+                                verticalArrangement = Arrangement.Center
                             ) {
                                 Text(
                                     if (mode == AiContext.MESSAGE) "Cosa faccio con questo messaggio?"
@@ -585,7 +595,7 @@ fun AiAssistantModal(
                             }
                             LazyColumn(
                                 state = listState,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxSize(),
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                                     start = 14.dp, end = 14.dp, top = 6.dp, bottom = 6.dp
                                 ),
@@ -671,20 +681,16 @@ fun AiAssistantModal(
                                                             color = accent
                                                         )
                                                     }
-                                                    val visibleBody = remember(body) {
-                                                        body.replace(Regex("(?im)^\\s*SUGGEST::.*$"), "")
-                                                            .replace(Regex("\\s?\\[\\d+\\]"), "")
-                                                            .trimEnd()
-                                                    }
                                                     val isStreamingLast = streaming && index == convo.lastIndex
                                                     SelectionContainer {
                                                         if (isStreamingLast) {
-                                                            Text(
-                                                                visibleBody,
-                                                                fontSize = 14.sp,
-                                                                color = MaterialTheme.colorScheme.onSurface
-                                                            )
+                                                            TypewriterText(body, accent)
                                                         } else {
+                                                            val visibleBody = remember(body) {
+                                                                body.replace(Regex("(?im)^\\s*SUGGEST::.*$"), "")
+                                                                    .replace(Regex("\\s?\\[\\d+\\]"), "")
+                                                                    .trimEnd()
+                                                            }
                                                             val rendered = remember(visibleBody) {
                                                                 buildAiText(visibleBody, accent, codeColor, onOpenTme)
                                                             }
@@ -700,6 +706,7 @@ fun AiAssistantModal(
                                                             .mapNotNull { it.groupValues[1].toIntOrNull() }
                                                             .distinct()
                                                             .mapNotNull { n -> refs.getOrNull(n - 1) }
+                                                            .filter { it.mention }
                                                             .take(2)
                                                             .toList()
                                                     }
@@ -778,7 +785,7 @@ fun AiAssistantModal(
                                                             Text("Vai al messaggio", fontSize = 12.sp, color = accent)
                                                         }
                                                     }
-                                                    if (!streaming && index == convo.lastIndex && body.isNotBlank()) {
+                                                    if (!isStreamingLast && body.isNotBlank()) {
                                                         Spacer(Modifier.height(8.dp))
                                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                                             Box(
@@ -792,7 +799,7 @@ fun AiAssistantModal(
                                                             ) {
                                                                 Text("Copia", fontSize = 12.sp, color = accent)
                                                             }
-                                                            if (mode == AiContext.MESSAGE && onReplyDraft != null) {
+                                                            if (onReplyDraft != null) {
                                                                 Spacer(Modifier.size(14.dp))
                                                                 Box(
                                                                     Modifier
@@ -801,7 +808,7 @@ fun AiAssistantModal(
                                                                             interactionSource = remember { MutableInteractionSource() },
                                                                             indication = null
                                                                         ) {
-                                                                            onReplyDraft(body)
+                                                                            onReplyDraft?.invoke(body)
                                                                             close()
                                                                         }
                                                                         .padding(vertical = 4.dp, horizontal = 4.dp)
@@ -942,6 +949,35 @@ fun AiAssistantModal(
             }
         }
     }
+}
+
+@Composable
+private fun TypewriterText(full: String, cursorColor: Color) {
+    // Reveal text smoothly char-by-char regardless of how the network delivers
+    // chunks, like ChatGPT. `shown` advances toward the current length and
+    // accelerates when it falls behind, so it never feels stuck or blocky.
+    var shown by remember { mutableStateOf(0) }
+    LaunchedEffect(full) {
+        if (shown > full.length) shown = full.length
+        while (shown < full.length) {
+            val remaining = full.length - shown
+            shown += (remaining / 6).coerceIn(1, 12)
+            delay(16)
+        }
+    }
+    var blink by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        while (true) { delay(450); blink = !blink }
+    }
+    val revealed = full.take(shown.coerceAtMost(full.length))
+    val visible = revealed.substringBefore("SUGGEST::").let {
+        if (it.length < revealed.length) it.trimEnd() else it
+    }
+    Text(
+        visible + if (blink) "▌" else "",
+        fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurface
+    )
 }
 
 @Composable
