@@ -885,6 +885,19 @@ object TdClient {
     }
 
     /**
+     * Sender label used when feeding messages to the AI assistant. The
+     * logged-in user's OWN messages are labelled "You" (instead of their real
+     * name) so the model knows which lines are the user's and can give
+     * personal, concrete help ("you said X, you could reply Y"). Everyone else
+     * keeps their resolved display name.
+     */
+    fun aiSenderName(message: TdApi.Message): String {
+        val s = message.senderId
+        if (s is TdApi.MessageSenderUser && cachedMyUserId != 0L && s.userId == cachedMyUserId) return "You"
+        return resolveSenderName(message).trim()
+    }
+
+    /**
      * Human-readable description of a "service"/system message — someone
      * joining or leaving, a pinned message, a renamed group, a video chat,
      * a screenshot, and so on. These carry no MessageText, so without this
@@ -1398,7 +1411,7 @@ object TdClient {
             .mapNotNull { m ->
                 val text = buildPreview(m).trim()
                 if (text.isBlank()) return@mapNotNull null
-                val who = resolveSenderName(m).trim()
+                val who = aiSenderName(m)
                 if (who.isBlank()) text else "$who: $text"
             }
     }
@@ -1417,7 +1430,7 @@ object TdClient {
             .mapNotNull { m ->
                 val text = buildPreview(m).trim()
                 if (text.isBlank()) return@mapNotNull null
-                val who = resolveSenderName(m).trim().ifBlank { "?" }
+                val who = aiSenderName(m).ifBlank { "?" }
                 val photo: TdApi.File?
                 val seed: Long
                 when (val s = m.senderId) {
@@ -1455,7 +1468,7 @@ object TdClient {
                 .mapNotNull { m ->
                     val text = buildPreview(m).trim()
                     if (text.isBlank()) return@mapNotNull null
-                    val who = resolveSenderName(m).trim()
+                    val who = aiSenderName(m)
                     if (who.isBlank()) text else "$who: $text"
                 }
             if (lines.isNotEmpty()) out += ChatUnreadDigest(cs.title, lines)

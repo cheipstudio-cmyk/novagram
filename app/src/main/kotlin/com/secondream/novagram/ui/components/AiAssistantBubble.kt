@@ -17,7 +17,9 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -67,6 +69,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -183,23 +186,33 @@ fun AiAssistantModal(
         else
             java.util.Locale.forLanguageTag(tag)
         val langName = loc.getDisplayLanguage(java.util.Locale.ENGLISH).ifBlank { "English" }
+        val myName = runCatching { TdClient.getMe().firstName.trim() }.getOrNull().orEmpty()
+        val whoAmI = if (myName.isNotBlank())
+            " The person using Novagram, the one you are helping, is named " + myName + "."
+        else ""
         val base = "You are Novagram AI, the built-in assistant of Novagram — a fast, independent Android " +
             "client for Telegram, built in Kotlin and Jetpack Compose (it is NOT the official Telegram app). " +
-            "You help the user both with their chats and with using Novagram itself. Novagram's main features: " +
-            "multiple accounts, custom themes with imported chat backgrounds, chat folders, message reactions " +
-            "and mentions, a per-chat media gallery (photos, videos, files, links, voice, music), voice notes " +
-            "with adjustable playback speed, message forwarding and replies, protected-content handling, bot " +
-            "slash-commands and inline keyboards, and this AI assistant. It ships via Google Play and GitHub " +
-            "Releases. When the user asks about Novagram, answer about Novagram and never imply they are on the " +
-            "official Telegram app; if you are unsure of an exact step, give general guidance instead of " +
-            "inventing precise menu names. ALWAYS reply in " + langName + ". Reply ONLY in " + langName +
+            "You help the user both with their chats and with using Novagram itself. Features Novagram has: " +
+            "custom themes with imported chat backgrounds, message reactions and mentions, a per-chat media " +
+            "gallery (photos, videos, files, links, voice, music), voice notes with adjustable playback speed, " +
+            "message forwarding and replies, protected-content handling, bot slash-commands and inline " +
+            "keyboards, and this AI assistant. It ships via Google Play and GitHub Releases. IMPORTANT: " +
+            "Novagram does NOT have chat folders — never tell the user to create or use folders. Never " +
+            "recommend a feature unless you are sure Novagram has it; if unsure whether a feature exists, say " +
+            "you're not certain rather than inventing menus or steps. Never imply the user is on the official " +
+            "Telegram app. ALWAYS reply in " + langName + ". Reply ONLY in " + langName +
             ", even if the user's message, the action buttons, or the chat context are written in another " +
             "language. Write in PLAIN TEXT: no Markdown, no asterisks, no headings, no code fences. Be concise " +
             "and practical, lead with the answer, no filler preamble. When it would help the user continue " +
             "without typing, you MAY end your reply with exactly one final line starting with 'SUGGEST::' " +
             "followed by two or three very short tap-reply options separated by ' | ' (for example: " +
             "SUGGEST:: Sì, procedi | No | Spiega meglio). Put nothing after that line, and omit it entirely " +
-            "when no natural follow-up exists."
+            "when no natural follow-up exists." + whoAmI +
+            " In any chat context provided below, lines whose sender is \"You\" are the user's OWN " +
+            "messages; every other sender is a different person. Use this to be personal and specific: " +
+            "refer to what the user themselves said when it helps, and give concrete, actionable help — " +
+            "for example propose an exact reply they could send, or point out what they still need to " +
+            "answer or decide. Avoid generic advice that ignores their actual situation."
         val citeByNumber = " Each message in the context is numbered like [1], [2]. When a specific message " +
             "is central to your answer, you may cite it by writing its number in square brackets, for example " +
             "[3]. Cite AT MOST one or two truly key messages in the whole reply, never more, only real numbers " +
@@ -687,11 +700,7 @@ fun AiAssistantModal(
                                                         if (isStreamingLast) {
                                                             TypewriterText(body, accent)
                                                         } else {
-                                                            val visibleBody = remember(body) {
-                                                                body.replace(Regex("(?im)^\\s*SUGGEST::.*$"), "")
-                                                                    .replace(Regex("\\s?\\[\\d+\\]"), "")
-                                                                    .trimEnd()
-                                                            }
+                                                            val visibleBody = remember(body) { cleanAiText(body) }
                                                             val rendered = remember(visibleBody) {
                                                                 buildAiText(visibleBody, accent, codeColor, onOpenTme)
                                                             }
@@ -707,7 +716,6 @@ fun AiAssistantModal(
                                                             .mapNotNull { it.groupValues[1].toIntOrNull() }
                                                             .distinct()
                                                             .mapNotNull { n -> refs.getOrNull(n - 1) }
-                                                            .filter { it.mention }
                                                             .take(2)
                                                             .toList()
                                                     }
@@ -788,35 +796,24 @@ fun AiAssistantModal(
                                                     }
                                                     if (!isStreamingLast && body.isNotBlank()) {
                                                         Spacer(Modifier.height(8.dp))
-                                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                                            Box(
-                                                                Modifier
-                                                                    .clip(RoundedCornerShape(8.dp))
-                                                                    .clickable(
-                                                                        interactionSource = remember { MutableInteractionSource() },
-                                                                        indication = null
-                                                                    ) { clipboard.setText(AnnotatedString(body)) }
-                                                                    .padding(vertical = 4.dp, horizontal = 4.dp)
-                                                            ) {
-                                                                Text("Copia", fontSize = 12.sp, color = accent)
-                                                            }
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                        ) {
+                                                            PillButton(
+                                                                "Copia",
+                                                                com.secondream.novagram.ui.icons.PhosphorIcons.Copy,
+                                                                accent
+                                                            ) { clipboard.setText(AnnotatedString(cleanAiText(body))) }
                                                             if (onReplyDraft != null) {
-                                                                Spacer(Modifier.size(14.dp))
-                                                                Box(
-                                                                    Modifier
-                                                                        .clip(RoundedCornerShape(8.dp))
-                                                                        .clickable(
-                                                                            interactionSource = remember { MutableInteractionSource() },
-                                                                            indication = null
-                                                                        ) {
-                                                                            onReplyDraft?.invoke(body)
-                                                                            close()
-                                                                        }
-                                                                        .padding(vertical = 4.dp, horizontal = 4.dp)
+                                                                PillButton(
+                                                                    "Usa come risposta",
+                                                                    com.secondream.novagram.ui.icons.PhosphorIcons.Reply,
+                                                                    accent
                                                                 ) {
-                                                                    Text("Usa come risposta", fontSize = 12.sp, color = accent)
+                                                                    onReplyDraft?.invoke(cleanAiText(body))
+                                                                    close()
                                                                 }
-                                                                Spacer(Modifier.size(14.dp))
                                                             }
                                                         }
                                                     }
@@ -834,23 +831,7 @@ fun AiAssistantModal(
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             suggestions.forEach { s ->
-                                                Surface(
-                                                    color = accent.copy(alpha = 0.12f),
-                                                    shape = RoundedCornerShape(18.dp),
-                                                    border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.30f)),
-                                                    modifier = Modifier.clickable(
-                                                        interactionSource = remember { MutableInteractionSource() },
-                                                        indication = null
-                                                    ) { send(s) }
-                                                ) {
-                                                    Text(
-                                                        s,
-                                                        fontSize = 13.sp,
-                                                        fontWeight = FontWeight.Medium,
-                                                        color = accent,
-                                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
-                                                    )
-                                                }
+                                                PillButton(s, null, accent, filled = true) { send(s) }
                                             }
                                         }
                                     }
@@ -952,6 +933,45 @@ fun AiAssistantModal(
     }
 }
 
+/** Strips internal AI markers (SUGGEST line, [n] citation tags) so the text is
+ *  clean for the user — for display, copy, and "use as reply". */
+private fun cleanAiText(s: String): String =
+    s.replace(Regex("(?im)^\\s*SUGGEST::.*$"), "")
+        .replace(Regex("\\s?\\[\\d+\\]"), "")
+        .trim()
+
+@Composable
+private fun PillButton(
+    label: String,
+    icon: ImageVector?,
+    accent: Color,
+    filled: Boolean = false,
+    onClick: () -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.93f else 1f, label = "pill")
+    Surface(
+        color = accent.copy(alpha = if (filled) 0.16f else 0.10f),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.28f)),
+        modifier = Modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clickable(interactionSource = interaction, indication = null) { onClick() }
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            if (icon != null) {
+                Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.size(6.dp))
+            }
+            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = accent)
+        }
+    }
+}
+
 @Composable
 private fun TypewriterText(full: String, cursorColor: Color) {
     // Reveal text smoothly char-by-char regardless of how the network delivers
@@ -971,9 +991,9 @@ private fun TypewriterText(full: String, cursorColor: Color) {
         while (true) { delay(450); blink = !blink }
     }
     val revealed = full.take(shown.coerceAtMost(full.length))
-    val visible = revealed.substringBefore("SUGGEST::").let {
-        if (it.length < revealed.length) it.trimEnd() else it
-    }
+    val visible = revealed.substringBefore("SUGGEST::")
+        .replace(Regex("\\s?\\[\\d+\\]"), "")
+        .let { if (it.length < revealed.length) it.trimEnd() else it }
     Text(
         visible + if (blink) "▌" else "",
         fontSize = 14.sp,
