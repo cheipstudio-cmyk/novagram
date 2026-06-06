@@ -857,7 +857,62 @@ fun AiAssistantModal(
                                                             Text(ctx.getString(R.string.ai_jump_to_message), fontSize = 12.sp, color = accent)
                                                         }
                                                     }
+                                                    val proposedReply = remember(body) { extractReply(body) }
                                                     if (!isStreamingLast && body.isNotBlank()) {
+                                                        if (proposedReply != null && onReplyDraft != null) {
+                                                            Spacer(Modifier.height(9.dp))
+                                                            var replyShown by remember(body) { mutableStateOf(false) }
+                                                            LaunchedEffect(body) { delay(120L); replyShown = true }
+                                                            AnimatedVisibility(
+                                                                visible = replyShown,
+                                                                enter = fadeIn(tween(240)) +
+                                                                    slideInVertically(tween(240)) { it / 3 }
+                                                            ) {
+                                                                Column(
+                                                                    Modifier
+                                                                        .fillMaxWidth()
+                                                                        .clip(RoundedCornerShape(14.dp))
+                                                                        .background(accent.copy(alpha = 0.13f))
+                                                                        .clickable(
+                                                                            interactionSource = remember { MutableInteractionSource() },
+                                                                            indication = null
+                                                                        ) {
+                                                                            onReplyDraft?.invoke(proposedReply)
+                                                                            close()
+                                                                        }
+                                                                        .padding(12.dp)
+                                                                ) {
+                                                                    Text(
+                                                                        ctx.getString(R.string.ai_proposed_reply),
+                                                                        fontSize = 11.sp,
+                                                                        fontWeight = FontWeight.SemiBold,
+                                                                        color = accent
+                                                                    )
+                                                                    Spacer(Modifier.height(5.dp))
+                                                                    Text(
+                                                                        proposedReply,
+                                                                        fontSize = 14.sp,
+                                                                        color = MaterialTheme.colorScheme.onSurface
+                                                                    )
+                                                                    Spacer(Modifier.height(9.dp))
+                                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                                        Icon(
+                                                                            com.secondream.novagram.ui.icons.PhosphorIcons.Reply,
+                                                                            contentDescription = null,
+                                                                            tint = accent,
+                                                                            modifier = Modifier.size(15.dp)
+                                                                        )
+                                                                        Spacer(Modifier.size(6.dp))
+                                                                        Text(
+                                                                            ctx.getString(R.string.ai_use_as_reply),
+                                                                            fontSize = 12.sp,
+                                                                            fontWeight = FontWeight.Medium,
+                                                                            color = accent
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
                                                         Spacer(Modifier.height(8.dp))
                                                         Row(
                                                             verticalAlignment = Alignment.CenterVertically,
@@ -867,14 +922,18 @@ fun AiAssistantModal(
                                                                 ctx.getString(R.string.ai_copy),
                                                                 com.secondream.novagram.ui.icons.PhosphorIcons.Copy,
                                                                 accent
-                                                            ) { clipboard.setText(AnnotatedString(cleanAiText(body))) }
-                                                            if (onReplyDraft != null) {
+                                                            ) {
+                                                                clipboard.setText(
+                                                                    AnnotatedString(proposedReply ?: cleanAiText(body))
+                                                                )
+                                                            }
+                                                            if (onReplyDraft != null && proposedReply == null) {
                                                                 PillButton(
                                                                     ctx.getString(R.string.ai_use_as_reply),
                                                                     com.secondream.novagram.ui.icons.PhosphorIcons.Reply,
                                                                     accent
                                                                 ) {
-                                                                    onReplyDraft?.invoke(extractReply(body) ?: cleanAiText(body))
+                                                                    onReplyDraft?.invoke(cleanAiText(body))
                                                                     close()
                                                                 }
                                                             }

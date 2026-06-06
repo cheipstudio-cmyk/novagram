@@ -645,4 +645,5 @@
     <string name="ai_tile_thread_label">Riassumi sopra</string>
     <string name="ai_tile_thread_sub">Il thread fin qui</string>
     <string name="ai_tile_thread_cmd">Riassumi il thread di messaggi attorno a questo.</string>
+    <string name="ai_proposed_reply">Risposta proposta</string>
 </resources>

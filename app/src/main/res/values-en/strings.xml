@@ -631,4 +631,5 @@
     <string name="ai_tile_thread_label">Summarize above</string>
     <string name="ai_tile_thread_sub">The thread so far</string>
     <string name="ai_tile_thread_cmd">Summarize the thread of messages around this one.</string>
+    <string name="ai_proposed_reply">Suggested reply</string>
 </resources>

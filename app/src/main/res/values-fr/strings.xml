@@ -631,4 +631,5 @@
     <string name="ai_tile_thread_label">Résumer ci-dessus</string>
     <string name="ai_tile_thread_sub">Le fil jusqu\'ici</string>
     <string name="ai_tile_thread_cmd">Résume le fil de messages autour de celui-ci.</string>
+    <string name="ai_proposed_reply">Réponse proposée</string>
 </resources>
