@@ -35,6 +35,8 @@ fun NovaTheme(
     messageScale: Float = 1.0f,
     /** In-chat message-body line-height multiplier (1.0 = default), independent of [messageScale]. */
     messageLineSpacing: Float = 1.0f,
+    /** Whether haptic feedback fires app-wide (provided via LocalHapticsEnabled). */
+    hapticsEnabled: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val isDark = when (themeMode) {
@@ -189,6 +191,7 @@ fun NovaTheme(
         androidx.compose.runtime.CompositionLocalProvider(
             LocalMessageTextScale provides messageScale,
             LocalMessageLineSpacing provides messageLineSpacing,
+            LocalHapticsEnabled provides hapticsEnabled,
             content = content
         )
     }

@@ -216,7 +216,7 @@ fun MessageBubble(
     val triggerPx = with(density) { 64.dp.toPx() }
     val maxPx = with(density) { 120.dp.toPx() }
     val animatedOffset by animateFloatAsState(targetValue = swipeOffset, label = "swipe-reply")
-    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val haptics = com.secondream.novagram.util.rememberHaptics()
     var hapticFired by remember(message.id) { mutableStateOf(false) }
     // Coroutine scope + Android context for the bubble click handler:
     // we need to ask TDLib for the *current* file state at tap time (in
@@ -279,7 +279,7 @@ fun MessageBubble(
                         swipeOffset = if (swap) proposed.coerceIn(-maxPx, 0f)
                                       else proposed.coerceIn(0f, maxPx)
                         if (!hapticFired && kotlin.math.abs(swipeOffset) >= triggerPx) {
-                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            haptics.longPress()
                             hapticFired = true
                         }
                     }
@@ -308,9 +308,7 @@ fun MessageBubble(
                     // cancel the pending timer.
                     val timerJob = tapScope.launch {
                         kotlinx.coroutines.delay(300L)
-                        haptic.performHapticFeedback(
-                            androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
-                        )
+                        haptics.longPress()
                         longPressFired = true
                         // Consume the original DOWN so any child gesture
                         // detector (notably ClickableText used by

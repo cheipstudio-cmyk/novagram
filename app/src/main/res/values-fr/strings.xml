@@ -632,4 +632,8 @@
     <string name="ai_tile_thread_sub">Le fil jusqu\'ici</string>
     <string name="ai_tile_thread_cmd">Résume le fil de messages autour de celui-ci.</string>
     <string name="ai_proposed_reply">Réponse proposée</string>
+    <string name="settings_haptics">Retour haptique</string>
+    <string name="settings_haptics_desc">Retour tactile à l\'envoi, aux réactions, à l\'appui long et plus</string>
+    <string name="settings_autocaps">Majuscule automatique</string>
+    <string name="settings_autocaps_desc">Met une majuscule en début de phrase quand tu écris un message</string>
 </resources>

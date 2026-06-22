@@ -46,6 +46,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.content.contentReceiver
 import androidx.compose.foundation.content.consume
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -249,6 +251,7 @@ fun ChatScreen(
     targetMessageId: Long? = null
 ) {
     val context = LocalContext.current
+    val haptics = com.secondream.novagram.util.rememberHaptics()
     val scope = rememberCoroutineScope()
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     val messages = remember(chatId) { ChatMessageCache.forChat(chatId) }
@@ -1849,6 +1852,14 @@ fun ChatScreen(
                     val near = kotlin.math.abs(li - firstVis) <= 12
                     if (animate && near) {
                         runCatching { listState.animateScrollToItem(li, rest) }
+                        // Pixel-exact correction. animateScrollToItem on a
+                        // variable-height reverseLayout list estimates item
+                        // heights mid-flight and lands a little HIGH (the
+                        // "freccette ricerca / badge atterrano troppo in alto"
+                        // case). After the smooth hop, snap to the exact offset
+                        // — a sub-pixel no-op visually, but it locks the target
+                        // on the SAME 0.40*vp spot the instant path uses.
+                        runCatching { listState.scrollToItem(li, rest) }
                     } else {
                         runCatching { listState.scrollToItem(li, rest) }
                     }
@@ -3444,6 +3455,7 @@ fun ChatScreen(
             InputBar(
                 value = input,
                 onValueChange = { input = it },
+                autoCapitalize = appearance.autoCapitalize,
                 placeholderText = if (pendingMedia.isNotEmpty())
                     stringResource(R.string.media_caption_hint)
                 else null,
@@ -3452,6 +3464,11 @@ fun ChatScreen(
                     val media = pendingMedia
                     val rid = replyTarget?.id
                     val editing = editTarget
+                    // Crisp tick on an actual new outgoing message (not edits).
+                    // Gated by the Settings vibration switch via the helper.
+                    if (editing == null && (text.isNotEmpty() || media.isNotEmpty())) {
+                        haptics.tick()
+                    }
                     // Send blip ("toc") — only for an actual new outgoing
                     // message (text and/or media), never for edits. Toggleable
                     // via the messageSounds pref.
@@ -3655,27 +3672,11 @@ fun ChatScreen(
                         micLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     } else {
                         runCatching {
-                            // Short haptic tick — same pattern WhatsApp uses
-                            // when you start holding the mic: tells the user
-                            // the long-press registered without needing to
-                            // glance back at the screen. Uses the new
-                            // VibrationEffect API where available; on older
-                            // Android falls back to the deprecated vibrate(ms).
-                            val vibrator = ContextCompat.getSystemService(
-                                context, android.os.Vibrator::class.java
-                            )
-                            if (vibrator != null && vibrator.hasVibrator()) {
-                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                                    vibrator.vibrate(
-                                        android.os.VibrationEffect.createOneShot(
-                                            30L, android.os.VibrationEffect.DEFAULT_AMPLITUDE
-                                        )
-                                    )
-                                } else {
-                                    @Suppress("DEPRECATION")
-                                    vibrator.vibrate(30L)
-                                }
-                            }
+                            // Short haptic tick when the mic long-press registers,
+                            // so the user knows it landed without glancing back.
+                            // Routed through the gated helper so the Settings
+                            // vibration switch governs it.
+                            haptics.tick(30L)
                             recorder.start()
                             recording = true
                         }
@@ -4199,6 +4200,9 @@ fun ChatScreen(
                 val chosenSame = msg.interactionInfo?.reactions?.reactions?.any {
                     it.isChosen && (it.type as? TdApi.ReactionTypeEmoji)?.emoji == emoji
                 } == true
+                // Reaction haptic: a satisfying double-tap when adding, a light
+                // tick when removing. Gated by the Settings vibration switch.
+                if (chosenSame) haptics.light() else haptics.confirm()
                 // Optimistic local update: mutate the message's reactions
                 // in place and bump the interactionRevision so the bubble
                 // recomposes RIGHT NOW. Without this the user taps an emoji,
@@ -7012,6 +7016,7 @@ private fun SecretChatLockedBar(closed: Boolean) {
 private fun InputBar(
     value: androidx.compose.ui.text.input.TextFieldValue,
     onValueChange: (androidx.compose.ui.text.input.TextFieldValue) -> Unit,
+    autoCapitalize: Boolean = true,
     placeholderText: String?,
     onSend: () -> Unit,
     onAttach: () -> Unit,
@@ -7183,6 +7188,11 @@ private fun InputBar(
                         // BasicTextField's built-in cursor follow do its
                         // job.
                         maxLines = 6,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = if (autoCapitalize)
+                                KeyboardCapitalization.Sentences
+                            else KeyboardCapitalization.None
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
                             .then(

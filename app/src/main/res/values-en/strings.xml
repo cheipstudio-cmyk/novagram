@@ -632,4 +632,8 @@
     <string name="ai_tile_thread_sub">The thread so far</string>
     <string name="ai_tile_thread_cmd">Summarize the thread of messages around this one.</string>
     <string name="ai_proposed_reply">Suggested reply</string>
+    <string name="settings_haptics">Haptic feedback</string>
+    <string name="settings_haptics_desc">Tactile feedback for sending, reactions, long-press and more</string>
+    <string name="settings_autocaps">Auto-capitalization</string>
+    <string name="settings_autocaps_desc">Capitalize the first letter of each sentence as you type a message</string>
 </resources>

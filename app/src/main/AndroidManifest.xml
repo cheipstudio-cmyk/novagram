@@ -18,7 +18,6 @@
          (like the official Telegram), instead of Android falling back to the
          generic "Open with" chooser. The user still gets the OS "install
          unknown apps" consent for Novagram the first time. -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".App"

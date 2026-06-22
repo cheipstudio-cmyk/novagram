@@ -182,7 +182,20 @@ data class AppearancePrefs(
      * it's cheap even on weak hardware. Default false: full motion on first
      * launch; users opt in from Settings.
      */
-    val reduceAnimations: Boolean = false
+    val reduceAnimations: Boolean = false,
+    /**
+     * Whether haptic feedback (vibration) fires across the app — message
+     * long-press, sending, reactions, tab switches, swipe-to-reply, and so
+     * on. Gated centrally via LocalHapticsEnabled so this single switch
+     * governs every vibration. Default true, purely client-side.
+     */
+    val hapticsEnabled: Boolean = true,
+    /**
+     * When true (default), the message input auto-capitalises the first
+     * letter of each sentence as you type a new message. Off = no
+     * auto-capitalisation. Purely client-side keyboard hint.
+     */
+    val autoCapitalize: Boolean = true
 )
 
 /**
@@ -243,6 +256,8 @@ object AppSettings {
     private val MESSAGE_SOUNDS = androidx.datastore.preferences.core.booleanPreferencesKey("message_sounds")
     private val SHOW_BOT_COMMANDS_BUTTON = androidx.datastore.preferences.core.booleanPreferencesKey("show_bot_commands_button")
     private val REDUCE_ANIMATIONS = androidx.datastore.preferences.core.booleanPreferencesKey("reduce_animations")
+    private val HAPTICS_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("haptics_enabled")
+    private val AUTO_CAPITALIZE = androidx.datastore.preferences.core.booleanPreferencesKey("auto_capitalize")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -299,7 +314,9 @@ object AppSettings {
                 sendTypingStatus = prefs[SEND_TYPING_STATUS] ?: true,
                 messageSounds = prefs[MESSAGE_SOUNDS] ?: true,
                 showBotCommandsButton = prefs[SHOW_BOT_COMMANDS_BUTTON] ?: true,
-                reduceAnimations = prefs[REDUCE_ANIMATIONS] ?: false
+                reduceAnimations = prefs[REDUCE_ANIMATIONS] ?: false,
+                hapticsEnabled = prefs[HAPTICS_ENABLED] ?: true,
+                autoCapitalize = prefs[AUTO_CAPITALIZE] ?: true
             )
         }
 
@@ -333,6 +350,14 @@ object AppSettings {
 
     suspend fun setReduceAnimations(enabled: Boolean) {
         appContext.dataStore.edit { it[REDUCE_ANIMATIONS] = enabled }
+    }
+
+    suspend fun setHapticsEnabled(enabled: Boolean) {
+        appContext.dataStore.edit { it[HAPTICS_ENABLED] = enabled }
+    }
+
+    suspend fun setAutoCapitalize(enabled: Boolean) {
+        appContext.dataStore.edit { it[AUTO_CAPITALIZE] = enabled }
     }
 
     suspend fun setShowLastSeen(enabled: Boolean) {

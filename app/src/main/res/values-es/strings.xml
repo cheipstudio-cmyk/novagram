@@ -632,4 +632,8 @@
     <string name="ai_tile_thread_sub">El hilo hasta ahora</string>
     <string name="ai_tile_thread_cmd">Resume el hilo de mensajes en torno a este.</string>
     <string name="ai_proposed_reply">Respuesta propuesta</string>
+    <string name="settings_haptics">Vibración</string>
+    <string name="settings_haptics_desc">Respuesta táctil al enviar, reaccionar, mantener pulsado y más</string>
+    <string name="settings_autocaps">Mayúscula automática</string>
+    <string name="settings_autocaps_desc">Pon en mayúscula el inicio de cada frase al escribir un mensaje</string>
 </resources>

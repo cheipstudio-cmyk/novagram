@@ -632,4 +632,8 @@
     <string name="ai_tile_thread_sub">Der bisherige Verlauf</string>
     <string name="ai_tile_thread_cmd">Fasse den Nachrichtenverlauf rund um diese zusammen.</string>
     <string name="ai_proposed_reply">Vorgeschlagene Antwort</string>
+    <string name="settings_haptics">Vibration</string>
+    <string name="settings_haptics_desc">Taktiles Feedback beim Senden, bei Reaktionen, langem Drücken und mehr</string>
+    <string name="settings_autocaps">Automatische Großschreibung</string>
+    <string name="settings_autocaps_desc">Schreibt den Satzanfang beim Tippen einer Nachricht groß</string>
 </resources>

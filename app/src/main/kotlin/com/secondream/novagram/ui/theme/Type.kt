@@ -34,6 +34,11 @@ val LocalMessageTextScale = androidx.compose.runtime.compositionLocalOf { 1f }
  *  and stays font-size independent. */
 val LocalMessageLineSpacing = androidx.compose.runtime.compositionLocalOf { 1f }
 
+/** Whether haptic feedback fires across the app. Provided by NovaTheme from
+ *  AppearancePrefs.hapticsEnabled; the rememberHaptics() helper reads it so a
+ *  single toggle in Settings governs every vibration. Default true. */
+val LocalHapticsEnabled = androidx.compose.runtime.compositionLocalOf { true }
+
 val InstrumentSerif = FontFamily(
     gFamily("Instrument Serif", FontWeight.Normal),
     gFamily("Instrument Serif", FontWeight.Normal, FontStyle.Italic)

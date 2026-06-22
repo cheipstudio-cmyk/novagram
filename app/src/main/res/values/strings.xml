@@ -646,4 +646,8 @@
     <string name="ai_tile_thread_sub">Il thread fin qui</string>
     <string name="ai_tile_thread_cmd">Riassumi il thread di messaggi attorno a questo.</string>
     <string name="ai_proposed_reply">Risposta proposta</string>
+    <string name="settings_haptics">Vibrazione</string>
+    <string name="settings_haptics_desc">Feedback tattile per invio, reazioni, pressione prolungata e altro</string>
+    <string name="settings_autocaps">Maiuscola automatica</string>
+    <string name="settings_autocaps_desc">Metti la maiuscola a inizio frase mentre scrivi un nuovo messaggio</string>
 </resources>

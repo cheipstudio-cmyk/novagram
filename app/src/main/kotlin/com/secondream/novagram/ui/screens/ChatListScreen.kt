@@ -160,6 +160,7 @@ fun ChatListScreen(
 ) {
     val allChats by TdClient.chats.collectAsState()
     val scope = rememberCoroutineScope()
+    val haptics = com.secondream.novagram.util.rememberHaptics()
     val appearance by com.secondream.novagram.settings.AppSettings.appearance
         .collectAsState(initial = com.secondream.novagram.settings.AppearancePrefs())
     // Target of the chat-info modal triggered by tapping a row's avatar
@@ -525,7 +526,7 @@ fun ChatListScreen(
                         contentDescriptions = tabs.map { stringResource(it.labelRes) },
                         badges = tabBadges,
                         selected = selectedTab.coerceIn(0, tabs.lastIndex),
-                        onSelect = { selectedTab = it }
+                        onSelect = { if (it != selectedTab) haptics.light(); selectedTab = it }
                     )
                 }
             }
