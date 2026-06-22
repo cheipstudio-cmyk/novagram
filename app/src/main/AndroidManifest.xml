@@ -14,6 +14,18 @@
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!--
+      A dependency's manifest (TDLib AAR / a transitive lib) declares
+      REQUEST_INSTALL_PACKAGES, which the manifest merger folds into the final
+      app manifest even though we don't request it ourselves — that's why
+      removing our own declaration wasn't enough and Google Play kept rejecting
+      the update. tools:node="remove" strips it from the MERGED manifest
+      regardless of which library injects it, so the published AAB carries no
+      install permission. Novagram has no in-app APK install path.
+    -->
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:node="remove" />
     <!-- Lets Novagram hand a downloaded .apk to the system package installer
          (like the official Telegram), instead of Android falling back to the
          generic "Open with" chooser. The user still gets the OS "install
