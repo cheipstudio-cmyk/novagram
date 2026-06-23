@@ -636,4 +636,6 @@
     <string name="settings_haptics_desc">Retour tactile à l\'envoi, aux réactions, à l\'appui long et plus</string>
     <string name="settings_autocaps">Majuscule automatique</string>
     <string name="settings_autocaps_desc">Met une majuscule en début de phrase quand tu écris un message</string>
+    <string name="action_copy_link">Copier le lien</string>
+    <string name="snack_link_copied">Lien copié</string>
 </resources>

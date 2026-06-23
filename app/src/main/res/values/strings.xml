@@ -650,4 +650,6 @@
     <string name="settings_haptics_desc">Feedback tattile per invio, reazioni, pressione prolungata e altro</string>
     <string name="settings_autocaps">Maiuscola automatica</string>
     <string name="settings_autocaps_desc">Metti la maiuscola a inizio frase mentre scrivi un nuovo messaggio</string>
+    <string name="action_copy_link">Copia link</string>
+    <string name="snack_link_copied">Link copiato</string>
 </resources>

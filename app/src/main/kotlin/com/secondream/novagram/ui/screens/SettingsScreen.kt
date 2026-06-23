@@ -417,6 +417,22 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
             // networks and for "just skimming" workflows.
             CollapsibleSection(stringResource(R.string.settings_section_media), subtitle = stringResource(R.string.settings_section_media_sub), icon = phos.Gear, expanded = expandedSection == "misc", onToggle = { expandedSection = if (expandedSection == "misc") null else "misc" }) {
                 PrivacyToggleRow(
+                    label = stringResource(R.string.settings_autocaps),
+                    description = stringResource(R.string.settings_autocaps_desc),
+                    checked = appearance.autoCapitalize,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setAutoCapitalize(enabled) }
+                    }
+                )
+                PrivacyToggleRow(
+                    label = stringResource(R.string.settings_haptics),
+                    description = stringResource(R.string.settings_haptics_desc),
+                    checked = appearance.hapticsEnabled,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setHapticsEnabled(enabled) }
+                    }
+                )
+                PrivacyToggleRow(
                     label = stringResource(R.string.settings_media_autodownload),
                     description = stringResource(R.string.settings_media_autodownload_desc),
                     checked = appearance.autoDownloadMedia,
@@ -698,24 +714,6 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                     checked = appearance.messageSounds,
                     onToggle = { enabled ->
                         scope.launch { AppSettings.setMessageSounds(enabled) }
-                    }
-                )
-                Divider()
-                PrivacyToggleRow(
-                    label = stringResource(R.string.settings_haptics),
-                    description = stringResource(R.string.settings_haptics_desc),
-                    checked = appearance.hapticsEnabled,
-                    onToggle = { enabled ->
-                        scope.launch { AppSettings.setHapticsEnabled(enabled) }
-                    }
-                )
-                Divider()
-                PrivacyToggleRow(
-                    label = stringResource(R.string.settings_autocaps),
-                    description = stringResource(R.string.settings_autocaps_desc),
-                    checked = appearance.autoCapitalize,
-                    onToggle = { enabled ->
-                        scope.launch { AppSettings.setAutoCapitalize(enabled) }
                     }
                 )
                 Divider()

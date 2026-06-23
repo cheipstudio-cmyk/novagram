@@ -636,4 +636,6 @@
     <string name="settings_haptics_desc">Taktiles Feedback beim Senden, bei Reaktionen, langem Drücken und mehr</string>
     <string name="settings_autocaps">Automatische Großschreibung</string>
     <string name="settings_autocaps_desc">Schreibt den Satzanfang beim Tippen einer Nachricht groß</string>
+    <string name="action_copy_link">Link kopieren</string>
+    <string name="snack_link_copied">Link kopiert</string>
 </resources>

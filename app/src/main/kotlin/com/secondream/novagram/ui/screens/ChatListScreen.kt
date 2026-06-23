@@ -775,7 +775,7 @@ fun ChatListScreen(
                         } else {
                             TdClient.blockUser(uid)
                             runCatching {
-                                TdClient.deleteChatHistory(uid, removeFromChatList = true, revoke = false)
+                                TdClient.deleteChatFully(TdClient.getCachedChat(uid), revoke = false)
                             }
                         }
                     }.onSuccess {
@@ -911,7 +911,7 @@ fun ChatListScreen(
                             // Leaving alone keeps the group in the list as a
                             // "left group"; remove it so it actually disappears.
                             runCatching {
-                                TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = false)
+                                TdClient.deleteChatFully(TdClient.getCachedChat(cid), revoke = false)
                             }
                         }
                     }
@@ -939,7 +939,7 @@ fun ChatListScreen(
                         if (cid !in hiddenChatIds) hiddenChatIds.add(cid)
                         scope.launch {
                             runCatching {
-                                TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = false)
+                                TdClient.deleteChatFully(TdClient.getCachedChat(cid), revoke = false)
                             }.onSuccess {
                                 com.secondream.novagram.ui.components.NovaSnackbar.show(
                                     R.string.snack_chat_deleted,
@@ -962,7 +962,7 @@ fun ChatListScreen(
                             if (cid !in hiddenChatIds) hiddenChatIds.add(cid)
                             scope.launch {
                                 runCatching {
-                                    TdClient.deleteChatHistory(cid, removeFromChatList = true, revoke = true)
+                                    TdClient.deleteChatFully(TdClient.getCachedChat(cid), revoke = true)
                                 }.onSuccess {
                                     com.secondream.novagram.ui.components.NovaSnackbar.show(
                                         R.string.snack_chat_deleted,

@@ -70,7 +70,6 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         requestNotifPermissionIfNeeded()
-        startTdServiceIfPossible()
         // App-wide transfer tracker: starts collecting fileUpdates once
         // TDLib is up. Idempotent — multiple calls are no-ops. Lives for
         // the process lifetime so the persistent panel can stay current
@@ -383,15 +382,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startTdServiceIfPossible() {
-        lifecycleScope.launch {
-            val config = AppSettings.apiConfig.first()
-            val hasUserCfg = config.apiId != 0 && config.apiHash.isNotBlank()
-            val hasBakedCfg = com.secondream.novagram.BuildConfig.TG_API_ID != 0 &&
-                com.secondream.novagram.BuildConfig.TG_API_HASH.isNotBlank()
-            if (hasUserCfg || hasBakedCfg) {
-                val intent = Intent(this@MainActivity, TdService::class.java)
-                ContextCompat.startForegroundService(this@MainActivity, intent)
-            }
-        }
+        // Removed: Novagram no longer runs a persistent foreground service.
+        // It kept the app "always active" (Android's Active-apps panel) and
+        // forced a permanent notification. Incoming-message notifications are
+        // now driven by the app-level collector in TdClient + FCM pushes.
+        // Kept as a no-op so any stray reference stays valid.
     }
 }

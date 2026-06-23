@@ -35,6 +35,13 @@ object TdClient {
     // serializing here costs nothing for them, it only orders the emits.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 
+    // Separate scope for the notification collector. Kept OFF the single-thread
+    // `scope` above so building a heads-up notification (which can briefly
+    // block) never stalls the serialized TDLib emits. Lives for the process
+    // lifetime — this is now the ONLY place incoming messages become
+    // notifications, since the foreground TdService was removed.
+    private val notifScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     private var client: Client? = null
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Initial)
@@ -300,6 +307,19 @@ object TdClient {
 
     fun init(ctx: Context) {
         appContext = ctx.applicationContext
+
+        // Incoming-message notifications. This collector used to live in the
+        // foreground TdService; it now runs at the app level so it works
+        // whenever the process is alive — normal foreground use, and when an
+        // FCM push wakes a killed process (App.onCreate runs before the FCM
+        // service's onMessageReceived, so we're subscribed before
+        // processPushNotification makes TDLib emit the message). showMessage
+        // already skips outgoing/muted/currently-open chats.
+        notifScope.launch {
+            newMessages.collect {
+                com.secondream.novagram.notifications.NotificationHelper.showMessage(it)
+            }
+        }
         Client.setLogMessageHandler(0) { verbosity, message ->
             if (verbosity == 0) Log.e(TAG, "TDLib fatal: $message")
         }
@@ -2035,6 +2055,22 @@ object TdClient {
     suspend fun getUserFullInfo(userId: Long): TdApi.UserFullInfo =
         send(TdApi.GetUserFullInfo(userId))
 
+    /**
+     * HTTPS t.me link to a specific message. TDLib only returns one for
+     * messages in supergroups and channels (public → t.me/<username>/<id>,
+     * private → t.me/c/<id>/<id>); for private chats / basic groups it errors,
+     * so callers gate on chat type and we return null on any failure.
+     * Signature pinned to the TDLib commit the CI builds:
+     * getMessageLink chat_id message_id media_timestamp checklist_task_id
+     * poll_option_id for_album in_message_thread.
+     */
+    suspend fun getMessageLink(chatId: Long, messageId: Long): String? =
+        runCatching {
+            send(
+                TdApi.GetMessageLink(chatId, messageId, 0, 0, "", false, false)
+            ).link
+        }.getOrNull()
+
     // ===== Reactions =====
 
     /**
@@ -2874,6 +2910,37 @@ object TdClient {
             hiddenChats.remove(chatId)
             refreshChats()
             throw t
+        }
+    }
+
+    /**
+     * Delete a chat from the list AND from TDLib's local state. For SECRET
+     * chats DeleteChatHistory alone is NOT enough: it clears messages and
+     * hides the row, but the secret-chat object stays alive, so on the next
+     * launch TDLib re-adds it to the list ("elimino la chat segreta, riapro
+     * ed è ancora lì"). The fix is CloseSecretChat to terminate the handshake,
+     * then DeleteChat to drop the chat entirely. Every other chat type keeps
+     * the existing DeleteChatHistory behaviour, untouched.
+     */
+    suspend fun deleteChatFully(chat: TdApi.Chat?, revoke: Boolean) {
+        if (chat == null) return
+        val type = chat.type
+        if (type is TdApi.ChatTypeSecret) {
+            hiddenChats.add(chat.id)
+            refreshChats()
+            try {
+                // Closing an already-closed secret chat errors; that's fine,
+                // DeleteChat below still removes the chat object for good.
+                runCatching { send(TdApi.CloseSecretChat(type.secretChatId)) }
+                send(TdApi.DeleteChat(chat.id))
+                com.secondream.novagram.ui.screens.ChatMessageCache.evict(chat.id)
+            } catch (t: Throwable) {
+                hiddenChats.remove(chat.id)
+                refreshChats()
+                throw t
+            }
+        } else {
+            deleteChatHistory(chat.id, removeFromChatList = true, revoke = revoke)
         }
     }
 

@@ -636,4 +636,6 @@
     <string name="settings_haptics_desc">Respuesta táctil al enviar, reaccionar, mantener pulsado y más</string>
     <string name="settings_autocaps">Mayúscula automática</string>
     <string name="settings_autocaps_desc">Pon en mayúscula el inicio de cada frase al escribir un mensaje</string>
+    <string name="action_copy_link">Copiar enlace</string>
+    <string name="snack_link_copied">Enlace copiado</string>
 </resources>

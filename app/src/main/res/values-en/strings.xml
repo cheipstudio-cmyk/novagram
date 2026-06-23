@@ -636,4 +636,6 @@
     <string name="settings_haptics_desc">Tactile feedback for sending, reactions, long-press and more</string>
     <string name="settings_autocaps">Auto-capitalization</string>
     <string name="settings_autocaps_desc">Capitalize the first letter of each sentence as you type a message</string>
+    <string name="action_copy_link">Copy link</string>
+    <string name="snack_link_copied">Link copied</string>
 </resources>

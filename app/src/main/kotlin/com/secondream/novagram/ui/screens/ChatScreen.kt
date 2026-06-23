@@ -4139,6 +4139,24 @@ fun ChatScreen(
                     deleteTarget = null
                 }
             } else null,
+            // Message links exist only for supergroups/channels (ChatTypeSupergroup
+            // covers both — a channel is a supergroup with isChannel=true). TDLib
+            // builds the correct public/private t.me link; we just copy it.
+            onCopyLink = if (TdClient.getCachedChat(chatId)?.type is TdApi.ChatTypeSupergroup) {
+                {
+                    scope.launch {
+                        val link = TdClient.getMessageLink(chatId, msg.id)
+                        if (!link.isNullOrBlank()) {
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(link))
+                            com.secondream.novagram.ui.components.NovaSnackbar.show(
+                                R.string.snack_link_copied,
+                                com.secondream.novagram.ui.icons.PhosphorIcons.At
+                            )
+                        }
+                    }
+                    deleteTarget = null
+                }
+            } else null,
             onReply = {
                 replyTarget = msg
                 deleteTarget = null
@@ -4526,7 +4544,7 @@ fun ChatScreen(
                         deleteOpen = false
                         scope.launch {
                             runCatching {
-                                TdClient.deleteChatHistory(chatId, removeFromChatList = true, revoke = false)
+                                TdClient.deleteChatFully(TdClient.getCachedChat(chatId), revoke = false)
                             }
                             onBack()
                         }
@@ -4543,7 +4561,7 @@ fun ChatScreen(
                             deleteOpen = false
                             scope.launch {
                                 runCatching {
-                                    TdClient.deleteChatHistory(chatId, removeFromChatList = true, revoke = true)
+                                    TdClient.deleteChatFully(TdClient.getCachedChat(chatId), revoke = true)
                                 }
                                 onBack()
                             }
@@ -7796,6 +7814,9 @@ private fun MessageActionsSheet(
     myUserId: Long?,
     onDismiss: () -> Unit,
     onCopy: (() -> Unit)?,
+    /** Copy the public t.me link to this message. null hides the tile (only
+     *  supergroups/channels have message links). */
+    onCopyLink: (() -> Unit)?,
     onReply: () -> Unit,
     onForward: () -> Unit,
     /** Triggered when the user taps "Modifica" — only ever wired by the
@@ -8246,6 +8267,10 @@ private fun MessageActionsSheet(
                 if (onCopy != null && canCopy) {
                     add(ActionTile(stringResource(R.string.action_copy),
                         com.secondream.novagram.ui.icons.PhosphorIcons.Copy, onCopy))
+                }
+                if (onCopyLink != null) {
+                    add(ActionTile(stringResource(R.string.action_copy_link),
+                        com.secondream.novagram.ui.icons.PhosphorIcons.At, onCopyLink))
                 }
                 val canSave = canSaveFromServer ?: !chatProtected
                 if (onSaveToDownloads != null && canSave) {
