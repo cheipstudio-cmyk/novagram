@@ -1692,6 +1692,30 @@ fun ChatScreen(
     // new window simply appears and we land instantly.
     var jumpSuppressAnim by remember(chatId) { mutableStateOf(false) }
 
+    // Shared landing math, used by the in-chat search arrows below. Mirrors the
+    // tuned placement inside jumpToMessage exactly: reverseLayout=true means
+    // scrollToItem(idx, S) leaves S px between the item's bottom edge and the
+    // viewport bottom, so S = 0.40*vp puts the bubble bottom at ~60% down (0.30
+    // read too low, 0.45 too high). Height-independent, so it can never miss the
+    // row. Animate only a SHORT hop (target within ~12 items of the current
+    // top); anything farther teleports instantly and the caller's flash makes
+    // the jump read as intentional.
+    val precisePlace: suspend (Long, Boolean) -> Unit = place@{ targetId, animate ->
+        val li = messages.indexOfFirst { it.id == targetId }
+        if (li < 0) return@place
+        val vp = listState.layoutInfo.viewportSize.height
+        if (vp <= 0) { runCatching { listState.scrollToItem(li, 0) }; return@place }
+        val rest = (vp * 0.40f).toInt()
+        val firstVis = listState.firstVisibleItemIndex
+        val near = kotlin.math.abs(li - firstVis) <= 12
+        if (animate && near) {
+            runCatching { listState.animateScrollToItem(li, rest) }
+            runCatching { listState.scrollToItem(li, rest) }
+        } else {
+            runCatching { listState.scrollToItem(li, rest) }
+        }
+    }
+
     // Jump to a message by id, loading older history in bounded batches
     // if it isn't in the in-memory window yet (used by same-chat link
     // taps AND the pinned-messages list). Without the load loop, tapping
@@ -1885,6 +1909,74 @@ fun ChatScreen(
         }
     }
 
+    // In-chat SEARCH navigation (the up/down arrows). Kept separate from the
+    // general jumpToMessage on purpose. The general path is built for cold
+    // pinned/deeplink targets and polls getChatHistory up to ~10 times before
+    // giving up; 0.10.217's "no-clobber" guard then turned every hit TDLib
+    // could NOT re-center into a SILENT no-op (press arrow, nothing moves) so
+    // stepping through results felt broken. Here we already hold the full
+    // TdApi.Message from searchInChat, which lets us do better:
+    //   - a fast, bounded fetch (3 short tries, not 10) so stepping stays snappy;
+    //   - if TDLib still won't return a slice containing the hit, we GRAFT the
+    //     message we already have into the window, so the jump can NEVER be a
+    //     no-op (worst case the user lands on the lone hit and pagination fills
+    //     the surroundings as they scroll);
+    //   - placement runs through the same precisePlace math as every other
+    //     jump, so a search hit lands on the identical spot.
+    val jumpToSearchResult: (TdApi.Message) -> Unit = { target ->
+        jumpJob?.cancel()
+        jumpJob = scope.launch {
+            val targetId = target.id
+            val wasAlreadyLoaded = messages.indexOfFirst { it.id == targetId } >= 0
+            if (!wasAlreadyLoaded) {
+                jumpLoading = true
+                jumpSuppressAnim = true
+                runCatching {
+                    val limit = 60
+                    var window: List<TdApi.Message> = emptyList()
+                    var attempt = 0
+                    while (attempt < 3) {
+                        val got = runCatching {
+                            TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
+                                .messages.toList()
+                        }.getOrDefault(emptyList())
+                        if (got.size > window.size) window = got
+                        if (got.any { it.id == targetId }) { window = got; break }
+                        attempt++
+                        kotlinx.coroutines.delay(110)
+                    }
+                    // Graft the known hit when the fetched slice doesn't contain
+                    // it. distinctBy guards against the graft duplicating a row
+                    // that WAS in the slice after all.
+                    val merged = if (window.any { it.id == targetId }) window
+                                 else window + target
+                    messages.clear()
+                    messages.addAll(merged.distinctBy { it.id }.sortedByDescending { it.id })
+                    noMore = false
+                    atLatestWindow =
+                        messages.firstOrNull()?.id == TdClient.getCachedChat(chatId)?.lastMessage?.id
+                }
+                jumpLoading = false
+            }
+            // Defensive: with the graft above this can't fail, but never scroll
+            // to a missing index.
+            if (messages.indexOfFirst { it.id == targetId } < 0) {
+                jumpSuppressAnim = false
+                return@launch
+            }
+            flashMessageId = targetId
+            launch {
+                kotlinx.coroutines.delay(1500)
+                if (flashMessageId == targetId) flashMessageId = null
+            }
+            precisePlace(targetId, wasAlreadyLoaded)
+            if (jumpSuppressAnim) {
+                kotlinx.coroutines.delay(80)
+                jumpSuppressAnim = false
+            }
+        }
+    }
+
     // Deep-link target: when ChatScreen is reached via t.me/<user>/<msgId>
     // (or the avatar-sheet equivalent) the route carries a targetMessageId,
     // and we should land on that message rather than the latest. We wait
@@ -1903,7 +1995,10 @@ fun ChatScreen(
     // cycled via the up/down arrows.
     var searchOpen by remember(chatId) { mutableStateOf(false) }
     var searchQuery by remember(chatId) { mutableStateOf("") }
-    var searchResults by remember(chatId) { mutableStateOf<List<Long>>(emptyList()) }
+    // Full TdApi.Message objects (not just ids): we keep them so the search
+    // arrows can graft a hit into the window when TDLib can't re-center it,
+    // instead of bailing to a no-op. See jumpToSearchResult.
+    var searchResults by remember(chatId) { mutableStateOf<List<TdApi.Message>>(emptyList()) }
     var searchIndex by remember(chatId) { mutableStateOf(0) }
     var searchLoading by remember(chatId) { mutableStateOf(false) }
 
@@ -1928,10 +2023,10 @@ fun ChatScreen(
         searchLoading = true
         kotlinx.coroutines.delay(220)
         val matches = runCatching { TdClient.searchInChat(chatId, q) }.getOrNull().orEmpty()
-        searchResults = matches.map { it.id }
+        searchResults = matches
         searchIndex = 0
         searchLoading = false
-        if (searchResults.isNotEmpty()) jumpToMessage(searchResults[0])
+        if (searchResults.isNotEmpty()) jumpToSearchResult(searchResults[0])
     }
 
     // Resolve a tapped Telegram link to a chat and open it INSIDE the app.
@@ -2656,18 +2751,41 @@ fun ChatScreen(
                     onPrev = {
                         if (searchResults.isNotEmpty()) {
                             searchIndex = (searchIndex - 1 + searchResults.size) % searchResults.size
-                            jumpToMessage(searchResults[searchIndex])
+                            jumpToSearchResult(searchResults[searchIndex])
                         }
                     },
                     onNext = {
                         if (searchResults.isNotEmpty()) {
                             searchIndex = (searchIndex + 1) % searchResults.size
-                            jumpToMessage(searchResults[searchIndex])
+                            jumpToSearchResult(searchResults[searchIndex])
                         }
                     },
                     onClose = {
                         searchOpen = false
                         searchQuery = ""
+                        // Returning from search must never leave the user stuck in
+                        // the past. If stepping through old hits parked us in an
+                        // old slice (atLatestWindow=false, a disjoint window whose
+                        // bottom is NOT the live tail — the "bloccato in una
+                        // finestra vecchia" case), reload the latest page and drop
+                        // to the bottom. When we were already on the tail this is a
+                        // no-op, so closing search after only viewing recent hits
+                        // doesn't yank the view.
+                        scope.launch {
+                            if (!atLatestWindow) {
+                                runCatching {
+                                    val fresh = TdClient.getChatHistory(chatId, 0L, 50)
+                                        .messages.toList().sortedByDescending { it.id }
+                                    if (fresh.isNotEmpty()) {
+                                        messages.clear()
+                                        messages.addAll(fresh)
+                                        noMore = false
+                                        atLatestWindow = true
+                                    }
+                                }
+                                runCatching { listState.scrollToItem(0) }
+                            }
+                        }
                     }
                 )
             }
@@ -7445,7 +7563,7 @@ private fun MicButton(
 private fun ChatSearchBar(
     query: String,
     onQueryChange: (String) -> Unit,
-    results: List<Long>,
+    results: List<TdApi.Message>,
     index: Int,
     loading: Boolean,
     onPrev: () -> Unit,
