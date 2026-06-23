@@ -42,6 +42,21 @@ object TdClient {
     // notifications, since the foreground TdService was removed.
     private val notifScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    // Durable scope for user-initiated write actions (react, pin, delete,
+    // leave, mute, kick, edit, forward...). These must NOT run on a screen's
+    // rememberCoroutineScope: performing one and then leaving the chat (delete
+    // chat / leave chat navigate away immediately) cancels the in-flight call,
+    // so the change never reaches the server. This scope lives for the process,
+    // so the round-trip always finishes.
+    private val actionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Run a one-shot write action on the durable [actionScope]; never tied to
+     *  a composition. Errors are swallowed (best-effort, like the call sites'
+     *  existing runCatching). */
+    fun fireAndForget(block: suspend () -> Unit) {
+        actionScope.launch { runCatching { block() } }
+    }
+
     private var client: Client? = null
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Initial)
@@ -2078,6 +2093,24 @@ object TdClient {
      * floating animation; `updateRecentReactions=true` adds the emoji to
      * the user's recent reactions list so it surfaces first next time.
      */
+    /**
+     * Fire-and-forget reaction toggle that runs on TdClient's own app-level
+     * [scope], NOT the caller's UI scope. Reacting and immediately leaving the
+     * chat used to cancel the in-flight AddMessageReaction — it ran on
+     * ChatScreen's rememberCoroutineScope, which dies with the composition — so
+     * the reaction showed optimistically then vanished on re-entry, because the
+     * server (and thus TDLib's local DB the next open reads from) never
+     * recorded it. Running it here guarantees the round-trip finishes.
+     */
+    fun toggleEmojiReactionDurably(chatId: Long, messageId: Long, emoji: String, add: Boolean) {
+        scope.launch {
+            runCatching {
+                if (add) addEmojiReaction(chatId, messageId, emoji)
+                else removeEmojiReaction(chatId, messageId, emoji)
+            }
+        }
+    }
+
     suspend fun addEmojiReaction(chatId: Long, messageId: Long, emoji: String) {
         send(TdApi.AddMessageReaction(
             chatId, messageId,

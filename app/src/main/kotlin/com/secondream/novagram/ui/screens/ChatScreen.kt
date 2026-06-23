@@ -1745,7 +1745,7 @@ fun ChatScreen(
                     // whole poll, then we land in one shot.
                     var window: List<TdApi.Message> = emptyList()
                     var attempt = 0
-                    while (attempt < 6) {
+                    while (attempt < 10) {
                         val got = runCatching {
                             TdClient.getChatHistory(chatId, targetId, -(limit / 2), limit)
                                 .messages.toList()
@@ -1758,21 +1758,26 @@ fun ChatScreen(
                         attempt++
                         kotlinx.coroutines.delay(160)
                     }
-                    // Reset to a CONTIGUOUS slice centered on the target rather
-                    // than MERGING with the disjoint latest window (that forged
-                    // the burned-middle gap). Fresh window keeps scroll-up
-                    // contiguous; the go-to-bottom arrow reloads the live tail.
-                    if (window.isNotEmpty()) {
+                    // Swap to the fetched window ONLY if it actually CONTAINS the
+                    // target. For far-back results in a huge chat (e.g. searching
+                    // "moto g53" in a busy group and stepping toward older hits)
+                    // TDLib often returns a stub slice that does NOT include the
+                    // target even after polling. Clobbering `messages` with that
+                    // slice stranded the user in a WRONG old window with
+                    // atLatestWindow=false — new messages stopped appearing until
+                    // the chat was reopened. If we don't have the target, leave the
+                    // current view untouched and bail below.
+                    if (window.any { it.id == targetId }) {
                         messages.clear()
                         messages.addAll(window.sortedByDescending { it.id })
                         noMore = false
+                        // Still "on the tail" only if this window reaches the newest
+                        // message; otherwise we've parked in old history and new
+                        // messages must NOT inject at the top.
+                        atLatestWindow =
+                            messages.firstOrNull()?.id == TdClient.getCachedChat(chatId)?.lastMessage?.id
                     }
                     idx = messages.indexOfFirst { it.id == targetId }
-                    // Still "on the tail" only if this window reaches the newest
-                    // message; otherwise we've parked in old history and new
-                    // messages must NOT inject at the top.
-                    atLatestWindow =
-                        messages.firstOrNull()?.id == TdClient.getCachedChat(chatId)?.lastMessage?.id
                 }
             }
             // Defensive: if the single round-trip somehow didn't return
@@ -3563,13 +3568,11 @@ fun ChatScreen(
                                 // in lockstep — covering the gap that was
                                 // leaving the visible caption stale until
                                 // the user re-opened the chat.
-                                scope.launch {
-                                    runCatching {
-                                        if (isTextMsg) {
-                                            TdClient.editMessageText(chatId, captured.id, text)
-                                        } else {
-                                            TdClient.editMessageCaption(chatId, captured.id, text)
-                                        }
+                                TdClient.fireAndForget {
+                                    if (isTextMsg) {
+                                        TdClient.editMessageText(chatId, captured.id, text)
+                                    } else {
+                                        TdClient.editMessageCaption(chatId, captured.id, text)
                                     }
                                 }
                             }
@@ -3834,7 +3837,7 @@ fun ChatScreen(
             onDismiss = { forwardTarget = null },
             onForward = { destChatId, caption ->
                 forwardTarget = null
-                scope.launch {
+                TdClient.fireAndForget {
                     runCatching {
                         TdClient.forwardMessages(destChatId, msg.chatId, longArrayOf(msg.id))
                     }
@@ -4179,7 +4182,7 @@ fun ChatScreen(
                     when {
                         wasPinned -> {
                             // Unpin: no prompt, just do it.
-                            scope.launch {
+                            TdClient.fireAndForget {
                                 runCatching { TdClient.unpinChatMessage(chatId, msg.id) }
                                     .onSuccess {
                                         com.secondream.novagram.ui.components.NovaSnackbar.show(
@@ -4197,7 +4200,7 @@ fun ChatScreen(
                         }
                         else -> {
                             // Private chat: pin straight away (notifies the peer).
-                            scope.launch {
+                            TdClient.fireAndForget {
                                 runCatching { TdClient.pinChatMessage(chatId, msg.id) }
                                     .onSuccess {
                                         com.secondream.novagram.ui.components.NovaSnackbar.show(
@@ -4236,30 +4239,21 @@ fun ChatScreen(
                     add = !chosenSame
                 )
                 interactionRevisions[msg.id] = (interactionRevisions[msg.id] ?: 0) + 1
-                scope.launch {
-                    runCatching {
-                        if (chosenSame) {
-                            TdClient.removeEmojiReaction(chatId, msg.id, emoji)
-                        } else {
-                            TdClient.addEmojiReaction(chatId, msg.id, emoji)
-                        }
-                    }
-                }
+                // Durable: runs on TdClient's app scope, so leaving the chat
+                // right after tapping no longer cancels the network call (the
+                // reaction used to vanish on re-entry for exactly that reason).
+                TdClient.toggleEmojiReactionDurably(chatId, msg.id, emoji, add = !chosenSame)
                 deleteTarget = null
             },
             onDeleteForMe = {
-                scope.launch {
-                    runCatching {
-                        TdClient.deleteMessages(chatId, longArrayOf(msg.id), revoke = false)
-                    }
+                TdClient.fireAndForget {
+                    TdClient.deleteMessages(chatId, longArrayOf(msg.id), revoke = false)
                 }
                 deleteTarget = null
             },
             onDeleteForEveryone = {
-                scope.launch {
-                    runCatching {
-                        TdClient.deleteMessages(chatId, longArrayOf(msg.id), revoke = true)
-                    }
+                TdClient.fireAndForget {
+                    TdClient.deleteMessages(chatId, longArrayOf(msg.id), revoke = true)
                 }
                 deleteTarget = null
             },
@@ -4542,12 +4536,10 @@ fun ChatScreen(
                     destructive = true,
                     onClick = {
                         deleteOpen = false
-                        scope.launch {
-                            runCatching {
-                                TdClient.deleteChatFully(TdClient.getCachedChat(chatId), revoke = false)
-                            }
-                            onBack()
+                        TdClient.fireAndForget {
+                            TdClient.deleteChatFully(TdClient.getCachedChat(chatId), revoke = false)
                         }
+                        onBack()
                     }
                 )
             )
@@ -4559,12 +4551,10 @@ fun ChatScreen(
                         destructive = true,
                         onClick = {
                             deleteOpen = false
-                            scope.launch {
-                                runCatching {
-                                    TdClient.deleteChatFully(TdClient.getCachedChat(chatId), revoke = true)
-                                }
-                                onBack()
+                            TdClient.fireAndForget {
+                                TdClient.deleteChatFully(TdClient.getCachedChat(chatId), revoke = true)
                             }
+                            onBack()
                         }
                     )
                 )
@@ -4602,10 +4592,8 @@ fun ChatScreen(
                     destructive = true,
                     onClick = {
                         leaveOpen = false
-                        scope.launch {
-                            runCatching { TdClient.leaveChat(chatId) }
-                            onBack()
-                        }
+                        TdClient.fireAndForget { TdClient.leaveChat(chatId) }
+                        onBack()
                     }
                 ),
                 com.secondream.novagram.ui.components.ActionTile(
