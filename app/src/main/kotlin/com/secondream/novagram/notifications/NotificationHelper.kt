@@ -26,6 +26,14 @@ object NotificationHelper {
     private const val GROUP_KEY_MESSAGES = "novagram_messages_group"
     private const val MAX_BUNDLED_PER_CHAT = 8
 
+    // De-dupe across delivery paths. The same message can reach showMessage from
+    // BOTH the live UpdateNewMessage collector AND the offline
+    // UpdateNotificationGroup path (push), e.g. during a foreground/background
+    // transition. Key by chat+message id and skip a repeat inside a short window
+    // so we post one notification, not a duplicate line in the bundle.
+    private val recentlyNotified = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private const val DEDUP_WINDOW_MS = 30_000L
+
     /**
      * Per-chat queue of pending MessagingStyle.Message entries — the
      * data the system shows when the user expands a notification with
@@ -181,7 +189,7 @@ object NotificationHelper {
         if (file.local?.isDownloadingCompleted == true) return loadAvatarBitmap(file)
         val downloaded = runCatching {
             kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                kotlinx.coroutines.withTimeoutOrNull(8000) { TdClient.downloadFile(file.id) }
+                kotlinx.coroutines.withTimeoutOrNull(2500) { TdClient.downloadFile(file.id) }
             }
         }.getOrNull()
         return loadAvatarBitmap(downloaded ?: file)
@@ -260,6 +268,15 @@ object NotificationHelper {
      */
     fun showMessage(message: TdApi.Message) {
         if (message.isOutgoing) return
+        // One notification per message regardless of how many paths deliver it
+        // (live collector + offline notification group). Record-and-check.
+        val dedupKey = "${message.chatId}:${message.id}"
+        val now = System.currentTimeMillis()
+        val prevTs = recentlyNotified.put(dedupKey, now)
+        if (prevTs != null && now - prevTs < DEDUP_WINDOW_MS) return
+        if (recentlyNotified.size > 256) {
+            recentlyNotified.entries.removeAll { now - it.value > DEDUP_WINDOW_MS }
+        }
         // Suppress heads-up only if the user is currently viewing THIS exact
         // chat in ChatScreen — they will see the message arrive in-line and a
         // separate notification would be redundant noise. currentChatId is

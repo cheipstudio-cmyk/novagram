@@ -420,6 +420,25 @@ object TdClient {
             is TdApi.UpdateNewMessage -> {
                 scope.launch { _newMessages.emit(obj.message) }
             }
+            is TdApi.UpdateNotificationGroup -> {
+                // CLOSED-APP / OFFLINE notification path. With no foreground
+                // service, a closed app is woken by FCM and processPushNotification
+                // handles the push OFFLINE — TDLib then reports the message HERE,
+                // as a notification group, NOT as UpdateNewMessage (which only
+                // arrives over the live socket that a closed app doesn't have).
+                // The live UpdateNewMessage collector above is therefore deaf to
+                // pushes; this is what actually fires when the app is closed.
+                // Route each new-message notification through the same
+                // NotificationHelper as the live path (showMessage dedups, so a
+                // message seen on both paths is posted once).
+                obj.addedNotifications.forEach { n ->
+                    (n.type as? TdApi.NotificationTypeNewMessage)?.message?.let { m ->
+                        notifScope.launch {
+                            com.secondream.novagram.notifications.NotificationHelper.showMessage(m)
+                        }
+                    }
+                }
+            }
             is TdApi.UpdateNewChat -> {
                 chatCache[obj.chat.id] = obj.chat
                 // Initialize last-known-server tracking. The chat
