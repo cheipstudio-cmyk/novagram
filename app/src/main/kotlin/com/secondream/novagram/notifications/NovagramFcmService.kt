@@ -4,10 +4,15 @@ import android.util.Log
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.secondream.novagram.td.TdClient
+import com.secondream.novagram.td.AuthState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import org.drinkless.tdlib.TdApi
 import org.json.JSONObject
 
@@ -67,11 +72,26 @@ class NovagramFcmService : FirebaseMessagingService() {
             // shape here so future changes don't strip them.
         }
         val payload = json.toString()
-        scope.launch {
-            runCatching {
-                TdClient.processPushNotification(payload)
-            }.onFailure { Log.w(TAG, "processPushNotification failed", it) }
-        }
+        // Novagram no longer runs a foreground service, so a closed app is
+        // woken here by FCM but the OS reclaims the process the instant this
+        // method returns — the old fire-and-forget launch posted nothing.
+        // FirebaseMessagingService holds a wakelock while onMessageReceived
+        // runs, so we BLOCK instead: wait for TDLib to be authorized (a cold
+        // start reloads it from disk), hand it the push, then hold briefly
+        // while TDLib emits UpdateNewMessage and the app-level collector in
+        // TdClient posts the notification. Every wait is bounded so the
+        // service can never hang.
+        runCatching {
+            runBlocking {
+                withTimeoutOrNull(12_000) {
+                    withTimeoutOrNull(8_000) {
+                        TdClient.authState.first { it is AuthState.Ready }
+                    }
+                    runCatching { TdClient.processPushNotification(payload) }
+                    delay(3_500)
+                }
+            }
+        }.onFailure { Log.w(TAG, "processPushNotification failed", it) }
     }
 
     companion object {

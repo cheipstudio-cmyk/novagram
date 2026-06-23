@@ -336,7 +336,12 @@ fun ChatListScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                if (appearance.aiRecapEnabled) {
+                // Show the AI FAB only when its Settings toggle is effectively
+                // ON — which is exactly `aiRecapEnabled && aiKeySet`, the same
+                // expression the toggle's `checked` uses. Without this the FAB
+                // appeared even when the toggle looked off (no key configured),
+                // because the pref defaults to true.
+                if (appearance.aiRecapEnabled && aiKeySet) {
                     androidx.compose.material3.SmallFloatingActionButton(
                         onClick = { showAiSummary = true },
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
