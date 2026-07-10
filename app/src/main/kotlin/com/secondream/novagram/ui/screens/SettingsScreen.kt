@@ -958,12 +958,6 @@ private fun BlockedUsersDialog(onDismiss: () -> Unit) {
     }
 }
 
-/**
- * Parse a shared MTProto proxy link — tg://proxy?server=..&port=..&secret=..
- * or https://t.me/proxy?..  — into (server, port, secret). Null if it isn't a
- * well-formed proxy link, in which case the caller treats the field as a raw
- * server host instead.
- */
 private fun parseMtprotoProxyLink(raw: String): Triple<String, Int, String>? {
     val s = raw.trim()
     val uri = runCatching { android.net.Uri.parse(s) }.getOrNull() ?: return null
@@ -1201,7 +1195,8 @@ private fun ProxyDialog(onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun BlockedUserRow(user: org.drinkless.tdlib.TdApi.User, onUnblocked: () -> Unit) {    val scope = rememberCoroutineScope()
+private fun BlockedUserRow(user: org.drinkless.tdlib.TdApi.User, onUnblocked: () -> Unit) {
+    val scope = rememberCoroutineScope()
     val name = "${user.firstName} ${user.lastName}".trim().takeIf { it.isNotBlank() }
         ?: stringResource(R.string.blocked_user_fallback)
     val username = user.usernames?.activeUsernames?.firstOrNull()?.takeIf { it.isNotBlank() }

@@ -196,8 +196,7 @@ data class AppearancePrefs(
      * auto-capitalisation. Purely client-side keyboard hint.
      */
     val autoCapitalize: Boolean = true,
-    /** Show the floating active-downloads/uploads badge (TransferPanel).
-     *  Off hides it entirely. Purely client-side. */
+    /** Show the floating active-downloads/uploads badge (TransferPanel). */
     val transferBadgeEnabled: Boolean = true
 )
 

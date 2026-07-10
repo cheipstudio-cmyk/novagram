@@ -64,8 +64,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun TransferPanel(modifier: Modifier = Modifier) {
     val transfers by TransferTracker.transfers.collectAsState()
-    // Respect the "download badge" toggle in Settings > Varie. Off hides the
-    // floating transfer pill entirely (both the chat-list and in-chat mounts).
+    // Respect the "download badge" toggle in Settings. Off hides the pill.
     val appearanceState by com.secondream.novagram.settings.AppSettings.appearance
         .collectAsState(initial = com.secondream.novagram.settings.AppearancePrefs())
     if (!appearanceState.transferBadgeEnabled) return

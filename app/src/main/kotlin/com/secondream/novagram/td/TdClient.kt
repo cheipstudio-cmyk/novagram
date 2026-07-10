@@ -420,6 +420,25 @@ object TdClient {
             is TdApi.UpdateNewMessage -> {
                 scope.launch { _newMessages.emit(obj.message) }
             }
+            is TdApi.UpdateNotificationGroup -> {
+                // CLOSED-APP / OFFLINE notification path. With no foreground
+                // service, a closed app is woken by FCM and processPushNotification
+                // handles the push OFFLINE — TDLib then reports the message HERE,
+                // as a notification group, NOT as UpdateNewMessage (which only
+                // arrives over the live socket that a closed app doesn't have).
+                // The live UpdateNewMessage collector above is therefore deaf to
+                // pushes; this is what actually fires when the app is closed.
+                // Route each new-message notification through the same
+                // NotificationHelper as the live path (showMessage dedups, so a
+                // message seen on both paths is posted once).
+                obj.addedNotifications.forEach { n ->
+                    (n.type as? TdApi.NotificationTypeNewMessage)?.message?.let { m ->
+                        notifScope.launch {
+                            com.secondream.novagram.notifications.NotificationHelper.showMessage(m)
+                        }
+                    }
+                }
+            }
             is TdApi.UpdateNewChat -> {
                 chatCache[obj.chat.id] = obj.chat
                 // Initialize last-known-server tracking. The chat
@@ -565,7 +584,7 @@ object TdClient {
             }
             is TdApi.UpdateMessageUnreadReactions -> {
                 // THE reliable signal for the chat-list reaction badge. TDLib's
-                // UpdateChatUnreadReactionCount (handled above) "lags / is
+                // UpdateChatUnreadReactionCount (handled below) "lags / is
                 // sometimes never sent" — which is why the badge only appeared
                 // after a force-stop reload, never live. This per-message update
                 // fires the moment someone reacts to one of your messages and
@@ -2081,20 +2100,10 @@ object TdClient {
      * object doesn't carry. Pulled lazily when the Profile screen opens.
      */
     // ===== MTProto / proxy =====
-    // Signatures pinned to the TDLib commit the CI builds:
-    //   proxy server:string port:int32 type:ProxyType
-    //   proxyTypeMtproto secret:string
-    //   addProxy proxy enable comment -> AddedProxy
-    //   addedProxy id last_used_date is_enabled comment proxy
-    //   getProxies -> AddedProxies{proxies}
-    //   enableProxy proxy_id / disableProxy / removeProxy proxy_id
-    //   pingProxy proxy -> Seconds{seconds}
-
+    // Signatures pinned to the TDLib commit the CI builds.
     suspend fun getProxies(): List<TdApi.AddedProxy> =
         runCatching { send(TdApi.GetProxies()).proxies.toList() }.getOrDefault(emptyList())
 
-    /** Add an MTProto proxy and (optionally) enable it immediately. Returns the
-     *  stored proxy (with its server-assigned id) or null on failure. */
     suspend fun addMtprotoProxy(
         server: String,
         port: Int,
@@ -2116,7 +2125,6 @@ object TdClient {
 
     suspend fun removeProxy(proxyId: Int) { runCatching { send(TdApi.RemoveProxy(proxyId)) } }
 
-    /** Round-trip latency to a proxy in seconds, or null if unreachable. */
     suspend fun pingProxy(proxy: TdApi.Proxy): Double? =
         runCatching { send(TdApi.PingProxy(proxy)).seconds }.getOrNull()
 

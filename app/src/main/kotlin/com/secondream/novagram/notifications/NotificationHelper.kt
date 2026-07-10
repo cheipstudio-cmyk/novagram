@@ -26,6 +26,14 @@ object NotificationHelper {
     private const val GROUP_KEY_MESSAGES = "novagram_messages_group"
     private const val MAX_BUNDLED_PER_CHAT = 8
 
+    // De-dupe across delivery paths. The same message can reach showMessage from
+    // BOTH the live UpdateNewMessage collector AND the offline
+    // UpdateNotificationGroup path (push), e.g. during a foreground/background
+    // transition. Key by chat+message id and skip a repeat inside a short window
+    // so we post one notification, not a duplicate line in the bundle.
+    private val recentlyNotified = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private const val DEDUP_WINDOW_MS = 30_000L
+
     /**
      * Per-chat queue of pending MessagingStyle.Message entries — the
      * data the system shows when the user expands a notification with
@@ -181,7 +189,7 @@ object NotificationHelper {
         if (file.local?.isDownloadingCompleted == true) return loadAvatarBitmap(file)
         val downloaded = runCatching {
             kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                kotlinx.coroutines.withTimeoutOrNull(8000) { TdClient.downloadFile(file.id) }
+                kotlinx.coroutines.withTimeoutOrNull(2500) { TdClient.downloadFile(file.id) }
             }
         }.getOrNull()
         return loadAvatarBitmap(downloaded ?: file)
@@ -260,6 +268,15 @@ object NotificationHelper {
      */
     fun showMessage(message: TdApi.Message) {
         if (message.isOutgoing) return
+        // One notification per message regardless of how many paths deliver it
+        // (live collector + offline notification group). Record-and-check.
+        val dedupKey = "${message.chatId}:${message.id}"
+        val now = System.currentTimeMillis()
+        val prevTs = recentlyNotified.put(dedupKey, now)
+        if (prevTs != null && now - prevTs < DEDUP_WINDOW_MS) return
+        if (recentlyNotified.size > 256) {
+            recentlyNotified.entries.removeAll { now - it.value > DEDUP_WINDOW_MS }
+        }
         // Suppress heads-up only if the user is currently viewing THIS exact
         // chat in ChatScreen — they will see the message arrive in-line and a
         // separate notification would be redundant noise. currentChatId is
@@ -268,7 +285,20 @@ object NotificationHelper {
         // pause/background (gate ON_PAUSE + App.onStop), so a backgrounded chat
         // — or being on another chat / the list / settings — always notifies.
         if (com.secondream.novagram.AppForegroundState.currentChatId == message.chatId) return
-        val chat = TdClient.getCachedChat(message.chatId)
+        var chat = TdClient.getCachedChat(message.chatId)
+        if (chat == null) {
+            // Cold FCM start: the push-driven UpdateNewMessage can land before
+            // this chat is in our cache, leaving every gate below to see a null
+            // chat and silently drop the notification. Pull it once (bounded,
+            // best-effort) so mute / membership / archive decisions run on real
+            // data. Blocking here is consistent with this path, which already
+            // blocks for self-id and avatar resolution.
+            chat = runCatching {
+                kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                    kotlinx.coroutines.withTimeoutOrNull(4000) { TdClient.getChat(message.chatId) }
+                }
+            }.getOrNull()
+        }
         // Is this an @-mention OR a reply to one of my messages? Either
         // signal puts the notification on a different track: even if the
         // chat is globally muted, the user explicitly asked to be pinged
@@ -294,17 +324,22 @@ object NotificationHelper {
         val muted = TdClient.isChatMuted(chat)
         if (muted && !isPersonalPing) return
 
-        // Skip notifications for chats the user is not actually a member of.
-        // TDLib pushes UpdateNewMessage for every chat we hold a reference
-        // to — including public groups / channels the user has only
-        // "viewed" via search (no join). Without this gate, opening any
-        // public chat starts streaming notifications from it forever.
-        // Heuristic: a chat with no positions in any chat list is not in
-        // the user's chat-list view → they haven't joined. Private chats
-        // and Saved Messages always have positions when active, so this
-        // doesn't false-positive on normal conversations.
-        val isMember = chat?.positions?.isNotEmpty() == true
-        if (!isMember) return
+        // Skip chats the user isn't actually in. TDLib pushes UpdateNewMessage
+        // for every chat we hold a reference to — including public groups /
+        // channels the user only "viewed" via search (no join) — and without a
+        // gate those would stream notifications forever. A real chat has a list
+        // position; a merely-viewed public chat does not.
+        //
+        // BUT a 1-to-1 / secret chat exists ONLY when there's a genuine
+        // conversation, and on a cold push the chat list often isn't loaded yet
+        // so even a legit private chat can momentarily have empty positions.
+        // Treat those by TYPE so their notifications survive a cold start, while
+        // groups / channels stay behind the position check that blocks the
+        // viewed-public-chat spam.
+        val isPrivateLike = chat?.type is TdApi.ChatTypePrivate ||
+            chat?.type is TdApi.ChatTypeSecret
+        val hasListPosition = chat?.positions?.isNotEmpty() == true
+        if (!isPrivateLike && !hasListPosition) return
 
         // Skip ALL notifications for archived chats: the archive folder
         // is the user's "out of sight, out of mind" pile and should not

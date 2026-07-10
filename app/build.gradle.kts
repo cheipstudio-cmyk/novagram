@@ -23,8 +23,8 @@ android {
         applicationId = "com.secondream.novagram"
         minSdk = 26
         targetSdk = 35
-        versionCode = 282
-        versionName = "0.10.220"
+        versionCode = 284
+        versionName = "0.10.222"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -105,6 +105,15 @@ android {
             "META-INF/LGPL2.1",
             "META-INF/*.kotlin_module"
         )
+    }
+    // Keep EVERY translation in the base APK. Without this, the Android App
+    // Bundle splits resources per language and Play only delivers the device's
+    // language + the default — so the in-app language switcher couldn't reach
+    // es/de/fr on an Italian device and fell back to the default (Italian).
+    bundle {
+        language {
+            enableSplit = false
+        }
     }
 }
 

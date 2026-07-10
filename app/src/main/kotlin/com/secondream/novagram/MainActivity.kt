@@ -89,6 +89,16 @@ class MainActivity : ComponentActivity() {
         handleThemeDeeplink(intent)
         handleTmeDeeplink(intent)
 
+        // Start the foreground service as soon as we're logged in. We're in the
+        // foreground here (the activity just came up), so waiting for the first
+        // auth-Ready and starting then satisfies the Android 12+ rule that a
+        // foreground service must be started from the foreground.
+        kotlinx.coroutines.GlobalScope.launch {
+            com.secondream.novagram.td.TdClient.authState
+                .first { it is com.secondream.novagram.td.AuthState.Ready }
+            startTdServiceIfPossible()
+        }
+
         setContent {
             val appearance by AppSettings.appearance.collectAsState(
                 initial = com.secondream.novagram.settings.AppearancePrefs()
@@ -382,10 +392,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startTdServiceIfPossible() {
-        // Removed: Novagram no longer runs a persistent foreground service.
-        // It kept the app "always active" (Android's Active-apps panel) and
-        // forced a permanent notification. Incoming-message notifications are
-        // now driven by the app-level collector in TdClient + FCM pushes.
-        // Kept as a no-op so any stray reference stays valid.
+        // Reliable background notifications require TDLib to stay connected,
+        // which requires the process to stay alive — on modern Android only a
+        // foreground service guarantees that. A third-party Telegram client
+        // cannot receive FCM pushes from Telegram's servers (they don't hold
+        // our private Firebase project's credentials), so this service is the
+        // ONLY mechanism that delivers notifications while backgrounded/closed.
+        // The notification rides an IMPORTANCE_MIN channel so it stays out of
+        // the status bar. Started only while the activity is foreground (caller
+        // waits for auth-Ready) to satisfy the Android 12+ background-FGS ban.
+        runCatching {
+            val intent = android.content.Intent(this, TdService::class.java)
+            androidx.core.content.ContextCompat.startForegroundService(this, intent)
+        }
     }
 }
