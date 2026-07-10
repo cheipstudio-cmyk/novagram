@@ -1114,7 +1114,9 @@ private fun ProxyDialog(onDismiss: () -> Unit) {
                     }
                 }
 
-                Divider(Modifier.padding(vertical = 12.dp))
+                Spacer(Modifier.height(12.dp))
+                Divider()
+                Spacer(Modifier.height(12.dp))
 
                 Text(
                     stringResource(R.string.proxy_add),
