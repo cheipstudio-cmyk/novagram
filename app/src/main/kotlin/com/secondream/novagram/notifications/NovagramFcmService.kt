@@ -74,27 +74,21 @@ class NovagramFcmService : FirebaseMessagingService() {
         val payload = json.toString()
         // Novagram no longer runs a foreground service, so a closed app is
         // woken here by FCM but the OS reclaims the process the instant this
-        // method returns — a fire-and-forget launch would post nothing.
+        // method returns — the old fire-and-forget launch posted nothing.
         // FirebaseMessagingService holds a wakelock while onMessageReceived
         // runs, so we BLOCK instead: wait for TDLib to be authorized (a cold
-        // start reloads it from disk), hand it the push, then hold while TDLib
-        // decrypts it and emits UpdateNotificationGroup (the OFFLINE path —
-        // UpdateNewMessage only comes over the live socket, which a closed app
-        // doesn't have) and the TdClient handler posts the notification via
-        // NotificationHelper. Every wait is bounded so the service can't hang.
+        // start reloads it from disk), hand it the push, then hold briefly
+        // while TDLib emits UpdateNewMessage and the app-level collector in
+        // TdClient posts the notification. Every wait is bounded so the
+        // service can never hang.
         runCatching {
             runBlocking {
-                withTimeoutOrNull(16_000) {
+                withTimeoutOrNull(12_000) {
                     withTimeoutOrNull(8_000) {
                         TdClient.authState.first { it is AuthState.Ready }
                     }
                     runCatching { TdClient.processPushNotification(payload) }
-                    // Hold the wakelock while TDLib decrypts the push and emits
-                    // UpdateNotificationGroup, and while NotificationHelper
-                    // resolves the avatar (capped) and posts. Without a foreground
-                    // service the OS reclaims the process the moment this returns,
-                    // so the hold must outlast the post or the notification is lost.
-                    delay(6_000)
+                    delay(3_500)
                 }
             }
         }.onFailure { Log.w(TAG, "processPushNotification failed", it) }

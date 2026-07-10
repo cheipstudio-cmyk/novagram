@@ -195,7 +195,10 @@ data class AppearancePrefs(
      * letter of each sentence as you type a new message. Off = no
      * auto-capitalisation. Purely client-side keyboard hint.
      */
-    val autoCapitalize: Boolean = true
+    val autoCapitalize: Boolean = true,
+    /** Show the floating active-downloads/uploads badge (TransferPanel).
+     *  Off hides it entirely. Purely client-side. */
+    val transferBadgeEnabled: Boolean = true
 )
 
 /**
@@ -258,6 +261,7 @@ object AppSettings {
     private val REDUCE_ANIMATIONS = androidx.datastore.preferences.core.booleanPreferencesKey("reduce_animations")
     private val HAPTICS_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("haptics_enabled")
     private val AUTO_CAPITALIZE = androidx.datastore.preferences.core.booleanPreferencesKey("auto_capitalize")
+    private val TRANSFER_BADGE = androidx.datastore.preferences.core.booleanPreferencesKey("transfer_badge")
 
     fun init(ctx: Context) {
         // idempotent — Activity.attachBaseContext runs before Application.onCreate
@@ -316,7 +320,8 @@ object AppSettings {
                 showBotCommandsButton = prefs[SHOW_BOT_COMMANDS_BUTTON] ?: true,
                 reduceAnimations = prefs[REDUCE_ANIMATIONS] ?: false,
                 hapticsEnabled = prefs[HAPTICS_ENABLED] ?: true,
-                autoCapitalize = prefs[AUTO_CAPITALIZE] ?: true
+                autoCapitalize = prefs[AUTO_CAPITALIZE] ?: true,
+                transferBadgeEnabled = prefs[TRANSFER_BADGE] ?: true
             )
         }
 
@@ -358,6 +363,10 @@ object AppSettings {
 
     suspend fun setAutoCapitalize(enabled: Boolean) {
         appContext.dataStore.edit { it[AUTO_CAPITALIZE] = enabled }
+    }
+
+    suspend fun setTransferBadge(enabled: Boolean) {
+        appContext.dataStore.edit { it[TRANSFER_BADGE] = enabled }
     }
 
     suspend fun setShowLastSeen(enabled: Boolean) {

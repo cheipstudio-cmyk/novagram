@@ -84,6 +84,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
     var showReadDate by remember { mutableStateOf(true) }
     var showThemeBuilder by remember { mutableStateOf(false) }
     var blockedOpen by remember { mutableStateOf(false) }
+    var proxyOpen by remember { mutableStateOf(false) }
     var builderTheme by remember { mutableStateOf<com.secondream.novagram.settings.SavedTheme?>(null) }
     // Theme the user is sharing into a chat (drives the in-app chat picker).
     var shareThemeTarget by remember { mutableStateOf<com.secondream.novagram.settings.SavedTheme?>(null) }
@@ -433,6 +434,14 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                     }
                 )
                 PrivacyToggleRow(
+                    label = stringResource(R.string.settings_download_badge),
+                    description = stringResource(R.string.settings_download_badge_desc),
+                    checked = appearance.transferBadgeEnabled,
+                    onToggle = { enabled ->
+                        scope.launch { AppSettings.setTransferBadge(enabled) }
+                    }
+                )
+                PrivacyToggleRow(
                     label = stringResource(R.string.settings_media_autodownload),
                     description = stringResource(R.string.settings_media_autodownload_desc),
                     checked = appearance.autoDownloadMedia,
@@ -736,6 +745,26 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
                         )
                     }
                 }
+                Divider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { proxyOpen = true }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.settings_proxy),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            stringResource(R.string.settings_proxy_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
             Spacer(Modifier.height(10.dp))
@@ -777,6 +806,9 @@ fun SettingsScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit = {}) {
     }
     if (blockedOpen) {
         BlockedUsersDialog(onDismiss = { blockedOpen = false })
+    }
+    if (proxyOpen) {
+        ProxyDialog(onDismiss = { proxyOpen = false })
     }
     shareThemeTarget?.let { theme ->
         com.secondream.novagram.ui.components.ShareChatPickerSheet(
@@ -926,9 +958,250 @@ private fun BlockedUsersDialog(onDismiss: () -> Unit) {
     }
 }
 
+/**
+ * Parse a shared MTProto proxy link — tg://proxy?server=..&port=..&secret=..
+ * or https://t.me/proxy?..  — into (server, port, secret). Null if it isn't a
+ * well-formed proxy link, in which case the caller treats the field as a raw
+ * server host instead.
+ */
+private fun parseMtprotoProxyLink(raw: String): Triple<String, Int, String>? {
+    val s = raw.trim()
+    val uri = runCatching { android.net.Uri.parse(s) }.getOrNull() ?: return null
+    val looksProxy = (uri.scheme == "tg" && uri.host == "proxy") ||
+        ((uri.host == "t.me" || uri.host == "telegram.me") && (uri.path ?: "").trim('/') == "proxy")
+    if (!looksProxy) return null
+    val server = uri.getQueryParameter("server")?.takeIf { it.isNotBlank() } ?: return null
+    val port = uri.getQueryParameter("port")?.toIntOrNull() ?: return null
+    val secret = uri.getQueryParameter("secret")?.takeIf { it.isNotBlank() } ?: return null
+    return Triple(server, port, secret)
+}
+
 @Composable
-private fun BlockedUserRow(user: org.drinkless.tdlib.TdApi.User, onUnblocked: () -> Unit) {
+private fun ProxyDialog(onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
+    var proxies by remember { mutableStateOf<List<org.drinkless.tdlib.TdApi.AddedProxy>?>(null) }
+    var reloadTick by remember { mutableStateOf(0) }
+    var linkOrServer by remember { mutableStateOf("") }
+    var port by remember { mutableStateOf("") }
+    var secret by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val invalidMsg = stringResource(R.string.proxy_invalid)
+
+    LaunchedEffect(reloadTick) {
+        proxies = runCatching { TdClient.getProxies() }.getOrDefault(emptyList())
+    }
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState())
+            ) {
+                Text(
+                    stringResource(R.string.settings_proxy),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.proxy_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+
+                val list = proxies
+                when {
+                    list == null -> {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.primary,
+                                strokeWidth = 3.dp
+                            )
+                        }
+                    }
+                    list.isEmpty() -> {
+                        Text(
+                            stringResource(R.string.proxy_none),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+                    else -> {
+                        list.forEach { added ->
+                            val typeLabel = when (added.proxy.type) {
+                                is org.drinkless.tdlib.TdApi.ProxyTypeMtproto -> "MTProto"
+                                is org.drinkless.tdlib.TdApi.ProxyTypeSocks5 -> "SOCKS5"
+                                is org.drinkless.tdlib.TdApi.ProxyTypeHttp -> "HTTP"
+                                else -> "Proxy"
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                                    .clickable(enabled = !busy) {
+                                        busy = true
+                                        scope.launch {
+                                            if (added.isEnabled) TdClient.disableProxy()
+                                            else TdClient.enableProxy(added.id)
+                                            reloadTick++
+                                            busy = false
+                                        }
+                                    }
+                                    .padding(vertical = 8.dp, horizontal = 4.dp)
+                            ) {
+                                Icon(
+                                    if (added.isEnabled)
+                                        com.secondream.novagram.ui.icons.PhosphorIcons.Check
+                                    else com.secondream.novagram.ui.icons.PhosphorIcons.Lock,
+                                    contentDescription = null,
+                                    tint = if (added.isEnabled) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.size(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        added.proxy.server + ":" + added.proxy.port,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        if (added.isEnabled)
+                                            typeLabel + " · " + stringResource(R.string.proxy_active)
+                                        else typeLabel,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                androidx.compose.material3.IconButton(
+                                    enabled = !busy,
+                                    onClick = {
+                                        busy = true
+                                        scope.launch {
+                                            TdClient.removeProxy(added.id)
+                                            reloadTick++
+                                            busy = false
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        com.secondream.novagram.ui.icons.PhosphorIcons.Trash,
+                                        contentDescription = stringResource(R.string.proxy_remove),
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                        if (list.any { it.isEnabled }) {
+                            androidx.compose.material3.TextButton(
+                                enabled = !busy,
+                                onClick = {
+                                    busy = true
+                                    scope.launch {
+                                        TdClient.disableProxy()
+                                        reloadTick++
+                                        busy = false
+                                    }
+                                }
+                            ) { Text(stringResource(R.string.proxy_disable)) }
+                        }
+                    }
+                }
+
+                Divider(Modifier.padding(vertical = 12.dp))
+
+                Text(
+                    stringResource(R.string.proxy_add),
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = linkOrServer,
+                    onValueChange = { linkOrServer = it; error = null },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.proxy_server_or_link)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = port,
+                    onValueChange = { new -> port = new.filter { it.isDigit() }; error = null },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.proxy_port)) },
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = secret,
+                    onValueChange = { secret = it; error = null },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.proxy_secret)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (error != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        error ?: "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.delete_chat_cancel))
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    androidx.compose.material3.Button(
+                        enabled = !busy,
+                        onClick = {
+                            val parsed = parseMtprotoProxyLink(linkOrServer)
+                            val srv = parsed?.first ?: linkOrServer.trim()
+                            val prt = parsed?.second ?: (port.toIntOrNull() ?: -1)
+                            val sec = parsed?.third ?: secret.trim()
+                            if (srv.isBlank() || prt !in 1..65535 || sec.isBlank()) {
+                                error = invalidMsg
+                            } else {
+                                error = null
+                                busy = true
+                                scope.launch {
+                                    val res = TdClient.addMtprotoProxy(srv, prt, sec, enable = true)
+                                    reloadTick++
+                                    busy = false
+                                    if (res != null) {
+                                        linkOrServer = ""; port = ""; secret = ""
+                                    }
+                                }
+                            }
+                        }
+                    ) { Text(stringResource(R.string.proxy_add)) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BlockedUserRow(user: org.drinkless.tdlib.TdApi.User, onUnblocked: () -> Unit) {    val scope = rememberCoroutineScope()
     val name = "${user.firstName} ${user.lastName}".trim().takeIf { it.isNotBlank() }
         ?: stringResource(R.string.blocked_user_fallback)
     val username = user.usernames?.activeUsernames?.firstOrNull()?.takeIf { it.isNotBlank() }

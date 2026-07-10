@@ -155,37 +155,20 @@ class App : Application(), ImageLoaderFactory {
             com.secondream.novagram.update.UpdateChecker.check()
         }
 
-        // FCM token registration. The startup attempt below covers an
-        // already-authorized cold start (session restored from disk). But on
-        // the FIRST login the process starts BEFORE TDLib is authorized, so
-        // RegisterDevice is rejected by TDLib and — until now — never retried:
-        // the device stayed invisible to Telegram's push backend and closed-app
-        // notifications never arrived. So we ALSO re-register on every
-        // auth-Ready transition (first login and every later cold start /
-        // logout-login), which is what the official client does.
-        registerFcmTokenBestEffort()
-        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            TdClient.authState.collect { st ->
-                if (st is com.secondream.novagram.td.AuthState.Ready) {
-                    registerFcmTokenBestEffort()
-                }
-            }
-        }
-    }
-
-    /**
-     * Fetch the current FCM token (if Firebase is configured) and hand it to
-     * TDLib via RegisterDevice. Best-effort and fully guarded: when
-     * google-services.json is absent no FirebaseApp exists and this returns
-     * quietly, leaving the app on live-socket-only delivery.
-     */
-    private fun registerFcmTokenBestEffort() {
+        // Best-effort FCM token registration. Wrapped in runCatching
+        // and gated on FirebaseApp.getApps(this).isNotEmpty(): when
+        // google-services.json is missing, no FirebaseApp exists and
+        // this block silently returns. When the JSON is present, the
+        // gms plugin auto-initializes FirebaseApp before onCreate runs,
+        // we fetch the token, and hand it to TdClient. TdClient itself
+        // re-tries with runCatching if TDLib isn't ready yet — token
+        // rotation later will catch us up.
         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 val hasFirebase =
                     com.google.firebase.FirebaseApp.getApps(this@App).isNotEmpty()
                 if (!hasFirebase) {
-                    android.util.Log.i("App", "Firebase not configured, FCM disabled")
+                    android.util.Log.i("App", "Firebase not configured — FCM disabled, FGS-only delivery")
                     return@runCatching
                 }
                 val token = com.google.android.gms.tasks.Tasks.await(
@@ -194,7 +177,7 @@ class App : Application(), ImageLoaderFactory {
                 android.util.Log.i("App", "FCM token acquired, registering with TDLib")
                 TdClient.registerDeviceForFcm(token)
             }.onFailure {
-                android.util.Log.w("App", "FCM register failed (non-fatal)", it)
+                android.util.Log.w("App", "FCM bootstrap failed (non-fatal)", it)
             }
         }
     }

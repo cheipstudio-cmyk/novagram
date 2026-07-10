@@ -7,11 +7,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- Foreground service keeps TDLib connected so notifications arrive while
-         backgrounded/closed. REMOTE_MESSAGING is the Android 14 type for chat
-         clients holding a live backend connection (Play "Messaging" category). -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
@@ -162,13 +157,6 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
-
-        <!-- Keeps TDLib's connection alive while the app is backgrounded so
-             incoming messages notify in real time. Not exported. -->
-        <service
-            android:name=".notifications.TdService"
-            android:exported="false"
-            android:foregroundServiceType="remoteMessaging" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

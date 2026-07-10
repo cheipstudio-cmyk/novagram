@@ -638,4 +638,18 @@
     <string name="settings_autocaps_desc">Met une majuscule en début de phrase quand tu écris un message</string>
     <string name="action_copy_link">Copier le lien</string>
     <string name="snack_link_copied">Lien copié</string>
+    <string name="settings_download_badge">Badge de téléchargement</string>
+    <string name="settings_download_badge_desc">Affiche le panneau des téléchargements et envois en cours</string>
+    <string name="settings_proxy">Proxy</string>
+    <string name="settings_proxy_desc">Se connecter via un proxy MTProto</string>
+    <string name="proxy_hint">Ajoute un proxy MTProto ou colle un lien tg://proxy</string>
+    <string name="proxy_none">Aucun proxy configuré</string>
+    <string name="proxy_active">actif</string>
+    <string name="proxy_add">Ajouter un proxy</string>
+    <string name="proxy_server_or_link">Serveur ou lien tg://proxy</string>
+    <string name="proxy_port">Port</string>
+    <string name="proxy_secret">Secret</string>
+    <string name="proxy_remove">Supprimer</string>
+    <string name="proxy_disable">Désactiver le proxy</string>
+    <string name="proxy_invalid">Lien ou données de proxy invalides</string>
 </resources>
